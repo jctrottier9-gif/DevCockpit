@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DevCockpit Companion</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>DevCockpit Companion</h1>
+        <p id="connection-status" class="status">○ Déconnecté</p>
+      </div>
+      <button id="retry-connection" type="button" class="secondary" hidden>
+        Reconnecter
+      </button>
+    </header>
+
+    <p id="connection-error" class="error" hidden></p>
+    <p id="socket-url" class="socket"></p>
+
+    <main>
+      <p id="empty-state">Aucun prompt en attente.</p>
+      <div id="queue"></div>
+    </main>
+
+    <template id="prompt-card-template">
+      <article class="card">
+        <div class="card-header">
+          <strong class="session"></strong>
+          <span class="local-status"></span>
+        </div>
+        <p class="preview"></p>
+        <details>
+          <summary>Voir le texte complet</summary>
+          <pre class="full-text"></pre>
+        </details>
+        <p class="entry-error error" hidden></p>
+        <button type="button" class="send">Envoyer</button>
+      </article>
+    </template>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

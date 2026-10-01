@@ -1,0 +1,45 @@
+{
+  "manifest_version": 2,
+  "name": "DevCockpit Companion",
+  "version": "0.1.0",
+  "description": "Receives DevCockpit prompts into a persistent local queue and sends one to the active ChatGPT conversation only after an explicit user action.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "devcockpit-companion@local",
+      "strict_min_version": "115.0"
+    }
+  },
+  "permissions": [
+    "storage",
+    "https://chatgpt.com/*",
+    "https://chat.openai.com/*",
+    "ws://127.0.0.1/*"
+  ],
+  "background": {
+    "scripts": [
+      "src/protocol.js",
+      "src/queue-store.js",
+      "src/transport.js",
+      "src/send-coordinator.js",
+      "src/background.js"
+    ],
+    "persistent": true
+  },
+  "browser_action": {
+    "default_title": "DevCockpit Companion",
+    "default_popup": "popup/popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*"
+      ],
+      "js": [
+        "src/chatgpt-page-adapter.js",
+        "src/content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

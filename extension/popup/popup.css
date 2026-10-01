@@ -1,0 +1,111 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  width: 420px;
+  max-height: 600px;
+  margin: 0;
+  padding: 14px;
+  overflow-y: auto;
+  background: #fff;
+  color: #171717;
+  font: 13px/1.45 system-ui, sans-serif;
+}
+
+header,
+.card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.status,
+.socket,
+.error {
+  margin: 4px 0 0;
+}
+
+.status {
+  font-weight: 600;
+}
+
+.socket {
+  color: #666;
+  font-size: 11px;
+}
+
+.error {
+  color: #a40000;
+}
+
+#queue {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.card {
+  padding: 12px;
+  border: 1px solid #d7d7d7;
+  border-radius: 8px;
+}
+
+.session {
+  overflow-wrap: anywhere;
+}
+
+.local-status {
+  color: #555;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.preview {
+  display: -webkit-box;
+  margin: 10px 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  white-space: pre-wrap;
+}
+
+details {
+  margin: 8px 0 10px;
+}
+
+pre {
+  max-height: 220px;
+  overflow: auto;
+  padding: 8px;
+  border-radius: 6px;
+  background: #f5f5f5;
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+button {
+  padding: 7px 11px;
+  border: 1px solid #1b1b1b;
+  border-radius: 6px;
+  background: #1b1b1b;
+  color: #fff;
+  cursor: pointer;
+}
+
+button.secondary {
+  background: #fff;
+  color: #1b1b1b;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
