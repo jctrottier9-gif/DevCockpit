@@ -112,3 +112,10 @@ Both prompts reuse the logical AgentSession `<project>:DEV:<work-item>`.
 - A new commit or a genuinely distinct workflow attempt can produce a new CI follow-up in the same DEV session.
 - React and the Firefox companion consume the backend projection and do not reimplement GitHub identity or CI rules.
 - DC-021 does not merge PRs, rerun workflows or write the roadmap as a product behavior.
+
+
+## ASTRA-040 amendment — local orchestration inhibition
+
+GitHub execution projection remains unchanged and fully observable while a blocking Handoff is active.
+
+However, prompt preparation is a separate application concern: DC-040 may inhibit automatic DEV `INITIAL` and `CI_RED` PromptDispatch creation for a WorkItem while its local Handoff state requires Architect guidance or authorization. This inhibition does not add `NEEDS_ARCHITECT`/`NEEDS_PO` to `ExecutionState`, does not rewrite CI evidence, and must be checked transactionally with dispatch creation. See ADR-0007.
