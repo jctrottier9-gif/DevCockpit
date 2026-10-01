@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-01
-- Amended: 2026-10-01 by DC-011 protocol framing; 2026-10-01 by DC-012 local acceptance boundary
+- Amended: 2026-10-01 by DC-011 protocol framing; 2026-10-01 by DC-012 local acceptance boundary; 2026-10-01 by DC-030 explicit response return
 
 ## Context
 
@@ -112,7 +112,13 @@ Connection presence is in-memory/transient. A FastAPI restart reconstructs repla
 
 DC-011 implements typed protocol control messages such as ack, ping, pong and explicit protocol errors.
 
-The future chatgpt_response message remains reserved for DC-030. DC-011 does not persist, interpret or route ChatGPT responses.
+DC-030 adds an additive protocol-v1 response-return message carrying a stable response_id, the source delivery_id, the exact logical session and the complete selected response text. The server answers with chatgpt_response_ack only after idempotent persistence. The companion persists a PendingResponse before transmission and replays the same response_id after reconnect until that ACK arrives.
+
+The response path remains explicitly user-triggered. ChatGPT assistant DOM is inspected only on demand to present candidates; the user chooses one response and confirms its return. No background observer, polling loop or automatic completion detector is introduced.
+
+Inbound protocol messages remain size-bounded. DC-030 raises the explicit bound to 512 KiB so normal complete responses fit while oversized responses fail with message_too_large rather than being silently truncated.
+
+Imported response text is transport/audit data only. It does not mutate PromptDispatch, PromptDelivery, WorkItem or ExecutionProjection and is not automatically interpreted as a Decision, Handoff, approval or proof of delivery.
 
 ## Reliability rules
 
