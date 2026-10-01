@@ -43,6 +43,7 @@ for (const relativePath of referencedFiles) {
 const jsFiles = [
   "src/protocol.js",
   "src/queue-store.js",
+  "src/response-store.js",
   "src/transport.js",
   "src/send-coordinator.js",
   "src/background.js",
