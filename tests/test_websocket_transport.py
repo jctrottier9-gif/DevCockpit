@@ -311,3 +311,28 @@ def test_chatgpt_response_over_limit_fails_without_truncation(tmp_path: Path) ->
             )
             assert websocket.receive_json()["code"] == "message_too_large"
 
+
+
+def test_superseded_prompt_is_not_sent_from_prepared_batch(tmp_path, monkeypatch):
+    """A Handoff may cancel a dispatch after the transport reserved its batch."""
+    import importlib
+    main_module = importlib.import_module('app.main')
+    original = main_module.prepare_prompt_deliveries_for_send
+    application = _application(tmp_path)
+    dispatch = _create_dispatch(application)
+
+    def reserve_then_supersede(**kwargs):
+        result = original(**kwargs)
+        if result:
+            with application.state.uow_factory() as uow:
+                current = uow.prompt_dispatches.get(dispatch.dispatch_id)
+                if current.status.value == 'PREPARED':
+                    current.cancel()
+                    uow.prompt_dispatches.save(current)
+                    uow.commit()
+        return result
+
+    monkeypatch.setattr(main_module, 'prepare_prompt_deliveries_for_send', reserve_then_supersede)
+    with TestClient(application) as client, client.websocket_connect('/api/companion/ws') as ws:
+        ws.send_json({'version':1, 'type':'ping'})
+        assert ws.receive_json() == {'version':1, 'type':'pong'}

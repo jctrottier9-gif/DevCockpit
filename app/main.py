@@ -7,6 +7,7 @@ import logging
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
+from app.api.orchestration import build_orchestration_router
 from app.application.chatgpt_responses import (
     ChatGptResponseImportError,
     ImportChatGptResponseCommand,
@@ -36,6 +37,7 @@ from app.application.roadmaps import (
 from app.config import Settings, get_settings
 from app.domain.execution import ExecutionProjection
 from app.domain.project import Project
+from app.domain.prompt_dispatch import PromptDispatchStatus
 from app.domain.roadmap import PipelineDiagnostic, PipelineParseResult, WorkItem
 from app.infrastructure.database import build_engine, build_session_factory
 from app.infrastructure.github_execution import GitHubExecutionReader
@@ -268,6 +270,11 @@ def create_app(
     application.state.roadmap_reader = active_roadmap_reader
     application.state.execution_reader = active_execution_reader
 
+    application.include_router(build_orchestration_router(
+        project_catalog=active_project_catalog, roadmap_reader=active_roadmap_reader,
+        evidence_reader=active_execution_reader, uow_factory=uow_factory,
+    ))
+
     @application.get("/api/health", tags=["system"])
     def health() -> dict[str, str]:
         return {"status": "ok"}
@@ -355,8 +362,15 @@ def create_app(
                     exclude_delivery_ids=sent_on_connection,
                 )
                 for delivery in outbound:
-                    await websocket.send_json(build_prompt_message(delivery))
-                    sent_on_connection.add(delivery.delivery_id)
+                    # Recheck each reserved outbound message under the same writer
+                    # boundary used by Handoff cancellation. A prepared batch can
+                    # have become superseded before this socket write.
+                    with uow_factory() as delivery_uow:
+                        dispatch = delivery_uow.prompt_dispatches.get(delivery.dispatch_id)
+                        if dispatch is None or dispatch.status != PromptDispatchStatus.PREPARED:
+                            continue
+                        await websocket.send_json(build_prompt_message(delivery))
+                        sent_on_connection.add(delivery.delivery_id)
 
                 done, _ = await asyncio.wait(
                     {receive_task},

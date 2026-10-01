@@ -18,8 +18,14 @@ class PromptDispatchRepository(Protocol):
     def get_by_idempotency_key(self, idempotency_key: str) -> PromptDispatch | None: ...
 
 
+class HandoffPolicyRepository(Protocol):
+    def active(self, project_id: str, work_item_id: str) -> object | None: ...
+    def covers(self, project_id: str, work_item_id: str, evidence_key: str) -> bool: ...
+
+
 class PromptDispatchUnitOfWork(Protocol):
     prompt_dispatches: PromptDispatchRepository
+    handoffs: HandoffPolicyRepository
 
     def __enter__(self) -> Self: ...
 
@@ -47,29 +53,36 @@ def create_prompt_dispatch(
     *,
     uow_factory: UnitOfWorkFactory,
 ) -> PromptDispatch:
+    with uow_factory() as uow:
+        dispatch = create_prompt_dispatch_in_uow(command, uow=uow)
+        uow.commit()
+        return dispatch
+
+
+def create_prompt_dispatch_in_uow(
+    command: CreatePromptDispatchCommand, *, uow: PromptDispatchUnitOfWork,
+) -> PromptDispatch:
     role = command.role if isinstance(command.role, PromptDispatchRole) else PromptDispatchRole(command.role)
 
-    with uow_factory() as uow:
-        existing = uow.prompt_dispatches.get_by_idempotency_key(command.idempotency_key)
-        if existing is not None:
-            if not existing.represents_same_logical_prompt(
-                project_id=command.project_id,
-                work_item_id=command.work_item_id,
-                role=role,
-                prompt_text=command.prompt_text,
-            ):
-                raise IdempotencyConflictError(
-                    "idempotency_key is already associated with a different logical prompt"
-                )
-            return existing
-
-        dispatch = PromptDispatch.prepare(
+    existing = uow.prompt_dispatches.get_by_idempotency_key(command.idempotency_key)
+    if existing is not None:
+        if not existing.represents_same_logical_prompt(
             project_id=command.project_id,
             work_item_id=command.work_item_id,
             role=role,
             prompt_text=command.prompt_text,
-            idempotency_key=command.idempotency_key,
-        )
-        uow.prompt_dispatches.add(dispatch)
-        uow.commit()
-        return dispatch
+        ):
+            raise IdempotencyConflictError(
+                "idempotency_key is already associated with a different logical prompt"
+            )
+        return existing
+
+    dispatch = PromptDispatch.prepare(
+        project_id=command.project_id,
+        work_item_id=command.work_item_id,
+        role=role,
+        prompt_text=command.prompt_text,
+        idempotency_key=command.idempotency_key,
+    )
+    uow.prompt_dispatches.add(dispatch)
+    return dispatch

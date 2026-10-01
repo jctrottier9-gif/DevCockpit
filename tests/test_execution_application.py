@@ -60,9 +60,18 @@ class InMemoryDispatchRepository:
         return self.by_key.get(idempotency_key)
 
 
+class EmptyHandoffs:
+    def active(self, project_id, work_item_id):
+        return None
+
+    def covers(self, project_id, work_item_id, evidence_key):
+        return False
+
+
 class FakeUnitOfWork:
     def __init__(self, repository: InMemoryDispatchRepository) -> None:
         self.prompt_dispatches = repository
+        self.handoffs = EmptyHandoffs()
 
     def __enter__(self):
         return self
