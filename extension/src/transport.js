@@ -2,7 +2,11 @@
   "use strict";
 
   const namespace = (globalThis.DevCockpitCompanion ||= {});
-  const { parseServerMessage, buildAckMessage } = namespace.protocol;
+  const {
+    parseServerMessage,
+    buildAckMessage,
+    buildChatGptResponseMessage,
+  } = namespace.protocol;
 
   const CONNECTION_STATUS = Object.freeze({
     CONNECTED: "CONNECTED",
@@ -18,12 +22,24 @@
     return error instanceof Error ? error.message : String(error);
   }
 
+  function responseWirePayload(response) {
+    return {
+      responseId: response.response_id,
+      deliveryId: response.delivery_id,
+      session: response.session,
+      text: response.text,
+    };
+  }
+
   class CompanionTransport {
     constructor({
       url,
       webSocketFactory,
       onPrompt,
       onState,
+      getPendingResponses = async () => [],
+      onResponseAck = async () => {},
+      onResponseError = async () => {},
       setTimeoutFn = globalThis.setTimeout.bind(globalThis),
       clearTimeoutFn = globalThis.clearTimeout.bind(globalThis),
       reconnectDelaysMs = DEFAULT_RECONNECT_DELAYS_MS,
@@ -32,6 +48,9 @@
       this.webSocketFactory = webSocketFactory;
       this.onPrompt = onPrompt;
       this.onState = onState;
+      this.getPendingResponses = getPendingResponses;
+      this.onResponseAck = onResponseAck;
+      this.onResponseError = onResponseError;
       this.setTimeoutFn = setTimeoutFn;
       this.clearTimeoutFn = clearTimeoutFn;
       this.reconnectDelaysMs = reconnectDelaysMs;
@@ -75,6 +94,9 @@
         }
         this.reconnectAttempt = 0;
         this._emit(CONNECTION_STATUS.CONNECTED);
+        this.messageChain = this.messageChain
+          .then(() => this._replayPendingResponses(socket))
+          .catch((error) => this._emit(this.currentStatus, errorText(error)));
       });
 
       socket.addEventListener("message", (event) => {
@@ -83,9 +105,7 @@
         }
         this.messageChain = this.messageChain
           .then(() => this._handleMessage(socket, event.data))
-          .catch((error) => {
-            this._emit(this.currentStatus, errorText(error));
-          });
+          .catch((error) => this._emit(this.currentStatus, errorText(error)));
       });
 
       socket.addEventListener("close", (event) => {
@@ -93,7 +113,6 @@
           return;
         }
         this.socket = null;
-
         if (event.code === SINGLE_COMPANION_CLOSE_CODE) {
           this.blockedByCompanionConflict = true;
           this._emit(
@@ -102,7 +121,6 @@
           );
           return;
         }
-
         this._scheduleReconnect();
       });
 
@@ -113,8 +131,19 @@
       });
     }
 
+    async _replayPendingResponses(socket) {
+      const pending = await this.getPendingResponses();
+      for (const response of pending) {
+        if (this.socket !== socket || this.currentStatus !== CONNECTION_STATUS.CONNECTED) {
+          return;
+        }
+        socket.send(buildChatGptResponseMessage(responseWirePayload(response)));
+      }
+    }
+
     async _handleMessage(socket, rawMessage) {
       const message = parseServerMessage(rawMessage);
+
       if (message.type === "prompt") {
         await this.onPrompt({
           deliveryId: message.deliveryId,
@@ -125,8 +154,32 @@
         return;
       }
 
+      if (message.type === "chatgpt_response_ack") {
+        await this.onResponseAck(message.responseId);
+        return;
+      }
+
       if (message.type === "error") {
-        this._emit(this.currentStatus, `Serveur: ${message.code}`);
+        if (message.responseId) {
+          await this.onResponseError(message.responseId, message.code);
+        }
+        this._emit(this.currentStatus, "Serveur: " + message.code);
+      }
+    }
+
+    sendPendingResponse(response) {
+      if (
+        this.currentStatus !== CONNECTION_STATUS.CONNECTED ||
+        !this.socket
+      ) {
+        return false;
+      }
+      try {
+        this.socket.send(buildChatGptResponseMessage(responseWirePayload(response)));
+        return true;
+      } catch (error) {
+        this._emit(this.currentStatus, errorText(error));
+        return false;
       }
     }
 
@@ -135,7 +188,6 @@
         this._emit(CONNECTION_STATUS.DISCONNECTED);
         return;
       }
-
       const index = Math.min(
         this.reconnectAttempt,
         this.reconnectDelaysMs.length - 1,
@@ -143,7 +195,6 @@
       const delay = this.reconnectDelaysMs[index];
       this.reconnectAttempt += 1;
       this._emit(CONNECTION_STATUS.RECONNECTING);
-
       this.reconnectTimer = this.setTimeoutFn(() => {
         this.reconnectTimer = null;
         this.connect();
