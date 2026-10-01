@@ -17,20 +17,20 @@ The first goal is not full autonomy. DevCockpit prepares the right next prompt, 
 
 ## Current application foundation
 
-DC-001 establishes the executable application shell and DC-010 adds the first persistent domain concept:
+DC-001 establishes the executable application shell, DC-010 adds persistent PromptDispatch, and DC-011 adds reliable WebSocket transport:
 
-~~~
+~~~text
 frontend/                  React + TypeScript + Vite
         ↓ /api
-app/main.py                FastAPI composition and HTTP boundary
+app/main.py                FastAPI HTTP/WebSocket boundary
         ↓
-app/application/           PromptDispatch creation / idempotence
-app/domain/                PromptDispatch invariants and transitions
+app/application/           Prompt creation + delivery/ACK use cases
+app/domain/                PromptDispatch + PromptDelivery invariants
         ↓
-app/infrastructure/        SQLite / SQLAlchemy repositories + Alembic
+app/infrastructure/        SQLite / SQLAlchemy / WebSocket protocol
 ~~~
 
-`PromptDispatch` is transport-independent. DC-010 does not add WebSocket, Firefox-extension, GitHub, ChatGPT or OpenAI integration.
+PromptDispatch remains transport-independent. PromptDelivery is separate persisted transport truth and never means that a prompt was sent to ChatGPT.
 
 ## Prerequisites
 
@@ -68,7 +68,7 @@ Copy the local configuration template if you want to override defaults:
 cp .env.example .env
 ~~~
 
-The default SQLite database is `./devcockpit.db` and is ignored by Git.
+The default SQLite database is ./devcockpit.db and is ignored by Git.
 
 Apply explicit schema migrations and verify local persistence:
 
@@ -82,7 +82,7 @@ Equivalent migration-only command:
 alembic upgrade head
 ~~~
 
-Alembic migrations are authoritative for business-schema evolution. `Base.metadata.create_all()` is not used as a migration mechanism.
+Alembic migrations are authoritative for business-schema evolution. Base.metadata.create_all() is not used as a migration mechanism.
 
 Start FastAPI:
 
@@ -92,7 +92,7 @@ uvicorn app.main:app --reload
 
 Health endpoint:
 
-~~~
+~~~text
 GET http://127.0.0.1:8000/api/health
 ~~~
 
@@ -102,6 +102,67 @@ Run backend validation:
 python -m compileall -q app tests
 pytest -q
 ~~~
+
+## WebSocket companion transport
+
+DC-011 exposes the local companion endpoint:
+
+~~~text
+ws://127.0.0.1:8000/api/companion/ws
+~~~
+
+The current policy is one active companion. A second simultaneous connection is rejected deterministically. The endpoint is intentionally unauthenticated for the current trusted local-network development model and must not be exposed to an untrusted network without adding authentication.
+
+The functional prompt payload remains exactly:
+
+~~~json
+{
+  "session": "DevCockpit:DEV:DC-011",
+  "text": "Le prompt complet à envoyer à ChatGPT"
+}
+~~~
+
+For reliable ACK/replay it is carried inside protocol version 1:
+
+~~~json
+{
+  "version": 1,
+  "type": "prompt",
+  "delivery_id": "stable-uuid",
+  "payload": {
+    "session": "DevCockpit:DEV:DC-011",
+    "text": "Le prompt complet à envoyer à ChatGPT"
+  }
+}
+~~~
+
+The extension acknowledges receipt with:
+
+~~~json
+{
+  "version": 1,
+  "type": "ack",
+  "delivery_id": "stable-uuid"
+}
+~~~
+
+An ACK means only received by the extension. It does not mean sent to ChatGPT, response received, work started, work completed or WorkItem DONE.
+
+If a connection drops before ACK, the same logical delivery and the same delivery_id are replayed after reconnect. SQLite stores one PromptDelivery per PromptDispatch; reconnects increment transport attempt metadata but never create a new PromptDispatch.
+
+A PromptDispatch CANCELLED is not sent as new work and is not replayed. No remote-revocation protocol is invented for a message that may already have reached the extension.
+
+Control messages are typed. Version 1 currently supports ack and ping inbound, with pong and explicit error responses. chatgpt_response is intentionally not implemented until DC-030.
+
+The transport bounds inbound messages to 64 KiB and does not log full prompt bodies or credentials.
+
+To exercise the complete server loop without Firefox, run:
+
+~~~bash
+pytest -q tests/test_websocket_transport.py
+~~~
+
+Those tests use FastAPI/Starlette's WebSocket test client and require no browser, ChatGPT, GitHub, OpenAI or external network.
 
 ## Frontend setup
 
@@ -118,7 +179,7 @@ Start Vite:
 npm run dev
 ~~~
 
-The development server proxies `/api` to FastAPI at `http://127.0.0.1:8000`.
+The development server proxies /api to FastAPI at http://127.0.0.1:8000.
 
 Build the production frontend:
 
@@ -128,48 +189,54 @@ npm run build
 
 ## Configuration
 
-Backend settings are centralized in `app/config.py` and use the `DEVCOCKPIT_` environment prefix. `.env.example` documents the supported local values and no secret is required for DC-010.
+Backend settings are centralized in app/config.py and use the DEVCOCKPIT_ environment prefix. .env.example documents the supported local values.
 
 The current settings are:
 
-~~~
+~~~text
 DEVCOCKPIT_APP_NAME
 DEVCOCKPIT_ENVIRONMENT
 DEVCOCKPIT_DATABASE_URL
 ~~~
 
-## PromptDispatch model
+## PromptDispatch and PromptDelivery
 
-DC-010 persists one prompt prepared for one logical AgentSession. The session convention is:
+PromptDispatch persists one prompt prepared for one logical AgentSession. The session convention is:
 
-~~~
+~~~text
 <project>:<role>:<work-item>
 ~~~
 
-The DC-010-only state machine is intentionally small:
+The domain state machine remains intentionally small:
 
-~~~
+~~~text
 PREPARED → CANCELLED
 ~~~
 
-Transport states, WebSocket acknowledgements, reconnect/replay delivery and Firefox behavior belong to DC-011 and later slices.
+Transport status is not added to that state machine. PromptDelivery owns the separate transport states:
 
-Creation uses an explicit idempotency key. Replaying the same logical creation returns the existing dispatch; reusing a key for different logical prompt content is rejected.
+~~~text
+PENDING → ACKNOWLEDGED
+~~~
+
+Creation of a PromptDispatch uses an explicit idempotency key. Replaying the same logical creation returns the existing dispatch; reusing a key for different logical prompt content is rejected.
+
+PromptDelivery has a stable UUID and a database uniqueness constraint on dispatch_id, so a reconnect/retry reuses one logical delivery. Prompt text, project, role and WorkItem are not duplicated into the delivery table.
 
 ## Tests and external integrations
 
-The test suite is offline and deterministic. It validates application creation, health, domain invariants/transitions, PromptDispatch persistence/idempotence/rollback, and migration from an empty SQLite database without GitHub, ChatGPT, OpenAI, WebSocket, scheduler, or browser-extension dependencies.
+The test suite is offline and deterministic. It validates application creation, health, domain invariants/transitions, PromptDispatch persistence/idempotence, PromptDelivery migration/constraints/replay/ACK semantics, WebSocket protocol behavior, rollback, and reconnect from an empty or upgraded SQLite database without Firefox, ChatGPT, OpenAI, GitHub or external network dependencies.
 
 ## Target loop
 
-~~~
+~~~text
 Roadmap / WorkItem
         ↓
 DevCockpit derives next action
         ↓
 PromptDispatch
         ↓
-WebSocket
+PromptDelivery + WebSocket
         ↓
 Firefox extension
         ↓
@@ -189,45 +256,36 @@ next PromptDispatch
 ## Initial roles
 
 ### Product Owner
+
 Clarifies product intent, acceptance criteria and minimal redécoupage.
 
 ### Architect
+
 Performs read-only architecture analysis and stabilizes durable decisions.
 
 ### Developer
+
 Implements an approved slice, validates it and resolves normal CI failures.
 
 ### DevCockpit
+
 Owns deterministic orchestration, routing, dependencies, evidence and prompt preparation.
-
-## Firefox extension contract
-
-The initial wire payload remains deliberately small:
-
-~~~json
-{
-  "session": "RessourcePlanner:DEV:502A",
-  "text": "Le prompt complet à envoyer à ChatGPT"
-}
-~~~
-
-DevCockpit may keep richer metadata internally, but the transport contract should not grow accidentally.
 
 ## Roadmap
 
-The canonical roadmap lives in GitHub issue #1 and contains a machine-readable `COCKPIT_PIPELINE_V1` block. There is intentionally no canonical `ROADMAP.md`.
+The canonical roadmap lives in GitHub issue #1 and contains a machine-readable COCKPIT_PIPELINE_V1 block. There is intentionally no canonical ROADMAP.md.
 
 ## Architecture decisions
 
-Durable decisions live under `docs/architecture/`, including authority boundaries, orchestration identity, the manual ChatGPT companion boundary, and explicit Alembic schema migrations.
+Durable decisions live under docs/architecture/, including authority boundaries, orchestration identity, the manual ChatGPT companion/WebSocket protocol, and explicit Alembic schema migrations.
 
 ## Development workflow
 
-Read `AGENTS.md` before implementing any roadmap slice.
+Read AGENTS.md before implementing any roadmap slice.
 
 Normal delivery is:
 
-~~~
+~~~text
 current main
 → issue/roadmap
 → implement
