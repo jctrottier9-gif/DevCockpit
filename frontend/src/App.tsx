@@ -39,6 +39,17 @@ type RoadmapResponse = {
   }
 }
 
+type ImportedResponse = {
+  response_id: string
+  delivery_id: string
+  session: string
+  project_id: string
+  work_item_id: string
+  role: string
+  imported_at: string
+  text: string
+}
+
 type ExecutionResponse = {
   project: Project
   work_item: WorkItem | null
@@ -76,6 +87,7 @@ function App() {
   const [state, setState] = useState<LoadState>('loading')
   const [roadmap, setRoadmap] = useState<RoadmapResponse | null>(null)
   const [execution, setExecution] = useState<ExecutionResponse | null>(null)
+  const [responses, setResponses] = useState<ImportedResponse[]>([])
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -94,14 +106,17 @@ function App() {
         }
 
         const encodedProject = encodeURIComponent(project.project_id)
-        const [roadmapResponse, executionResponse] = await Promise.all([
+        const [roadmapResponse, executionResponse, responsesResponse] = await Promise.all([
           fetch('/api/projects/' + encodedProject + '/roadmap', { signal: controller.signal }),
           fetch('/api/projects/' + encodedProject + '/execution', { signal: controller.signal }),
+          fetch('/api/projects/' + encodedProject + '/responses', { signal: controller.signal }),
         ])
         const roadmapPayload = (await roadmapResponse.json()) as RoadmapResponse
         const executionPayload = (await executionResponse.json()) as ExecutionResponse
+        const responsesPayload = (await responsesResponse.json()) as { responses: ImportedResponse[] }
         setRoadmap(roadmapPayload)
         setExecution(executionPayload)
+        setResponses(responsesPayload.responses ?? [])
 
         if (!roadmapResponse.ok) {
           setError(roadmapPayload.source.code ?? 'GitHub roadmap unavailable')
@@ -110,6 +125,11 @@ function App() {
         }
         if (!executionResponse.ok) {
           setError('GitHub execution projection unavailable')
+          setState('error')
+          return
+        }
+        if (!responsesResponse.ok) {
+          setError('Imported ChatGPT responses unavailable')
           setState('error')
           return
         }
@@ -171,6 +191,26 @@ function App() {
             ))}
           </ul>
         ) : null}
+        <section className="responses">
+          <h2>Réponses ChatGPT importées</h2>
+          {responses.length === 0 ? (
+            <p className="responses-empty">Aucune réponse retournée.</p>
+          ) : (
+            <div className="response-list">
+              {responses.map((response) => (
+                <article className="response-card" key={response.response_id}>
+                  <div className="response-meta">
+                    <strong>{response.work_item_id} · {response.role}</strong>
+                    <span>{response.session}</span>
+                    <span>{new Date(response.imported_at).toLocaleString()}</span>
+                    <span>delivery_id: {response.delivery_id}</span>
+                  </div>
+                  <pre>{response.text}</pre>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
       </section>
     </main>
   )
