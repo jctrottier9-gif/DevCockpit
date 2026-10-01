@@ -8,6 +8,7 @@ from sqlalchemy import CheckConstraint, DateTime, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.domain.prompt_dispatch import PromptDispatch
+from app.infrastructure.chatgpt_responses import SqlAlchemyImportedChatGptResponseRepository
 from app.infrastructure.database import Base
 from app.infrastructure.prompt_deliveries import SqlAlchemyPromptDeliveryRepository
 
@@ -84,11 +85,13 @@ class SqlAlchemyUnitOfWork:
         self._session: Session | None = None
         self.prompt_dispatches: SqlAlchemyPromptDispatchRepository
         self.prompt_deliveries: SqlAlchemyPromptDeliveryRepository
+        self.chatgpt_responses: SqlAlchemyImportedChatGptResponseRepository
 
     def __enter__(self) -> SqlAlchemyUnitOfWork:
         self._session = self._session_factory()
         self.prompt_dispatches = SqlAlchemyPromptDispatchRepository(self._session)
         self.prompt_deliveries = SqlAlchemyPromptDeliveryRepository(self._session)
+        self.chatgpt_responses = SqlAlchemyImportedChatGptResponseRepository(self._session)
         return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
