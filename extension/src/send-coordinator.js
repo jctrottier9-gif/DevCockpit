@@ -23,8 +23,9 @@
   }
 
   class PromptSendCoordinator {
-    constructor({ queueStore, getActiveTabs, sendToTab }) {
+    constructor({ queueStore, sentPromptStore, getActiveTabs, sendToTab }) {
       this.queueStore = queueStore;
+      this.sentPromptStore = sentPromptStore;
       this.getActiveTabs = getActiveTabs;
       this.sendToTab = sendToTab;
     }
@@ -40,7 +41,6 @@
         if (!Array.isArray(tabs) || tabs.length !== 1) {
           throw new Error("Aucun onglet actif unique");
         }
-
         const tab = tabs[0];
         if (!Number.isInteger(tab.id) || !isSupportedChatGptUrl(tab.url)) {
           throw new Error("Ouvrez la conversation ChatGPT cible dans l'onglet actif");
@@ -50,12 +50,17 @@
           type: "devcockpit_send_prompt",
           text: entry.text,
         });
-
         if (!response || response.ok !== true) {
           throw new Error(response?.error || "L'adapter ChatGPT a refusé l'envoi");
         }
         chatGptActionReportedSuccess = true;
 
+        await this.sentPromptStore.recordSent({
+          deliveryId,
+          session: entry.session,
+          tabId: tab.id,
+          conversationUrl: tab.url,
+        });
         await this.queueStore.remove(deliveryId);
         return { ok: true };
       } catch (error) {
@@ -65,8 +70,7 @@
           try {
             await this.queueStore.markQueued(deliveryId, message);
           } catch {
-            // Preserve the first actionable error; storage failures remain visible
-            // through the SEND_REQUESTED state when the prior write succeeded.
+            // Keep the first actionable failure visible.
           }
         }
 
@@ -74,10 +78,9 @@
           return {
             ok: false,
             error:
-              "L'action Envoyer a été déclenchée dans ChatGPT, mais le nettoyage local a échoué. Vérifiez la conversation avant de réessayer.",
+              "L'action Envoyer a été déclenchée dans ChatGPT, mais le contexte envoyé n'a pas pu être conservé localement. Vérifiez la conversation avant de réessayer.",
           };
         }
-
         return { ok: false, error: message };
       }
     }
