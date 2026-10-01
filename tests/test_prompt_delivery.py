@@ -219,6 +219,7 @@ def test_database_rejects_second_logical_delivery_for_same_dispatch(tmp_path: Pa
     try:
         with SqlAlchemyUnitOfWork(session_factory) as uow:
             uow.prompt_dispatches.add(dispatch)
+            uow.flush()
             first = PromptDelivery.create(dispatch_id=dispatch.dispatch_id)
             first.record_attempt()
             uow.prompt_deliveries.save(first)
@@ -250,6 +251,7 @@ def test_unit_of_work_rolls_back_delivery_and_dispatch_after_flush(tmp_path: Pat
         with pytest.raises(RuntimeError):
             with SqlAlchemyUnitOfWork(session_factory) as uow:
                 uow.prompt_dispatches.add(dispatch)
+                uow.flush()
                 uow.prompt_deliveries.save(delivery)
                 uow.flush()
                 raise RuntimeError("boom")
