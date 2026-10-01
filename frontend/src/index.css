@@ -92,3 +92,49 @@ h1 {
   color: #7a2732;
   line-height: 1.5;
 }
+
+
+.responses {
+  margin-top: 2rem;
+}
+
+.responses h2 {
+  margin: 0 0 1rem;
+  font-size: 1.15rem;
+}
+
+.responses-empty {
+  color: #687386;
+}
+
+.response-list {
+  display: grid;
+  gap: 1rem;
+}
+
+.response-card {
+  padding: 1rem;
+  border: 1px solid #dfe4ec;
+  border-radius: 12px;
+  background: #fafbfd;
+}
+
+.response-meta {
+  display: grid;
+  gap: 0.2rem;
+  color: #687386;
+  font-size: 0.8rem;
+}
+
+.response-meta strong {
+  color: #172033;
+  font-size: 0.95rem;
+}
+
+.response-card pre {
+  margin: 1rem 0 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 0.9rem/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
