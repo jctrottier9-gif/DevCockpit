@@ -4,7 +4,7 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import Engine, create_engine, text
+from sqlalchemy import Engine, create_engine, event, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import Settings, get_settings
@@ -20,7 +20,18 @@ def build_engine(settings: Settings | None = None) -> Engine:
     if active_settings.database_url.startswith("sqlite"):
         connect_args["check_same_thread"] = False
 
-    return create_engine(active_settings.database_url, connect_args=connect_args)
+    engine = create_engine(active_settings.database_url, connect_args=connect_args)
+    if active_settings.database_url.startswith("sqlite"):
+
+        @event.listens_for(engine, "connect")
+        def _enable_sqlite_foreign_keys(dbapi_connection: object, _: object) -> None:
+            cursor = dbapi_connection.cursor()
+            try:
+                cursor.execute("PRAGMA foreign_keys=ON")
+            finally:
+                cursor.close()
+
+    return engine
 
 
 def build_session_factory(engine: Engine) -> sessionmaker[Session]:

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.domain.prompt_dispatch import PromptDispatch
 from app.infrastructure.database import Base
+from app.infrastructure.prompt_deliveries import SqlAlchemyPromptDeliveryRepository
 
 
 class PromptDispatchRecord(Base):
@@ -41,12 +42,23 @@ class SqlAlchemyPromptDispatchRepository:
     def add(self, dispatch: PromptDispatch) -> None:
         self._session.add(_record_from_domain(dispatch))
 
+    def save(self, dispatch: PromptDispatch) -> None:
+        record = self._session.get(PromptDispatchRecord, str(dispatch.dispatch_id))
+        if record is None:
+            self.add(dispatch)
+            return
+        record.project_id = dispatch.project_id
+        record.work_item_id = dispatch.work_item_id
+        record.role = dispatch.role.value
+        record.agent_session = dispatch.agent_session
+        record.prompt_text = dispatch.prompt_text
+        record.status = dispatch.status.value
+        record.idempotency_key = dispatch.idempotency_key
+        record.created_at = dispatch.created_at
+        record.updated_at = dispatch.updated_at
+
     def get(self, dispatch_id: object) -> PromptDispatch | None:
-        if isinstance(dispatch_id, UUID):
-            key = str(dispatch_id)
-        else:
-            key = str(dispatch_id)
-        record = self._session.get(PromptDispatchRecord, key)
+        record = self._session.get(PromptDispatchRecord, str(dispatch_id))
         return _domain_from_record(record) if record is not None else None
 
     def get_by_idempotency_key(self, idempotency_key: str) -> PromptDispatch | None:
@@ -57,16 +69,26 @@ class SqlAlchemyPromptDispatchRepository:
         )
         return _domain_from_record(record) if record is not None else None
 
+    def list_prepared(self) -> list[PromptDispatch]:
+        records = self._session.scalars(
+            select(PromptDispatchRecord)
+            .where(PromptDispatchRecord.status == "PREPARED")
+            .order_by(PromptDispatchRecord.created_at, PromptDispatchRecord.dispatch_id)
+        ).all()
+        return [_domain_from_record(record) for record in records]
+
 
 class SqlAlchemyUnitOfWork:
     def __init__(self, session_factory: Callable[[], Session]) -> None:
         self._session_factory = session_factory
         self._session: Session | None = None
         self.prompt_dispatches: SqlAlchemyPromptDispatchRepository
+        self.prompt_deliveries: SqlAlchemyPromptDeliveryRepository
 
     def __enter__(self) -> SqlAlchemyUnitOfWork:
         self._session = self._session_factory()
         self.prompt_dispatches = SqlAlchemyPromptDispatchRepository(self._session)
+        self.prompt_deliveries = SqlAlchemyPromptDeliveryRepository(self._session)
         return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
@@ -79,6 +101,9 @@ class SqlAlchemyUnitOfWork:
 
     def commit(self) -> None:
         self._require_session().commit()
+
+    def flush(self) -> None:
+        self._require_session().flush()
 
     def rollback(self) -> None:
         self._require_session().rollback()
