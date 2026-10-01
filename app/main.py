@@ -7,6 +7,15 @@ import logging
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
+from app.application.chatgpt_responses import (
+    ChatGptResponseImportError,
+    ImportChatGptResponseCommand,
+    ResponseIdConflictError,
+    ResponseSessionMismatchError,
+    UnknownPromptDeliveryError,
+    import_chatgpt_response,
+    list_imported_chatgpt_responses,
+)
 from app.application.executions import (
     ExecutionEvidenceReader,
     evaluate_project_execution,
@@ -35,9 +44,11 @@ from app.infrastructure.project_config import load_projects
 from app.infrastructure.prompt_dispatches import SqlAlchemyUnitOfWork
 from app.infrastructure.websocket_transport import (
     AckMessage,
+    ChatGptResponseMessage,
     CompanionConnectionManager,
     PingMessage,
     ProtocolMessageError,
+    build_chatgpt_response_ack,
     build_error_message,
     build_pong_message,
     build_prompt_message,
@@ -163,6 +174,20 @@ def _execution_payload(
     }
 
 
+
+def _response_payload(response) -> dict[str, object]:
+    return {
+        "response_id": str(response.response_id),
+        "delivery_id": str(response.delivery_id),
+        "session": response.session,
+        "project_id": response.project_id,
+        "work_item_id": response.work_item_id,
+        "role": response.role,
+        "imported_at": response.imported_at.isoformat(),
+        "text": response.text,
+    }
+
+
 def create_app(
     settings: Settings | None = None,
     *,
@@ -269,6 +294,17 @@ def create_app(
             )
         return _roadmap_payload(projection)
 
+    @application.get("/api/projects/{project_id}/responses", tags=["projects"])
+    def project_responses(project_id: str) -> dict[str, object]:
+        project = active_project_catalog.get(project_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        responses = list_imported_chatgpt_responses(
+            project.project_id,
+            uow_factory=uow_factory,
+        )
+        return {"responses": [_response_payload(response) for response in responses]}
+
     @application.get("/api/projects/{project_id}/execution", tags=["projects"])
     def project_execution(project_id: str) -> dict[str, object]:
         project = active_project_catalog.get(project_id)
@@ -340,6 +376,51 @@ def create_app(
                     message = parse_inbound_message(raw_message)
                 except ProtocolMessageError as exc:
                     await websocket.send_json(build_error_message(exc.code))
+                    continue
+
+                if isinstance(message, ChatGptResponseMessage):
+                    try:
+                        import_chatgpt_response(
+                            ImportChatGptResponseCommand(
+                                response_id=message.response_id,
+                                delivery_id=message.delivery_id,
+                                session=message.session,
+                                text=message.text,
+                            ),
+                            uow_factory=uow_factory,
+                        )
+                    except UnknownPromptDeliveryError:
+                        await websocket.send_json(
+                            build_error_message(
+                                "unknown_delivery",
+                                response_id=message.response_id,
+                            )
+                        )
+                    except ResponseSessionMismatchError:
+                        await websocket.send_json(
+                            build_error_message(
+                                "session_mismatch",
+                                response_id=message.response_id,
+                            )
+                        )
+                    except ResponseIdConflictError:
+                        await websocket.send_json(
+                            build_error_message(
+                                "response_id_conflict",
+                                response_id=message.response_id,
+                            )
+                        )
+                    except ChatGptResponseImportError:
+                        await websocket.send_json(
+                            build_error_message(
+                                "invalid_chatgpt_response",
+                                response_id=message.response_id,
+                            )
+                        )
+                    else:
+                        await websocket.send_json(
+                            build_chatgpt_response_ack(message.response_id)
+                        )
                     continue
 
                 if isinstance(message, AckMessage):

@@ -100,9 +100,7 @@ def test_disconnect_before_ack_replays_same_delivery_after_reconnect(tmp_path: P
             assert delivery.is_acknowledged is True
 
 
-def test_protocol_errors_are_explicit_and_chatgpt_response_is_not_implemented(
-    tmp_path: Path,
-) -> None:
+def test_protocol_errors_are_explicit(tmp_path: Path) -> None:
     application = _application(tmp_path)
 
     with TestClient(application) as client:
@@ -110,7 +108,10 @@ def test_protocol_errors_are_explicit_and_chatgpt_response_is_not_implemented(
             websocket.send_text("{")
             assert websocket.receive_json()["code"] == "invalid_json"
 
-            websocket.send_json({"version": 1, "type": "chatgpt_response", "text": "not yet"})
+            websocket.send_json({"version": 1, "type": "chatgpt_response", "text": "invalid"})
+            assert websocket.receive_json()["code"] == "invalid_chatgpt_response"
+
+            websocket.send_json({"version": 1, "type": "unknown"})
             assert websocket.receive_json()["code"] == "unknown_type"
 
             websocket.send_json(
@@ -188,3 +189,125 @@ def test_second_simultaneous_companion_is_rejected_deterministically(tmp_path: P
 
             first.send_json({"version": 1, "type": "ping"})
             assert first.receive_json() == {"version": 1, "type": "pong"}
+
+def test_chatgpt_response_is_persisted_and_identical_replay_gets_same_ack(
+    tmp_path: Path,
+) -> None:
+    application = _application(tmp_path)
+    response_id = "10cd3422-3dbd-481f-a5b0-5915a1f7f5be"
+
+    with TestClient(application) as client:
+        _create_dispatch(application, work_item="DC-030")
+        with client.websocket_connect("/api/companion/ws") as websocket:
+            prompt = websocket.receive_json()
+            websocket.send_json(
+                {
+                    "version": 1,
+                    "type": "ack",
+                    "delivery_id": prompt["delivery_id"],
+                }
+            )
+            response_message = {
+                "version": 1,
+                "type": "chatgpt_response",
+                "response_id": response_id,
+                "delivery_id": prompt["delivery_id"],
+                "payload": {
+                    "session": "DevCockpit:DEV:DC-030",
+                    "text": "Returned response\n\n- complete text",
+                },
+            }
+            websocket.send_json(response_message)
+            assert websocket.receive_json() == {
+                "version": 1,
+                "type": "chatgpt_response_ack",
+                "response_id": response_id,
+            }
+
+            websocket.send_json(response_message)
+            assert websocket.receive_json() == {
+                "version": 1,
+                "type": "chatgpt_response_ack",
+                "response_id": response_id,
+            }
+
+    with SqlAlchemyUnitOfWork(application.state.session_factory) as uow:
+        responses = uow.chatgpt_responses.list_all()
+        assert len(responses) == 1
+        assert responses[0].text == "Returned response\n\n- complete text"
+
+
+def test_chatgpt_response_collision_unknown_delivery_and_session_mismatch_are_explicit(
+    tmp_path: Path,
+) -> None:
+    application = _application(tmp_path)
+    response_id = "10cd3422-3dbd-481f-a5b0-5915a1f7f5be"
+
+    with TestClient(application) as client:
+        _create_dispatch(application, work_item="DC-030")
+        with client.websocket_connect("/api/companion/ws") as websocket:
+            prompt = websocket.receive_json()
+            valid = {
+                "version": 1,
+                "type": "chatgpt_response",
+                "response_id": response_id,
+                "delivery_id": prompt["delivery_id"],
+                "payload": {
+                    "session": "DevCockpit:DEV:DC-030",
+                    "text": "first",
+                },
+            }
+            websocket.send_json(valid)
+            assert websocket.receive_json()["type"] == "chatgpt_response_ack"
+
+            changed = {
+                **valid,
+                "payload": {
+                    "session": "DevCockpit:DEV:DC-030",
+                    "text": "changed",
+                },
+            }
+            websocket.send_json(changed)
+            collision = websocket.receive_json()
+            assert collision["code"] == "response_id_conflict"
+            assert collision["response_id"] == response_id
+
+            mismatch = {
+                **valid,
+                "response_id": str(uuid4()),
+                "payload": {
+                    "session": "DevCockpit:ARCH:DC-030",
+                    "text": "wrong session",
+                },
+            }
+            websocket.send_json(mismatch)
+            assert websocket.receive_json()["code"] == "session_mismatch"
+
+            unknown = {
+                **valid,
+                "response_id": str(uuid4()),
+                "delivery_id": str(uuid4()),
+            }
+            websocket.send_json(unknown)
+            assert websocket.receive_json()["code"] == "unknown_delivery"
+
+
+def test_chatgpt_response_over_limit_fails_without_truncation(tmp_path: Path) -> None:
+    application = _application(tmp_path)
+
+    with TestClient(application) as client:
+        with client.websocket_connect("/api/companion/ws") as websocket:
+            websocket.send_json(
+                {
+                    "version": 1,
+                    "type": "chatgpt_response",
+                    "response_id": str(uuid4()),
+                    "delivery_id": str(uuid4()),
+                    "payload": {
+                        "session": "DevCockpit:DEV:DC-030",
+                        "text": "x" * (512 * 1024),
+                    },
+                }
+            )
+            assert websocket.receive_json()["code"] == "message_too_large"
+

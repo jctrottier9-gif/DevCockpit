@@ -17,7 +17,7 @@ The first goal is not full autonomy. DevCockpit prepares the right next prompt, 
 
 ## Current application foundation
 
-DC-001 establishes the executable application shell, DC-010 adds persistent PromptDispatch, DC-011 adds reliable WebSocket transport, DC-012 adds the first usable Firefox companion, and DC-020 adds configured GitHub projects plus strict canonical-roadmap projection:
+DC-001 establishes the executable application shell, DC-010 adds persistent PromptDispatch, DC-011 adds reliable WebSocket transport, DC-012 adds the first usable Firefox companion, DC-020 adds configured GitHub projects plus strict canonical-roadmap projection, DC-021 adds GitHub/CI execution projection, and DC-030 adds explicit response return:
 
 ~~~text
 frontend/                  React + TypeScript + Vite
@@ -29,7 +29,7 @@ app/domain/                Prompt models + Project + WorkItem/parser rules
         ↓
 app/infrastructure/        SQLite / GitHub read adapter / WebSocket protocol
 
-extension/                 Firefox queue / explicit ChatGPT send
+extension/                 Firefox queue / explicit send + selected response return
 ~~~
 
 PromptDispatch remains transport-independent. PromptDelivery is separate persisted transport truth and never means that a prompt was sent to ChatGPT.
@@ -254,9 +254,9 @@ If a connection drops before ACK, the same logical delivery and the same deliver
 
 A PromptDispatch CANCELLED is not sent as new work and is not replayed. No remote-revocation protocol is invented for a message that may already have reached the extension.
 
-Control messages are typed. Version 1 currently supports ack and ping inbound, with pong and explicit error responses. chatgpt_response is intentionally not implemented until DC-030.
+Control messages are typed. Version 1 supports ack, ping and chatgpt_response inbound, with pong, chatgpt_response_ack and explicit error responses. A returned response is correlated by delivery_id to its source PromptDelivery/PromptDispatch and the received session must exactly match the source AgentSession.
 
-The transport bounds inbound messages to 64 KiB and does not log full prompt bodies or credentials.
+The transport bounds inbound messages to 512 KiB. Oversize responses fail explicitly and are never silently truncated. Full prompt/response bodies and credentials are not logged.
 
 To exercise the complete server loop without Firefox, run:
 
@@ -324,7 +324,7 @@ Nothing is injected or sent when a prompt arrives. The user must open the intend
 
 All ChatGPT DOM knowledge is isolated in `extension/src/chatgpt-page-adapter.js`. The adapter uses narrowly scoped composer/send selectors and fails closed when the composer or send button is missing, disabled or ambiguous. It never falls back to the first textarea or first button. When injection/send fails, the prompt remains available for retry. When the page reports a successful send, the entry is removed from the active queue; if local cleanup then fails, `SEND_REQUESTED` remains visible so the user can verify the conversation before retrying rather than blindly duplicating a send.
 
-The ChatGPT UI is an external dependency and its DOM can change. A DOM change may require updating the isolated adapter selectors. DC-012 intentionally performs no response scraping, no generation monitoring and no `chatgpt_response` return; that remains DC-030.
+The ChatGPT UI is an external dependency and its DOM can change. A DOM change may require updating the isolated adapter selectors. DC-030 adds no continuous scraping or generation monitoring: after a successful explicit send, the companion retains a SentPromptContext containing the delivery_id/session. The user later clicks **Retourner une réponse**, the adapter performs one one-shot scan of assistant-role elements, the user explicitly chooses one candidate and confirms it, and a PendingResponse is persisted before WebSocket transmission. The same response_id is replayed after reconnect until chatgpt_response_ack is received.
 
 ### Manual smoke procedure
 
@@ -342,6 +342,18 @@ FastAPI local started
 ~~~
 
 If the real ChatGPT DOM cannot be exercised in the current development environment, record that limitation rather than treating the DOM-fixture tests as proof of a browser smoke.
+
+### Explicit response return
+
+DC-030 persists imported responses as historical/audit facts only. They do not change PromptDispatch, PromptDelivery, WorkItem, GitHub or ExecutionProjection state and are not interpreted as decisions or handoffs.
+
+The read-only cockpit surface is:
+
+~~~text
+GET /api/projects/{project_id}/responses
+~~~
+
+It resolves session, Project, WorkItem and role through the source delivery/dispatch and displays the complete returned text. The Cockpit intentionally exposes no Architect/PO/accept/continue action in this slice.
 
 ## Frontend setup
 
@@ -404,6 +416,8 @@ PENDING → ACKNOWLEDGED
 Creation of a PromptDispatch uses an explicit idempotency key. Replaying the same logical creation returns the existing dispatch; reusing a key for different logical prompt content is rejected.
 
 PromptDelivery has a stable UUID and a database uniqueness constraint on dispatch_id, so a reconnect/retry reuses one logical delivery. Prompt text, project, role and WorkItem are not duplicated into the delivery table.
+
+ImportedChatGptResponse stores only response_id, source delivery_id, complete text and imported_at. The response_id is the idempotency identity for the return action; multiple distinct response_ids may legitimately refer to the same delivery.
 
 ## Tests and external integrations
 

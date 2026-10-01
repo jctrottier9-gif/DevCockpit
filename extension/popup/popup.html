@@ -12,17 +12,30 @@
         <h1>DevCockpit Companion</h1>
         <p id="connection-status" class="status">○ Déconnecté</p>
       </div>
-      <button id="retry-connection" type="button" class="secondary" hidden>
-        Reconnecter
-      </button>
+      <button id="retry-connection" type="button" class="secondary" hidden>Reconnecter</button>
     </header>
 
     <p id="connection-error" class="error" hidden></p>
     <p id="socket-url" class="socket"></p>
 
     <main>
-      <p id="empty-state">Aucun prompt en attente.</p>
-      <div id="queue"></div>
+      <section>
+        <h2>Prompts en attente</h2>
+        <p id="empty-state">Aucun prompt en attente.</p>
+        <div id="queue" class="stack"></div>
+      </section>
+
+      <section>
+        <h2>Prompts envoyés</h2>
+        <p id="sent-empty-state">Aucun prompt envoyé conservé.</p>
+        <div id="sent-prompts" class="stack"></div>
+      </section>
+
+      <section>
+        <h2>Retours en attente d’ACK</h2>
+        <p id="pending-empty-state">Aucune réponse en attente.</p>
+        <div id="pending-responses" class="stack"></div>
+      </section>
     </main>
 
     <template id="prompt-card-template">
@@ -32,12 +45,34 @@
           <span class="local-status"></span>
         </div>
         <p class="preview"></p>
-        <details>
-          <summary>Voir le texte complet</summary>
-          <pre class="full-text"></pre>
-        </details>
+        <details><summary>Voir le texte complet</summary><pre class="full-text"></pre></details>
         <p class="entry-error error" hidden></p>
         <button type="button" class="send">Envoyer</button>
+      </article>
+    </template>
+
+    <template id="sent-card-template">
+      <article class="card sent-card">
+        <div class="card-header">
+          <strong class="session"></strong>
+          <span class="sent-at"></span>
+        </div>
+        <p class="entry-error error" hidden></p>
+        <button type="button" class="return-response">Retourner une réponse</button>
+        <div class="candidate-panel" hidden>
+          <p>Choisissez explicitement la réponse assistant à retourner :</p>
+          <div class="candidates"></div>
+          <button type="button" class="confirm-return" disabled>Retourner la réponse sélectionnée</button>
+        </div>
+      </article>
+    </template>
+
+    <template id="pending-card-template">
+      <article class="card">
+        <strong class="session"></strong>
+        <p class="pending-id socket"></p>
+        <p class="preview"></p>
+        <p class="entry-error error" hidden></p>
       </article>
     </template>
 

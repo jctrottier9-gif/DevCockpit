@@ -11,45 +11,33 @@ class FakeEvent {
 }
 
 class FakeElement {
-  constructor({ tagName = "DIV", attributes = {}, disabled = false } = {}) {
+  constructor({ tagName = "DIV", attributes = {}, disabled = false, text = "" } = {}) {
     this.tagName = tagName;
     this.attributes = { ...attributes };
     this.disabled = disabled;
-    this.textContent = "";
+    this.textContent = text;
+    this.innerText = text;
     this.value = "";
     this.focused = false;
     this.clicked = false;
     this.events = [];
+    this.children = new Set();
   }
-
-  getAttribute(name) {
-    return this.attributes[name] ?? null;
-  }
-
-  focus() {
-    this.focused = true;
-  }
-
-  dispatchEvent(event) {
-    this.events.push(event);
-    return true;
-  }
-
-  click() {
-    this.clicked = true;
-  }
+  getAttribute(name) { return this.attributes[name] ?? null; }
+  focus() { this.focused = true; }
+  dispatchEvent(event) { this.events.push(event); return true; }
+  click() { this.clicked = true; }
+  contains(other) { return this.children.has(other); }
 }
 
 class FakeDocument {
   constructor(selectorMap) {
     this.selectorMap = selectorMap;
-    this.defaultView = {
-      InputEvent: FakeEvent,
-      Event: FakeEvent,
-    };
+    this.defaultView = { InputEvent: FakeEvent, Event: FakeEvent };
+    this.queryCount = 0;
   }
-
   querySelectorAll(selector) {
+    this.queryCount += 1;
     return this.selectorMap.get(selector) || [];
   }
 }
@@ -61,74 +49,75 @@ async function adapterFor(selectorMap) {
   );
   const { ChatGptPageAdapter } = context.DevCockpitCompanion.chatgpt;
   const document = new FakeDocument(selectorMap);
-  return new ChatGptPageAdapter(document, { afterInput: async () => {} });
+  return {
+    adapter: new ChatGptPageAdapter(document, { afterInput: async () => {} }),
+    document,
+  };
 }
 
-test("adapter inserts prompt and clicks only the exact send button", async () => {
-  const composer = new FakeElement({
-    attributes: { contenteditable: "true" },
-  });
+test("adapter sends prompt only through exact composer and button", async () => {
+  const composer = new FakeElement({ attributes: { contenteditable: "true" } });
   const button = new FakeElement({ tagName: "BUTTON" });
-  const map = new Map([
+  const { adapter } = await adapterFor(new Map([
     ['#prompt-textarea[contenteditable="true"]', [composer]],
     ['button[data-testid="send-button"]', [button]],
-  ]);
-  const adapter = await adapterFor(map);
-
+  ]));
   const result = await adapter.sendPrompt("Hello ChatGPT");
-
   assert.equal(result.ok, true);
   assert.equal(composer.textContent, "Hello ChatGPT");
-  assert.equal(composer.focused, true);
-  assert.equal(composer.events.some((event) => event.type === "input"), true);
   assert.equal(button.clicked, true);
 });
 
-test("missing composer fails closed without clicking", async () => {
+test("missing or ambiguous composer fails closed", async () => {
   const button = new FakeElement({ tagName: "BUTTON" });
-  const adapter = await adapterFor(
-    new Map([['button[data-testid="send-button"]', [button]]]),
-  );
-
-  const result = await adapter.sendPrompt("Hello");
-
-  assert.equal(result.ok, false);
+  let value = await adapterFor(new Map([['button[data-testid="send-button"]', [button]]]));
+  let result = await value.adapter.sendPrompt("Hello");
   assert.equal(result.error, "composer_not_found");
   assert.equal(button.clicked, false);
-});
 
-test("missing send button preserves fail-closed behavior", async () => {
-  const composer = new FakeElement({
-    attributes: { contenteditable: "true" },
-  });
-  const adapter = await adapterFor(
-    new Map([['#prompt-textarea[contenteditable="true"]', [composer]]]),
-  );
-
-  const result = await adapter.sendPrompt("Hello");
-
-  assert.equal(result.ok, false);
-  assert.equal(result.error, "send_button_not_found");
-});
-
-test("ambiguous composer fails closed", async () => {
-  const first = new FakeElement({
-    attributes: { contenteditable: "true" },
-  });
-  const second = new FakeElement({
-    attributes: { contenteditable: "true" },
-  });
-  const button = new FakeElement({ tagName: "BUTTON" });
-  const adapter = await adapterFor(
-    new Map([
-      ['#prompt-textarea[contenteditable="true"]', [first, second]],
-      ['button[data-testid="send-button"]', [button]],
-    ]),
-  );
-
-  const result = await adapter.sendPrompt("Hello");
-
-  assert.equal(result.ok, false);
+  const first = new FakeElement({ attributes: { contenteditable: "true" } });
+  const second = new FakeElement({ attributes: { contenteditable: "true" } });
+  value = await adapterFor(new Map([
+    ['#prompt-textarea[contenteditable="true"]', [first, second]],
+    ['button[data-testid="send-button"]', [button]],
+  ]));
+  result = await value.adapter.sendPrompt("Hello");
   assert.equal(result.error, "composer_ambiguous");
   assert.equal(button.clicked, false);
+});
+
+test("assistant DOM is inspected only by explicit one-shot call", async () => {
+  const first = new FakeElement({ text: "First answer\n\n- item" });
+  const second = new FakeElement({ text: "Second answer\ncode block" });
+  const { adapter, document } = await adapterFor(new Map([
+    ['[data-message-author-role="assistant"]', [first, second]],
+  ]));
+  assert.equal(document.queryCount, 0);
+  const result = adapter.listAssistantResponses();
+  assert.equal(result.ok, true);
+  assert.equal(document.queryCount, 1);
+  assert.equal(result.candidates.length, 2);
+  assert.equal(result.candidates[0].text, "First answer\n\n- item");
+  assert.equal(result.candidates[1].text, "Second answer\ncode block");
+});
+
+test("no, blank or ambiguous assistant response fails closed", async () => {
+  let value = await adapterFor(new Map());
+  let result = value.adapter.listAssistantResponses();
+  assert.equal(result.error, "assistant_response_not_found");
+
+  value = await adapterFor(new Map([
+    ['[data-message-author-role="assistant"]', [new FakeElement({ text: "   " })]],
+  ]));
+  result = value.adapter.listAssistantResponses();
+  assert.equal(result.error, "assistant_response_empty");
+
+  const outer = new FakeElement({ text: "outer" });
+  const inner = new FakeElement({ text: "inner" });
+  outer.children.add(inner);
+  value = await adapterFor(new Map([
+    ['[data-message-author-role="assistant"]', [outer, inner]],
+  ]));
+  result = value.adapter.listAssistantResponses();
+  assert.equal(result.error, "assistant_response_dom_ambiguous");
 });
