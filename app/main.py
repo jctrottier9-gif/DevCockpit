@@ -2,10 +2,16 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager, suppress
+import logging
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
+from app.application.executions import (
+    ExecutionEvidenceReader,
+    evaluate_project_execution,
+    read_project_execution,
+)
 from app.application.projects import ProjectCatalog
 from app.application.prompt_deliveries import (
     AcknowledgementResult,
@@ -19,9 +25,11 @@ from app.application.roadmaps import (
     read_project_roadmap,
 )
 from app.config import Settings, get_settings
+from app.domain.execution import ExecutionProjection
 from app.domain.project import Project
 from app.domain.roadmap import PipelineDiagnostic, PipelineParseResult, WorkItem
 from app.infrastructure.database import build_engine, build_session_factory
+from app.infrastructure.github_execution import GitHubExecutionReader
 from app.infrastructure.github_roadmaps import GitHubRoadmapReader
 from app.infrastructure.project_config import load_projects
 from app.infrastructure.prompt_dispatches import SqlAlchemyUnitOfWork
@@ -38,6 +46,7 @@ from app.infrastructure.websocket_transport import (
 
 
 _DELIVERY_POLL_SECONDS = 0.1
+_LOGGER = logging.getLogger(__name__)
 
 
 def _project_payload(project: Project) -> dict[str, object]:
@@ -93,11 +102,73 @@ def _roadmap_payload(projection: ProjectRoadmapProjection) -> dict[str, object]:
     }
 
 
+def _execution_payload(
+    project: Project,
+    projection: ExecutionProjection,
+) -> dict[str, object]:
+    pull_request = projection.pull_request
+    ci = projection.ci
+    return {
+        "project": _project_payload(project),
+        "work_item": (
+            _work_item_payload(projection.work_item)
+            if projection.work_item is not None
+            else None
+        ),
+        "execution_state": projection.state.value,
+        "next_action": projection.next_action.value,
+        "branch": projection.branch.name if projection.branch is not None else (
+            pull_request.branch if pull_request is not None else None
+        ),
+        "pull_request": (
+            {
+                "number": pull_request.number,
+                "title": pull_request.title,
+                "url": pull_request.url,
+                "mergeable": pull_request.mergeable,
+                "merged": pull_request.merged,
+            }
+            if pull_request is not None
+            else None
+        ),
+        "head_sha": (
+            pull_request.head_sha
+            if pull_request is not None
+            else (projection.branch.sha if projection.branch is not None else None)
+        ),
+        "ci": (
+            {
+                "state": ci.state.value,
+                "observed_runs": ci.observed_runs,
+                "failed_jobs": list(ci.failed_jobs),
+                "runs": [
+                    {
+                        "run_id": run.run_id,
+                        "name": run.name,
+                        "status": run.status,
+                        "conclusion": run.conclusion,
+                        "attempt": run.attempt,
+                        "url": run.url,
+                    }
+                    for run in ci.runs
+                ],
+            }
+            if ci is not None
+            else None
+        ),
+        "diagnostics": [
+            {"code": item.code, "message": item.message}
+            for item in projection.diagnostics
+        ],
+    }
+
+
 def create_app(
     settings: Settings | None = None,
     *,
     project_catalog: ProjectCatalog | None = None,
     roadmap_reader: RoadmapIssueReader | None = None,
+    execution_reader: ExecutionEvidenceReader | None = None,
 ) -> FastAPI:
     active_settings = settings or get_settings()
     engine = build_engine(active_settings)
@@ -115,14 +186,48 @@ def create_app(
         token=token,
         timeout_seconds=active_settings.github_timeout_seconds,
     )
+    active_execution_reader = execution_reader or GitHubExecutionReader(
+        token=token,
+        timeout_seconds=active_settings.github_timeout_seconds,
+    )
 
     def uow_factory() -> SqlAlchemyUnitOfWork:
         return SqlAlchemyUnitOfWork(session_factory)
 
+    async def execution_poller() -> None:
+        while True:
+            await asyncio.sleep(active_settings.execution_poll_seconds)
+            for project in active_project_catalog.list():
+                try:
+                    await asyncio.to_thread(
+                        evaluate_project_execution,
+                        project,
+                        roadmap_reader=active_roadmap_reader,
+                        evidence_reader=active_execution_reader,
+                        uow_factory=uow_factory,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    _LOGGER.warning(
+                        "Execution polling failed for project %s: %s",
+                        project.project_id,
+                        type(exc).__name__,
+                    )
+
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        yield
-        engine.dispose()
+        poller_task: asyncio.Task[None] | None = None
+        if active_settings.execution_poll_seconds > 0:
+            poller_task = asyncio.create_task(execution_poller())
+        try:
+            yield
+        finally:
+            if poller_task is not None:
+                poller_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await poller_task
+            engine.dispose()
 
     application = FastAPI(
         title=active_settings.app_name,
@@ -136,6 +241,7 @@ def create_app(
     application.state.companion_connections = connection_manager
     application.state.project_catalog = active_project_catalog
     application.state.roadmap_reader = active_roadmap_reader
+    application.state.execution_reader = active_execution_reader
 
     @application.get("/api/health", tags=["system"])
     def health() -> dict[str, str]:
@@ -162,6 +268,41 @@ def create_app(
                 },
             )
         return _roadmap_payload(projection)
+
+    @application.get("/api/projects/{project_id}/execution", tags=["projects"])
+    def project_execution(project_id: str) -> dict[str, object]:
+        project = active_project_catalog.get(project_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        projection = read_project_execution(
+            project,
+            roadmap_reader=active_roadmap_reader,
+            evidence_reader=active_execution_reader,
+        )
+        return _execution_payload(project, projection)
+
+    @application.post("/api/projects/{project_id}/execution/evaluate", tags=["projects"])
+    def evaluate_execution(project_id: str) -> dict[str, object]:
+        project = active_project_catalog.get(project_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        evaluation = evaluate_project_execution(
+            project,
+            roadmap_reader=active_roadmap_reader,
+            evidence_reader=active_execution_reader,
+            uow_factory=uow_factory,
+        )
+        payload = _execution_payload(project, evaluation.projection)
+        payload["prompt_dispatch"] = (
+            {
+                "dispatch_id": str(evaluation.dispatch.dispatch_id),
+                "agent_session": evaluation.dispatch.agent_session,
+                "idempotency_key": evaluation.dispatch.idempotency_key,
+            }
+            if evaluation.dispatch is not None
+            else None
+        )
+        return payload
 
     @application.websocket("/api/companion/ws")
     async def companion_websocket(websocket: WebSocket) -> None:

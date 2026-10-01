@@ -8,6 +8,7 @@ Current decisions:
 - [ADR-0002 — Orchestration model: WorkItem, Execution, Session and Dispatch](ADR-0002-orchestration-model.md)
 - [ADR-0003 — Manual ChatGPT companion and WebSocket transport](ADR-0003-manual-chatgpt-companion.md)
 - [ADR-0004 — Explicit schema migrations with Alembic](ADR-0004-explicit-schema-migrations.md)
+- [ADR-0005 — GitHub execution projection and strict WorkItem identity](ADR-0005-github-execution-projection.md)
 
 ## Rule
 

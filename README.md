@@ -166,6 +166,45 @@ curl http://127.0.0.1:8000/api/projects/DevCockpit/roadmap
 
 For the current roadmap before DC-020 is merged, the expected active canonical item is \`DC-020\`. This is smoke-test evidence only and is not hardcoded into product logic.
 
+## Execution projection and CI follow-up
+
+DC-021 adds a derived `ExecutionProjection` without creating a second execution authority. `WorkItem.status` remains the canonical `READY / BLOCKED / DONE` value from `COCKPIT_PIPELINE_V1`; `DEVELOPING`, `PR_OPEN`, `CI_RUNNING`, `CI_RED`, `READY_TO_MERGE`, `MERGED` and `ROADMAP_UPDATE_REQUIRED` are recalculated from read-only GitHub evidence.
+
+The backend uses strong WorkItem identity only:
+
+- WorkItem key at the beginning of the PR title with an explicit boundary;
+- a branch path segment prefixed by the WorkItem key with an explicit branch boundary;
+- an exact structured PR-body line such as `Work-Item: DC-021`.
+
+An arbitrary body mention is never sufficient. Multiple open strongly-associated PRs fail closed instead of selecting one silently.
+
+CI is evaluated only for the current PR head SHA. Current failure conclusions take precedence over running validations; otherwise queued/in-progress validations yield `CI_RUNNING`. Green requires at least one observed current workflow, no current red/running workflow, and only completed `success / neutral / skipped` conclusions. Zero observed workflows is not green.
+
+The state priority after source/pipeline validation is:
+
+~~~text
+merged + green while roadmap remains READY -> ROADMAP_UPDATE_REQUIRED
+open PR + red CI                         -> CI_RED
+open PR + running CI                     -> CI_RUNNING
+open PR + green CI + mergeable           -> READY_TO_MERGE
+open PR without verdict                  -> PR_OPEN
+strong branch ahead of default branch    -> DEVELOPING
+no strong GitHub evidence                -> READY
+~~~
+
+The execution surface is:
+
+~~~text
+GET  /api/projects/{project_id}/execution
+POST /api/projects/{project_id}/execution/evaluate
+~~~
+
+The GET is read-only. The explicit evaluation use case, also called by the bounded backend poller, may create automatic PromptDispatch records only for `READY -> DEV initial` and `CI_RED -> DEV follow-up`. Both reuse `<project>:DEV:<work-item>`. Repeated polling is idempotent; a CI follow-up key is tied to PR + current head SHA + workflow run ID + run attempt.
+
+`DEVCOCKPIT_EXECUTION_POLL_SECONDS` controls the poll interval and defaults to 30 seconds. Set it to `0` to disable the automatic poller. One project failing to read GitHub is isolated from the others, and poller shutdown follows the FastAPI lifecycle.
+
+A merged PR with sufficiently green delivery CI while the roadmap still says `READY` is projected as `ROADMAP_UPDATE_REQUIRED`. DC-021 does not write the roadmap, merge the PR, rerun CI or start the next WorkItem implicitly.
+
 ## WebSocket companion transport
 
 DC-011 exposes the local companion endpoint:
