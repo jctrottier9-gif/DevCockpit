@@ -62,11 +62,18 @@ The MVP wire payload is:
 
 Internally, a PromptDispatch may also carry stable IDs, role/work-item links, status and timestamps.
 
+### Handoff
+Persistent, explicitly confirmed request from one role to another for one Project/WorkItem.
+
+Handoff is local orchestration state. It does not become an ExecutionState and it is not a WorkItem dependency.
+
 ### ExternalEvent
 Observable event from GitHub/CI. Replays must be idempotent.
 
 ### Decision
-Explicit product or architecture decision returned/imported into DevCockpit.
+Persistent conclusion explicitly accepted by the user from a correlated response/Handoff.
+
+A Decision is not the imported ChatGPT response itself and does not mutate GitHub or the roadmap by its mere existence.
 
 ### ResourceLock
 Future mechanism for preventing unsafe concurrent work against shared high-risk surfaces.
@@ -95,3 +102,8 @@ The exact state machine may evolve through an architecture gate, but canonical r
 - Prompt history does not become execution history implicitly.
 - Retries and reconnects can be made idempotent.
 - PO/Architect/DEV conversations can be isolated cleanly.
+
+
+## ASTRA-040 clarification
+
+DC-040 keeps `ExecutionProjection` GitHub-derived and introduces persistent Handoff/Decision records for local orchestration waits. AgentSession remains the logical string `<project>:<role>:<work-item>`; no AgentSession table is introduced. See ADR-0007.
