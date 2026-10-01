@@ -15,9 +15,130 @@ The first goal is not full autonomy. DevCockpit prepares the right next prompt, 
 - Architecture and product decisions are explicit.
 - Parallel development comes only after the single-execution loop is reliable.
 
+## Current application foundation
+
+DC-001 establishes the executable application shell:
+
+~~~
+frontend/                  React + TypeScript + Vite
+        ↓ /api
+app/main.py                FastAPI composition and HTTP boundary
+        ↓
+app/application/           use cases / orchestration services
+app/domain/                domain rules and state models
+        ↓
+app/infrastructure/        SQLite / SQLAlchemy and future adapters
+~~~
+
+The bootstrap intentionally contains no Project, WorkItem, Execution, AgentSession, PromptDispatch, ExternalEvent, or Decision model yet. Those concepts remain documented architecture until their roadmap slice implements them.
+
+## Prerequisites
+
+CI uses Python 3.12.7 and Node 22.20.0. Local development should use compatible Python 3.12+ and Node 22 versions.
+
+## Backend setup
+
+Create and activate a virtual environment, then install the backend and test dependencies:
+
+~~~bash
+python -m venv .venv
+~~~
+
+On Linux/macOS:
+
+~~~bash
+source .venv/bin/activate
+~~~
+
+On PowerShell:
+
+~~~powershell
+.\.venv\Scripts\Activate.ps1
+~~~
+
+Install dependencies:
+
+~~~bash
+python -m pip install -e ".[dev]"
+~~~
+
+Copy the local configuration template if you want to override defaults:
+
+~~~bash
+cp .env.example .env
+~~~
+
+The default SQLite database is ./devcockpit.db and is ignored by Git.
+
+Initialize and verify local persistence:
+
+~~~bash
+python -m app.infrastructure.database
+~~~
+
+Start FastAPI:
+
+~~~bash
+uvicorn app.main:app --reload
+~~~
+
+Health endpoint:
+
+~~~
+GET http://127.0.0.1:8000/api/health
+~~~
+
+Run backend validation:
+
+~~~bash
+python -m compileall -q app tests
+pytest -q
+~~~
+
+DC-001 has no business tables, so no schema migration is required yet. Per AGENTS.md, the first slice that introduces persistent tables must use an explicit migration mechanism rather than ad-hoc schema mutation.
+
+## Frontend setup
+
+Install frontend dependencies:
+
+~~~bash
+cd frontend
+npm install --no-audit --no-fund
+~~~
+
+Start Vite:
+
+~~~bash
+npm run dev
+~~~
+
+The development server proxies /api to FastAPI at http://127.0.0.1:8000.
+
+Build the production frontend:
+
+~~~bash
+npm run build
+~~~
+
+## Configuration
+
+Backend settings are centralized in app/config.py and use the DEVCOCKPIT_ environment prefix. .env.example documents the supported local values and no secret is required for DC-001.
+
+The current settings are:
+
+~~~
+DEVCOCKPIT_APP_NAME
+DEVCOCKPIT_ENVIRONMENT
+DEVCOCKPIT_DATABASE_URL
+~~~
+
+## Tests and external integrations
+
+The DC-001 test suite is intentionally offline and deterministic. It validates application creation, the health endpoint, and SQLite connectivity without GitHub, ChatGPT, OpenAI, WebSocket, scheduler, or browser-extension dependencies.
+
 ## Target loop
 
-```text
+~~~
 Roadmap / WorkItem
         ↓
 DevCockpit derives next action
@@ -39,7 +160,7 @@ GitHub / CI
 DevCockpit observes result
         ↓
 next PromptDispatch
-```
+~~~
 
 ## Initial roles
 
@@ -55,55 +176,26 @@ Implements an approved slice, validates it and resolves normal CI failures.
 ### DevCockpit
 Owns deterministic orchestration, routing, dependencies, evidence and prompt preparation.
 
-## Initial technical direction
-
-```text
-React + TypeScript + Vite
-          ↓
-       FastAPI
-          ↓
- Application / Domain
-          ↓
- Infrastructure
-   ├── SQLite / SQLAlchemy
-   ├── GitHub adapter
-   └── WebSocket transport
-
-Firefox WebExtension
-   ↕ WebSocket
-FastAPI
-```
-
-The architecture is intentionally modest for the MVP. External services are kept behind adapters so the core orchestration can be tested without live credentials.
-
 ## Firefox extension contract
 
 The initial wire payload remains deliberately small:
 
-```json
+~~~json
 {
   "session": "RessourcePlanner:DEV:502A",
   "text": "Le prompt complet à envoyer à ChatGPT"
 }
-```
+~~~
 
 DevCockpit may keep richer metadata internally, but the transport contract should not grow accidentally.
 
 ## Roadmap
 
-The canonical roadmap lives in the master GitHub issue and contains a machine-readable `COCKPIT_PIPELINE_V1` block.
-
-There is intentionally no canonical `ROADMAP.md`.
+The canonical roadmap lives in GitHub issue #1 and contains a machine-readable COCKPIT_PIPELINE_V1 block. There is intentionally no canonical ROADMAP.md.
 
 ## Architecture decisions
 
-Durable decisions live under:
-
-```text
-docs/architecture/
-```
-
-Initial ADRs establish:
+Durable decisions live under docs/architecture/:
 
 1. authority and trust boundaries;
 2. orchestration state model;
@@ -111,20 +203,21 @@ Initial ADRs establish:
 
 ## Development workflow
 
-Read `AGENTS.md` before implementing any roadmap slice.
+Read AGENTS.md before implementing any roadmap slice.
 
 Normal delivery is:
 
-```text
+~~~
 current main
 → issue/roadmap
 → implement
 → targeted tests
+→ broader validation
 → PR
 → CI
 → fix normal failures
 → merge
 → reconcile roadmap
-```
+~~~
 
 Do not infer a completed roadmap step from a ChatGPT message alone.
