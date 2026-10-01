@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import AbstractSet
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Callable, Protocol, Self
+from typing import AbstractSet, Callable, Protocol, Self
 from uuid import UUID
 
 from app.domain.prompt_delivery import PromptDelivery
