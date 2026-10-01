@@ -12,7 +12,7 @@ For implementation work, use the following sources in this order:
 
 1. current code and tests on `main`;
 2. the GitHub Issue defining the requested work;
-3. the master roadmap GitHub issue and its canonical `COCKPIT_PIPELINE_V1` block;
+3. master roadmap GitHub issue #1 and its canonical `COCKPIT_PIPELINE_V1` block;
 4. architecture/product documentation under `docs/`;
 5. relevant PR discussions.
 
@@ -393,7 +393,7 @@ Merge only after required CI is green and no explicit product/architecture gate 
 
 ## 16. GitHub roadmap updates
 
-The canonical roadmap is a GitHub issue. There is no canonical `ROADMAP.md` once that issue exists.
+The canonical roadmap is GitHub issue #1. There is no canonical `ROADMAP.md`.
 
 After a merged issue/sub-tranche:
 
