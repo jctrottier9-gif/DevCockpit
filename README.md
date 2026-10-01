@@ -30,7 +30,7 @@ app/domain/                PromptDispatch invariants and transitions
 app/infrastructure/        SQLite / SQLAlchemy repositories + Alembic
 ~~~
 
-`PromptDispatch` is transport-indepent. DC-010 does not add WebSocket, Firefox-extension, GitHub, ChatGPT or OpenAI integration.
+`PromptDispatch` is transport-independent. DC-010 does not add WebSocket, Firefox-extension, GitHub, ChatGPT or OpenAI integration.
 
 ## Prerequisites
 
