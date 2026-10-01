@@ -109,3 +109,41 @@ button:disabled {
   cursor: wait;
   opacity: 0.6;
 }
+
+h2 {
+  margin: 18px 0 8px;
+  font-size: 13px;
+}
+
+.stack {
+  display: grid;
+  gap: 10px;
+}
+
+.sent-at {
+  color: #666;
+  font-size: 11px;
+}
+
+.candidate-panel {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #e3e3e3;
+}
+
+.candidates {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0 10px;
+}
+
+.candidate {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  align-items: start;
+  padding: 8px;
+  border: 1px solid #e3e3e3;
+  border-radius: 6px;
+  white-space: pre-wrap;
+}
