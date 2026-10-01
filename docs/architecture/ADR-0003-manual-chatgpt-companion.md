@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-01
-- Amended: 2026-10-01 by DC-011 protocol framing
+- Amended: 2026-10-01 by DC-011 protocol framing; 2026-10-01 by DC-012 local acceptance boundary
 
 ## Context
 
@@ -72,6 +72,23 @@ A transport ACK is:
 ~~~
 
 An ACK means only that the extension received and accepted the corresponding transport message. It does not mean that the prompt was sent to ChatGPT, read by ChatGPT, completed, or that any WorkItem changed state.
+
+### Local acceptance boundary (DC-012)
+
+The transport ACK is emitted only after the Firefox companion has durably accepted the prompt into its local persistent queue, or after it has confirmed that the same `delivery_id` is already persisted with identical `session` and `text`.
+
+The required ordering is:
+
+~~~text
+validate prompt
+→ deduplicate by delivery_id
+→ persist local queue
+→ ACK
+~~~
+
+A local storage failure therefore produces no ACK, allowing the server to replay the same stable delivery later. An identical replay is idempotent locally and may be ACKed again. The same `delivery_id` with incompatible content is a local protocol conflict and must never overwrite the persisted prompt silently.
+
+This durable local acceptance remains transport/UI state only. It does not mean that the prompt was sent to ChatGPT, that ChatGPT accepted or completed it, or that any canonical WorkItem, roadmap, CI, PR or product state changed.
 
 ### Persistent delivery identity
 

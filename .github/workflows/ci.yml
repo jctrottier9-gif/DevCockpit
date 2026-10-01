@@ -37,3 +37,23 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         run: npm run build
+
+  extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.20.0"
+      - name: Install extension dependencies
+        working-directory: extension
+        run: npm install --no-audit --no-fund
+      - name: Check extension
+        working-directory: extension
+        run: npm run check
+      - name: Test extension
+        working-directory: extension
+        run: npm test
+      - name: Build extension
+        working-directory: extension
+        run: npm run build

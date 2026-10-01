@@ -17,7 +17,7 @@ The first goal is not full autonomy. DevCockpit prepares the right next prompt, 
 
 ## Current application foundation
 
-DC-001 establishes the executable application shell, DC-010 adds persistent PromptDispatch, and DC-011 adds reliable WebSocket transport:
+DC-001 establishes the executable application shell, DC-010 adds persistent PromptDispatch, DC-011 adds reliable WebSocket transport, and DC-012 adds the first usable Firefox companion:
 
 ~~~text
 frontend/                  React + TypeScript + Vite
@@ -28,6 +28,8 @@ app/application/           Prompt creation + delivery/ACK use cases
 app/domain/                PromptDispatch + PromptDelivery invariants
         ↓
 app/infrastructure/        SQLite / SQLAlchemy / WebSocket protocol
+
+extension/                 Firefox queue / explicit ChatGPT send
 ~~~
 
 PromptDispatch remains transport-independent. PromptDelivery is separate persisted transport truth and never means that a prompt was sent to ChatGPT.
@@ -146,7 +148,7 @@ The extension acknowledges receipt with:
 }
 ~~~
 
-An ACK means only received by the extension. It does not mean sent to ChatGPT, response received, work started, work completed or WorkItem DONE.
+An ACK means that the extension has durably accepted the delivery into its persistent local queue (or already holds an identical persisted delivery). It is emitted only after that local persistence succeeds. It does not mean sent to ChatGPT, response received, work started, work completed or WorkItem DONE.
 
 If a connection drops before ACK, the same logical delivery and the same delivery_id are replayed after reconnect. SQLite stores one PromptDelivery per PromptDispatch; reconnects increment transport attempt metadata but never create a new PromptDispatch.
 
@@ -163,6 +165,83 @@ pytest -q tests/test_websocket_transport.py
 ~~~
 
 Those tests use FastAPI/Starlette's WebSocket test client and require no browser, ChatGPT, GitHub, OpenAI or external network.
+
+## Firefox companion extension
+
+DC-012 adds `extension/`, a deliberately small Firefox companion. Its responsibilities are limited to the local WebSocket transport, a persistent local queue, the extension UI, and an isolated ChatGPT page adapter. It does not own roadmap, WorkItem, GitHub, CI or product state.
+
+The companion uses a persistent Firefox Manifest V2 background context so the WebSocket lifetime is independent of the popup. Queue entries are persisted in `browser.storage.local`, so closing/reopening the popup or reloading the extension UI does not discard accepted prompts. The configured endpoint is fixed for the MVP:
+
+~~~text
+ws://127.0.0.1:8000/api/companion/ws
+~~~
+
+### Build and test
+
+From the repository root:
+
+~~~bash
+cd extension
+npm install --no-audit --no-fund
+npm run check
+npm test
+npm run build
+~~~
+
+`npm run check` validates the manifest, referenced extension files and JavaScript syntax. `npm test` runs the protocol, queue, reconnect, ACK, explicit-send and ChatGPT adapter tests without contacting ChatGPT. `npm run build` creates the temporary-loadable extension under `extension/dist/`.
+
+### Load temporarily in Firefox
+
+1. Build the extension with the commands above.
+2. Open `about:debugging#/runtime/this-firefox` in Firefox.
+3. Choose **Load Temporary Add-on…**.
+4. Select `extension/dist/manifest.json`.
+5. Keep DevCockpit running locally and open the companion popup.
+
+The popup reports `Connecté`, `Reconnexion…`, `Déconnecté`, or an explicit single-companion conflict. A second companion rejected with close code `4409` is not retried aggressively; use **Reconnecter** after the other companion is gone.
+
+### Queue and ACK semantics
+
+For every protocol-v1 `prompt`, the companion validates the envelope, deduplicates by `delivery_id`, and persists the entry before sending its ACK:
+
+~~~text
+receive prompt
+→ validate
+→ deduplicate by delivery_id
+→ persist local queue
+→ ACK
+~~~
+
+If local persistence fails, no ACK is sent. An identical replay reuses the existing local entry and can be ACKed again. Reusing one `delivery_id` with different `session` or `text` is treated as an explicit local delivery conflict; the stored text is not overwritten.
+
+An ACK therefore means only that the Firefox companion has durably accepted responsibility for that delivery in its local queue. It still does **not** mean that the prompt was sent to ChatGPT, that ChatGPT produced a response, or that any WorkItem state changed.
+
+The queue stores only local transport/UI fields such as `delivery_id`, `session`, `text`, `received_at`, `local_status` and an optional local error. Its `QUEUED` / `SEND_REQUESTED` states are not roadmap or WorkItem statuses.
+
+### Explicit send to ChatGPT
+
+Nothing is injected or sent when a prompt arrives. The user must open the intended ChatGPT conversation and click **Envoyer** on the chosen queue entry. The companion then targets only the active `chatgpt.com` or `chat.openai.com` tab.
+
+All ChatGPT DOM knowledge is isolated in `extension/src/chatgpt-page-adapter.js`. The adapter uses narrowly scoped composer/send selectors and fails closed when the composer or send button is missing, disabled or ambiguous. It never falls back to the first textarea or first button. When injection/send fails, the prompt remains available for retry. When the page reports a successful send, the entry is removed from the active queue; if local cleanup then fails, `SEND_REQUESTED` remains visible so the user can verify the conversation before retrying rather than blindly duplicating a send.
+
+The ChatGPT UI is an external dependency and its DOM can change. A DOM change may require updating the isolated adapter selectors. DC-012 intentionally performs no response scraping, no generation monitoring and no `chatgpt_response` return; that remains DC-030.
+
+### Manual smoke procedure
+
+The end-to-end smoke is intentionally manual and independent from CI:
+
+~~~text
+FastAPI local started
+→ Firefox extension loaded temporarily
+→ test PromptDispatch prepared through the application use case
+→ prompt appears once in the extension queue
+→ PromptDelivery becomes ACKNOWLEDGED only after local queue persistence
+→ intended ChatGPT conversation opened in the active tab
+→ user selects the prompt and clicks Envoyer
+→ prompt is sent in that active conversation
+~~~
+
+If the real ChatGPT DOM cannot be exercised in the current development environment, record that limitation rather than treating the DOM-fixture tests as proof of a browser smoke.
 
 ## Frontend setup
 

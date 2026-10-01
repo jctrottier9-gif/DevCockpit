@@ -1,0 +1,10 @@
+{
+  "name": "devcockpit-firefox-companion",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "check": "node scripts/check.mjs",
+    "test": "node --test test/*.test.mjs",
+    "build": "node scripts/build.mjs"
+  }
+}
