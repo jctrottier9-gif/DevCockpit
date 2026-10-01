@@ -17,7 +17,7 @@ The first goal is not full autonomy. DevCockpit prepares the right next prompt, 
 
 ## Current application foundation
 
-DC-001 establishes the executable application shell, DC-010 adds persistent PromptDispatch, DC-011 adds reliable WebSocket transport, DC-012 adds the first usable Firefox companion, DC-020 adds configured GitHub projects plus strict canonical-roadmap projection, DC-021 adds GitHub/CI execution projection, and DC-030 adds explicit response return:
+DC-001 establishes the executable application shell, DC-010 adds persistent PromptDispatch, DC-011 adds reliable WebSocket transport, DC-012 adds the first usable Firefox companion, DC-020 adds configured GitHub projects plus strict canonical-roadmap projection, DC-021 adds GitHub/CI execution projection, DC-030 adds explicit response return, and DC-040 adds the explicit Architect loop:
 
 ~~~text
 frontend/                  React + TypeScript + Vite
@@ -353,7 +353,7 @@ The read-only cockpit surface is:
 GET /api/projects/{project_id}/responses
 ~~~
 
-It resolves session, Project, WorkItem and role through the source delivery/dispatch and displays the complete returned text. The Cockpit intentionally exposes no Architect/PO/accept/continue action in this slice.
+It resolves session, Project, WorkItem and role through the source delivery/dispatch and displays the complete returned text. DC-040 adds separate Architect consultation and explicit decision-acceptance actions; importing a response still triggers none of them.
 
 ## Frontend setup
 
@@ -495,3 +495,71 @@ current main
 ~~~
 
 Do not infer a completed roadmap step from a ChatGPT message alone.
+
+
+## Architect consultations (DC-040)
+
+From a WorkItem, choose **Consulter l’Architecte**, explicitly select a DEV prompt
+(and optionally its imported response), and confirm a question and context.
+The server persists a `Handoff` and its frozen ARCH `PromptDispatch` atomically.
+Send that prompt manually with the existing Firefox companion, then explicitly
+return the Architect response using the existing response-return action.
+Refresh consultations to see returned responses. Select the precise source response,
+enter the accepted conclusion and constraints, and explicitly choose its effect:
+
+- `CONTINUE_IN_SCOPE`: persist an immutable `Decision` and prepare the DEV resume in
+  the same transaction if current canonical work and GitHub evidence permit it.
+- `HOLD_FOR_AUTHORIZATION`: persist the Decision, keep the Handoff blocking and
+  prepare no resume. Required ADR, scope, PO or roadmap authorization is not inferred.
+
+A changed/unavailable roadmap or unusable GitHub evidence retains the accepted
+Decision with an explicit held reason. There is no automatic PO escalation or
+extra “prepare resume” action. Cancelling an OPEN or DECIDED consultation requires
+an attributed reason; responses arriving afterward remain historical and cannot
+be accepted. A resumed consultation is final in DC-040.
+
+`ImportedChatGptResponse` is raw historical text. `Decision` is the explicitly
+accepted conclusion from one precisely correlated response; several responses
+never imply that the newest or first was accepted. No semantic parsing takes place.
+Neither concept changes GitHub, ADRs, roadmap state or `ExecutionProjection`.
+
+Sessions remain `<project>:ARCH:<work-item>` and `<project>:DEV:<work-item>`.
+Successive consultations reuse the ARCH session, and resume uses the original DEV
+session. Handoff/dispatch/delivery/response UUIDs provide isolation between consultations.
+
+The Handoff lifecycle is `OPEN → DECIDED → RESUME_PREPARED`, with cancellation
+from OPEN or DECIDED. At most one OPEN/DECIDED Handoff may exist per Project/WorkItem.
+The partial unique SQLite index, writer reservation (`BEGIN IMMEDIATE`) and optimistic
+version protect concurrent poller/user commands. Command UUIDs make identical retries
+idempotent and incompatible retries explicit conflicts. Request and resume dispatches
+participate in the caller-owned UoW; repositories never commit independently.
+
+During OPEN or DECIDED, automatic DEV INITIAL/CI_RED prompts are inhibited while
+GitHub/CI projection remains visible. Existing DEV prompts are cancelled locally to
+prevent new backend delivery, including a check at the socket-write boundary.
+Historical dispatches and delivery ACKs are retained. **A prompt already received or
+ACKed by Firefox cannot be remotely revoked**; verify its relevance before sending.
+The extension protocol and business responsibilities are unchanged.
+
+A resume records the existing DC-021 immutable CI key (PR, head SHA, workflow run,
+attempt) when it covers a failed cycle. Re-polling the same cycle produces no second
+follow-up; a different head or attempt remains eligible.
+
+API:
+
+~~~text
+POST /api/projects/{project_id}/work-items/{key}/handoffs
+GET  /api/projects/{project_id}/work-items/{key}/orchestration
+POST /api/handoffs/{handoff_id}/decisions
+POST /api/handoffs/{handoff_id}/cancel
+~~~
+
+Mutations require creation/acceptance/cancellation command UUIDs; acceptance and
+cancellation also require the displayed Handoff version. Actions exposed by the
+read-only orchestration view are determined on the server and revalidated on mutation.
+The actor entered in the local UI is attribution, not authenticated identity; the
+existing trusted-local-network deployment boundary still applies.
+
+Apply additive migration `0004_handoffs_decisions` with `alembic upgrade head`.
+It adds only `handoffs` and `decisions`, with RESTRICT historical references and no
+Project, WorkItem, Execution or AgentSession tables. Existing DC-030 data is preserved.

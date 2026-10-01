@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import Orchestration from './Orchestration'
 
 type LoadState = 'loading' | 'ready' | 'error'
 
@@ -89,6 +90,7 @@ function App() {
   const [execution, setExecution] = useState<ExecutionResponse | null>(null)
   const [responses, setResponses] = useState<ImportedResponse[]>([])
   const [error, setError] = useState('')
+  const [orchestrationKey, setOrchestrationKey] = useState('')
 
   useEffect(() => {
     const controller = new AbortController()
@@ -191,6 +193,15 @@ function App() {
             ))}
           </ul>
         ) : null}
+        {roadmap && pipeline && <>
+          <label>WorkItem à consulter<select value={orchestrationKey || displayedWorkItem?.key || ''} onChange={e => setOrchestrationKey(e.target.value)}>
+            <option value="">Choisir un WorkItem</option>
+            {pipeline.work_items.map(w => <option key={w.key} value={w.key}>{w.key} · {w.title}</option>)}
+          </select></label>
+          {(orchestrationKey || displayedWorkItem?.key) && <Orchestration
+            key={roadmap.project.project_id + (orchestrationKey || displayedWorkItem?.key)}
+            projectId={roadmap.project.project_id} workItem={orchestrationKey || displayedWorkItem!.key} />}
+        </>}
         <section className="responses">
           <h2>Réponses ChatGPT importées</h2>
           {responses.length === 0 ? (

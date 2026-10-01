@@ -7,7 +7,7 @@ from typing import Protocol
 from app.application.prompt_dispatches import (
     CreatePromptDispatchCommand,
     UnitOfWorkFactory,
-    create_prompt_dispatch,
+    create_prompt_dispatch_in_uow,
 )
 from app.application.roadmaps import RoadmapIssueReader, RoadmapSourceError, read_project_roadmap
 from app.domain.execution import (
@@ -124,28 +124,36 @@ def evaluate_project_execution(
     if work_item is None:
         return ExecutionEvaluation(projection=projection, dispatch=None)
 
-    if projection.next_action is NextAction.START_DEV:
-        dispatch = create_prompt_dispatch(
-            CreatePromptDispatchCommand(
-                project_id=project.project_id,
-                work_item_id=work_item.key,
-                role=PromptDispatchRole.DEV,
-                prompt_text=build_initial_dev_prompt(project, work_item),
-                idempotency_key=_initial_idempotency_key(project, work_item),
-            ),
-            uow_factory=uow_factory,
-        )
-    elif projection.next_action is NextAction.FIX_CI:
-        dispatch = create_prompt_dispatch(
-            CreatePromptDispatchCommand(
-                project_id=project.project_id,
-                work_item_id=work_item.key,
-                role=PromptDispatchRole.DEV,
-                prompt_text=build_ci_red_follow_up(project, projection),
-                idempotency_key=_ci_red_idempotency_key(project, projection),
-            ),
-            uow_factory=uow_factory,
-        )
+    with uow_factory() as uow:
+        if uow.handoffs.active(project.project_id, work_item.key):
+            return ExecutionEvaluation(projection=projection, dispatch=None)
+        if (projection.next_action is NextAction.FIX_CI and
+                uow.handoffs.covers(project.project_id, work_item.key,
+                                   _ci_red_idempotency_key(project, projection))):
+            return ExecutionEvaluation(projection=projection, dispatch=None)
+        if projection.next_action is NextAction.START_DEV:
+            dispatch = create_prompt_dispatch_in_uow(
+                CreatePromptDispatchCommand(
+                    project_id=project.project_id,
+                    work_item_id=work_item.key,
+                    role=PromptDispatchRole.DEV,
+                    prompt_text=build_initial_dev_prompt(project, work_item),
+                    idempotency_key=_initial_idempotency_key(project, work_item),
+                ),
+                uow=uow,
+            )
+        elif projection.next_action is NextAction.FIX_CI:
+            dispatch = create_prompt_dispatch_in_uow(
+                CreatePromptDispatchCommand(
+                    project_id=project.project_id,
+                    work_item_id=work_item.key,
+                    role=PromptDispatchRole.DEV,
+                    prompt_text=build_ci_red_follow_up(project, projection),
+                    idempotency_key=_ci_red_idempotency_key(project, projection),
+                ),
+                uow=uow,
+            )
+        uow.commit()
 
     return ExecutionEvaluation(projection=projection, dispatch=dispatch)
 
