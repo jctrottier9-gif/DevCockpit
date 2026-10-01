@@ -17,17 +17,17 @@ The first goal is not full autonomy. DevCockpit prepares the right next prompt, 
 
 ## Current application foundation
 
-DC-001 establishes the executable application shell, DC-010 adds persistent PromptDispatch, DC-011 adds reliable WebSocket transport, and DC-012 adds the first usable Firefox companion:
+DC-001 establishes the executable application shell, DC-010 adds persistent PromptDispatch, DC-011 adds reliable WebSocket transport, DC-012 adds the first usable Firefox companion, and DC-020 adds configured GitHub projects plus strict canonical-roadmap projection:
 
 ~~~text
 frontend/                  React + TypeScript + Vite
         ↓ /api
 app/main.py                FastAPI HTTP/WebSocket boundary
         ↓
-app/application/           Prompt creation + delivery/ACK use cases
-app/domain/                PromptDispatch + PromptDelivery invariants
+app/application/           Prompt use cases + Project/roadmap projection
+app/domain/                Prompt models + Project + WorkItem/parser rules
         ↓
-app/infrastructure/        SQLite / SQLAlchemy / WebSocket protocol
+app/infrastructure/        SQLite / GitHub read adapter / WebSocket protocol
 
 extension/                 Firefox queue / explicit ChatGPT send
 ~~~
@@ -104,6 +104,67 @@ Run backend validation:
 python -m compileall -q app tests
 pytest -q
 ~~~
+
+## GitHub projects and canonical roadmap
+
+DC-020 introduces an explicit, versioned local Project configuration in \`projects.json\`. Project is configuration rather than a database table in this slice: GitHub remains authoritative for roadmap state, and no persistent Project UI/workflow is required yet.
+
+The committed local default is:
+
+~~~json
+{
+  "projects": [
+    {
+      "project_id": "DevCockpit",
+      "repository_full_name": "jctrottier9-gif/DevCockpit",
+      "roadmap_issue_number": 1
+    }
+  ]
+}
+~~~
+
+\`project_id\` is the stable logical identity. It is not derived from an issue title, branch, PR, CI run or commit SHA. More projects can be added by adding entries with the same three explicit fields.
+
+The backend alone reads GitHub. For public repositories, a token is optional. For private repositories or higher API limits, set \`DEVCOCKPIT_GITHUB_TOKEN\` in the local environment. Never put that token in React, the Firefox extension, \`projects.json\`, logs or committed files.
+
+The roadmap reader fetches only the configured issue and parses exactly one block delimited by:
+
+~~~text
+<!-- COCKPIT_PIPELINE_V1 -->
+...
+<!-- /COCKPIT_PIPELINE_V1 -->
+~~~
+
+Its canonical header is exactly:
+
+~~~text
+KEY | TYPE | STATUS | PARENT | LANE | TITLE
+~~~
+
+The parser is fail-closed. Missing/duplicate markers, invalid headers, malformed rows, duplicate keys, unknown TYPE/STATUS values, invalid parents and ambiguous MAIN READY state produce deterministic diagnostics and no active READY item. Human prose around the block is never used as a fallback to infer work.
+
+The minimal backend surface is:
+
+~~~text
+GET /api/projects
+GET /api/projects/{project_id}/roadmap
+~~~
+
+The roadmap response distinguishes three situations explicitly:
+
+- GitHub source unavailable/unauthorized/not found: upstream error, no pipeline projection;
+- GitHub issue read successfully but pipeline invalid: \`pipeline.valid = false\` with diagnostics;
+- valid pipeline with no READY WorkItem: valid projection with \`active_ready_item = null\`.
+
+DC-020 is strictly read-only toward GitHub. It does not update roadmap issues, infer PR/CI execution state, reconcile DONE/READY automatically or create PromptDispatch records.
+
+With the local server running, a real read-only smoke against the configured DevCockpit roadmap is:
+
+~~~bash
+curl http://127.0.0.1:8000/api/projects/DevCockpit/roadmap
+~~~
+
+For the current roadmap before DC-020 is merged, the expected active canonical item is \`DC-020\`. This is smoke-test evidence only and is not hardcoded into product logic.
 
 ## WebSocket companion transport
 
@@ -276,6 +337,9 @@ The current settings are:
 DEVCOCKPIT_APP_NAME
 DEVCOCKPIT_ENVIRONMENT
 DEVCOCKPIT_DATABASE_URL
+DEVCOCKPIT_PROJECTS_CONFIG_PATH
+DEVCOCKPIT_GITHUB_TOKEN (optional)
+DEVCOCKPIT_GITHUB_TIMEOUT_SECONDS
 ~~~
 
 ## PromptDispatch and PromptDelivery
@@ -304,7 +368,7 @@ PromptDelivery has a stable UUID and a database uniqueness constraint on dispatc
 
 ## Tests and external integrations
 
-The test suite is offline and deterministic. It validates application creation, health, domain invariants/transitions, PromptDispatch persistence/idempotence, PromptDelivery migration/constraints/replay/ACK semantics, WebSocket protocol behavior, rollback, and reconnect from an empty or upgraded SQLite database without Firefox, ChatGPT, OpenAI, GitHub or external network dependencies.
+The test suite is offline and deterministic. It validates application creation, health, Project configuration, strict canonical-roadmap parsing, the mockable read-only GitHub adapter, Project roadmap API projection, domain invariants/transitions, PromptDispatch persistence/idempotence, PromptDelivery migration/constraints/replay/ACK semantics, WebSocket protocol behavior, rollback, and reconnect from an empty or upgraded SQLite database without Firefox, ChatGPT, OpenAI, live GitHub or external network dependencies.
 
 ## Target loop
 

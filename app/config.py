@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -9,6 +10,9 @@ class Settings(BaseSettings):
     app_name: str = "DevCockpit"
     environment: str = "development"
     database_url: str = "sqlite+pysqlite:///./devcockpit.db"
+    projects_config_path: str = "projects.json"
+    github_token: SecretStr | None = None
+    github_timeout_seconds: float = Field(default=5.0, gt=0.0, le=30.0)
 
     model_config = SettingsConfigDict(
         env_file=".env",

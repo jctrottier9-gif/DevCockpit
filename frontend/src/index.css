@@ -31,7 +31,7 @@ select {
 }
 
 .panel {
-  width: min(720px, 100%);
+  width: min(760px, 100%);
   padding: 2.5rem;
   background: white;
   border: 1px solid #dfe4ec;
@@ -52,11 +52,26 @@ h1 {
   line-height: 1.05;
 }
 
-.summary {
-  margin: 1.25rem 0 2rem;
-  max-width: 58ch;
-  color: #566177;
-  line-height: 1.65;
+.roadmap-summary {
+  display: grid;
+  gap: 0.8rem;
+  margin: 1.75rem 0;
+}
+
+.roadmap-summary div {
+  display: grid;
+  grid-template-columns: 8rem 1fr;
+  gap: 1rem;
+  align-items: baseline;
+}
+
+.roadmap-summary span {
+  color: #687386;
+  font-size: 0.9rem;
+}
+
+.roadmap-summary strong {
+  overflow-wrap: anywhere;
 }
 
 .health {
@@ -69,4 +84,11 @@ h1 {
   background: #f8fafc;
   font-size: 0.9rem;
   font-weight: 600;
+}
+
+.diagnostics {
+  margin: 1.25rem 0 0;
+  padding-left: 1.25rem;
+  color: #7a2732;
+  line-height: 1.5;
 }
