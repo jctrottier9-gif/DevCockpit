@@ -80,3 +80,10 @@ DC-030 remains additive and backward-compatible within protocol version 1. Inbou
 - The Firefox companion keeps transport/UI state but remains outside product-state authority.
 - The cockpit can display imported responses read-only without changing delivery status.
 - ChatGPT DOM changes can cause an explicit selection error but cannot silently associate arbitrary page text.
+
+
+## ASTRA-040 amendment — acceptance remains separate
+
+An `ImportedChatGptResponse` may later be selected as evidence for a Handoff Decision, but import itself still causes no Handoff transition and creates no Decision.
+
+For DC-040, a Decision exists only after an explicit user acceptance that names a correlated response and an accepted conclusion. Multiple imported responses are never auto-selected. See ADR-0007.
