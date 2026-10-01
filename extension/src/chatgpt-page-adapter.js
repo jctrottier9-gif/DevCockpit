@@ -9,6 +9,7 @@
     '[data-testid="prompt-textarea"][contenteditable="true"]',
   ]);
   const SEND_BUTTON_SELECTOR = 'button[data-testid="send-button"]';
+  const ASSISTANT_RESPONSE_SELECTOR = '[data-message-author-role="assistant"]';
 
   class ChatGptAdapterError extends Error {
     constructor(code) {
@@ -31,12 +32,13 @@
   function dispatchInput(document, element, text) {
     const view = document.defaultView || globalThis;
     const InputEventConstructor = view.InputEvent || view.Event;
-    const event = new InputEventConstructor("input", {
-      bubbles: true,
-      inputType: "insertText",
-      data: text,
-    });
-    element.dispatchEvent(event);
+    element.dispatchEvent(
+      new InputEventConstructor("input", {
+        bubbles: true,
+        inputType: "insertText",
+        data: text,
+      }),
+    );
   }
 
   function insertIntoComposer(document, composer, text) {
@@ -72,6 +74,30 @@
     }
 
     throw new ChatGptAdapterError("composer_not_supported");
+  }
+
+  function extractAssistantText(element) {
+    const raw =
+      typeof element.innerText === "string" ? element.innerText : element.textContent;
+    if (typeof raw !== "string" || raw.trim() === "") {
+      throw new ChatGptAdapterError("assistant_response_empty");
+    }
+    return raw.replace(/\r\n/g, "\n").trim();
+  }
+
+  function assertNoNestedAssistantMatches(matches) {
+    for (let index = 0; index < matches.length; index += 1) {
+      const current = matches[index];
+      if (typeof current.contains !== "function") {
+        continue;
+      }
+      for (let otherIndex = index + 1; otherIndex < matches.length; otherIndex += 1) {
+        const other = matches[otherIndex];
+        if (current.contains(other) || other.contains?.(current)) {
+          throw new ChatGptAdapterError("assistant_response_dom_ambiguous");
+        }
+      }
+    }
   }
 
   class ChatGptPageAdapter {
@@ -128,11 +154,40 @@
         };
       }
     }
+
+    listAssistantResponses() {
+      try {
+        const matches = uniqueMatches(this.document, [ASSISTANT_RESPONSE_SELECTOR]);
+        if (matches.length === 0) {
+          throw new ChatGptAdapterError("assistant_response_not_found");
+        }
+        assertNoNestedAssistantMatches(matches);
+
+        const candidates = matches.map((element, index) => {
+          const text = extractAssistantText(element);
+          return {
+            candidateId: "assistant-" + (index + 1),
+            text,
+            preview: text.length > 240 ? text.slice(0, 240) + "…" : text,
+          };
+        });
+        return { ok: true, candidates };
+      } catch (error) {
+        return {
+          ok: false,
+          error:
+            error instanceof ChatGptAdapterError
+              ? error.code
+              : "chatgpt_adapter_failed",
+        };
+      }
+    }
   }
 
   namespace.chatgpt = {
     COMPOSER_SELECTORS,
     SEND_BUTTON_SELECTOR,
+    ASSISTANT_RESPONSE_SELECTOR,
     ChatGptAdapterError,
     ChatGptPageAdapter,
   };
