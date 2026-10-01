@@ -17,20 +17,20 @@ The first goal is not full autonomy. DevCockpit prepares the right next prompt, 
 
 ## Current application foundation
 
-DC-001 establishes the executable application shell:
+DC-001 establishes the executable application shell and DC-010 adds the first persistent domain concept:
 
 ~~~
 frontend/                  React + TypeScript + Vite
         ↓ /api
 app/main.py                FastAPI composition and HTTP boundary
         ↓
-app/application/           use cases / orchestration services
-app/domain/                domain rules and state models
+app/application/           PromptDispatch creation / idempotence
+app/domain/                PromptDispatch invariants and transitions
         ↓
-app/infrastructure/        SQLite / SQLAlchemy and future adapters
+app/infrastructure/        SQLite / SQLAlchemy repositories + Alembic
 ~~~
 
-The bootstrap intentionally contains no Project, WorkItem, Execution, AgentSession, PromptDispatch, ExternalEvent, or Decision model yet. Those concepts remain documented architecture until their roadmap slice implements them.
+`PromptDispatch` is transport-independent. DC-010 does not add WebSocket, Firefox-extension, GitHub, ChatGPT or OpenAI integration.
 
 ## Prerequisites
 
@@ -68,13 +68,21 @@ Copy the local configuration template if you want to override defaults:
 cp .env.example .env
 ~~~
 
-The default SQLite database is ./devcockpit.db and is ignored by Git.
+The default SQLite database is `./devcockpit.db` and is ignored by Git.
 
-Initialize and verify local persistence:
+Apply explicit schema migrations and verify local persistence:
 
 ~~~bash
 python -m app.infrastructure.database
 ~~~
+
+Equivalent migration-only command:
+
+~~~bash
+alembic upgrade head
+~~~
+
+Alembic migrations are authoritative for business-schema evolution. `Base.metadata.create_all()` is not used as a migration mechanism.
 
 Start FastAPI:
 
@@ -95,8 +103,6 @@ python -m compileall -q app tests
 pytest -q
 ~~~
 
-DC-001 has no business tables, so no schema migration is required yet. Per AGENTS.md, the first slice that introduces persistent tables must use an explicit migration mechanism rather than ad-hoc schema mutation.
-
 ## Frontend setup
 
 Install frontend dependencies:
@@ -112,7 +118,7 @@ Start Vite:
 npm run dev
 ~~~
 
-The development server proxies /api to FastAPI at http://127.0.0.1:8000.
+The development server proxies `/api` to FastAPI at `http://127.0.0.1:8000`.
 
 Build the production frontend:
 
@@ -122,7 +128,7 @@ npm run build
 
 ## Configuration
 
-Backend settings are centralized in app/config.py and use the DEVCOCKPIT_ environment prefix. .env.example documents the supported local values and no secret is required for DC-001.
+Backend settings are centralized in `app/config.py` and use the `DEVCOCKPIT_` environment prefix. `.env.example` documents the supported local values and no secret is required for DC-010.
 
 The current settings are:
 
@@ -132,9 +138,27 @@ DEVCOCKPIT_ENVIRONMENT
 DEVCOCKPIT_DATABASE_URL
 ~~~
 
+## PromptDispatch model
+
+DC-010 persists one prompt prepared for one logical AgentSession. The session convention is:
+
+~~~
+<project>:<role>:<work-item>
+~~~
+
+The DC-010-only state machine is intentionally small:
+
+~~~
+PREPARED → CANCELLED
+~~~
+
+Transport states, WebSocket acknowledgements, reconnect/replay delivery and Firefox behavior belong to DC-011 and later slices.
+
+Creation uses an explicit idempotency key. Replaying the same logical creation returns the existing dispatch; reusing a key for different logical prompt content is rejected.
+
 ## Tests and external integrations
 
-The DC-001 test suite is intentionally offline and deterministic. It validates application creation, the health endpoint, and SQLite connectivity without GitHub, ChatGPT, OpenAI, WebSocket, scheduler, or browser-extension dependencies.
+The test suite is offline and deterministic. It validates application creation, health, domain invariants/transitions, PromptDispatch persistence/idempotence/rollback, and migration from an empty SQLite database without GitHub, ChatGPT, OpenAI, WebSocket, scheduler, or browser-extension dependencies.
 
 ## Target loop
 
@@ -191,19 +215,15 @@ DevCockpit may keep richer metadata internally, but the transport contract shoul
 
 ## Roadmap
 
-The canonical roadmap lives in GitHub issue #1 and contains a machine-readable COCKPIT_PIPELINE_V1 block. There is intentionally no canonical ROADMAP.md.
+The canonical roadmap lives in GitHub issue #1 and contains a machine-readable `COCKPIT_PIPELINE_V1` block. There is intentionally no canonical `ROADMAP.md`.
 
 ## Architecture decisions
 
-Durable decisions live under docs/architecture/:
-
-1. authority and trust boundaries;
-2. orchestration state model;
-3. manual ChatGPT companion and WebSocket boundary.
+Durable decisions live under `docs/architecture/`, including authority boundaries, orchestration identity, the manual ChatGPT companion boundary, and explicit Alembic schema migrations.
 
 ## Development workflow
 
-Read AGENTS.md before implementing any roadmap slice.
+Read `AGENTS.md` before implementing any roadmap slice.
 
 Normal delivery is:
 

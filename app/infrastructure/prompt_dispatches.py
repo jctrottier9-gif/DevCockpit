@@ -1,0 +1,125 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Callable
+from uuid import UUID
+
+from sqlalchemy import CheckConstraint, DateTime, String, Text, UniqueConstraint, select
+from sqlalchemy.orm import Mapped, Session, mapped_column
+
+from app.domain.prompt_dispatch import PromptDispatch
+from app.infrastructure.database import Base
+
+
+class PromptDispatchRecord(Base):
+    __tablename__ = "prompt_dispatches"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_prompt_dispatches_idempotency_key"),
+        CheckConstraint("role IN ('PO', 'ARCH', 'DEV')", name="ck_prompt_dispatches_role"),
+        CheckConstraint(
+            "status IN ('PREPARED', 'CANCELLED')",
+            name="ck_prompt_dispatches_status",
+        ),
+    )
+
+    dispatch_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    work_item_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    agent_session: Mapped[str] = mapped_column(String(450), nullable=False)
+    prompt_text: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class SqlAlchemyPromptDispatchRepository:
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def add(self, dispatch: PromptDispatch) -> None:
+        self._session.add(_record_from_domain(dispatch))
+
+    def get(self, dispatch_id: object) -> PromptDispatch | None:
+        if isinstance(dispatch_id, UUID):
+            key = str(dispatch_id)
+        else:
+            key = str(dispatch_id)
+        record = self._session.get(PromptDispatchRecord, key)
+        return _domain_from_record(record) if record is not None else None
+
+    def get_by_idempotency_key(self, idempotency_key: str) -> PromptDispatch | None:
+        record = self._session.scalar(
+            select(PromptDispatchRecord).where(
+                PromptDispatchRecord.idempotency_key == idempotency_key
+            )
+        )
+        return _domain_from_record(record) if record is not None else None
+
+
+class SqlAlchemyUnitOfWork:
+    def __init__(self, session_factory: Callable[[], Session]) -> None:
+        self._session_factory = session_factory
+        self._session: Session | None = None
+        self.prompt_dispatches: SqlAlchemyPromptDispatchRepository
+
+    def __enter__(self) -> SqlAlchemyUnitOfWork:
+        self._session = self._session_factory()
+        self.prompt_dispatches = SqlAlchemyPromptDispatchRepository(self._session)
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        if self._session is None:
+            return
+        if exc_type is not None:
+            self._session.rollback()
+        self._session.close()
+        self._session = None
+
+    def commit(self) -> None:
+        self._require_session().commit()
+
+    def rollback(self) -> None:
+        self._require_session().rollback()
+
+    def _require_session(self) -> Session:
+        if self._session is None:
+            raise RuntimeError("Unit of Work is not active")
+        return self._session
+
+
+def _record_from_domain(dispatch: PromptDispatch) -> PromptDispatchRecord:
+    return PromptDispatchRecord(
+        dispatch_id=str(dispatch.dispatch_id),
+        project_id=dispatch.project_id,
+        work_item_id=dispatch.work_item_id,
+        role=dispatch.role.value,
+        agent_session=dispatch.agent_session,
+        prompt_text=dispatch.prompt_text,
+        status=dispatch.status.value,
+        idempotency_key=dispatch.idempotency_key,
+        created_at=dispatch.created_at,
+        updated_at=dispatch.updated_at,
+    )
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _domain_from_record(record: PromptDispatchRecord) -> PromptDispatch:
+    return PromptDispatch.rehydrate(
+        dispatch_id=UUID(record.dispatch_id),
+        project_id=record.project_id,
+        work_item_id=record.work_item_id,
+        role=record.role,
+        agent_session=record.agent_session,
+        prompt_text=record.prompt_text,
+        status=record.status,
+        idempotency_key=record.idempotency_key,
+        created_at=_as_utc(record.created_at),
+        updated_at=_as_utc(record.updated_at),
+    )

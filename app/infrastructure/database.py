@@ -1,3 +1,9 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from alembic import command
+from alembic.config import Config
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -5,7 +11,7 @@ from app.config import Settings, get_settings
 
 
 class Base(DeclarativeBase):
-    """Base class for SQLAlchemy models introduced by later roadmap slices."""
+    """Declarative base for persisted models; Alembic is schema authority."""
 
 
 def build_engine(settings: Settings | None = None) -> Engine:
@@ -27,19 +33,35 @@ def build_session_factory(engine: Engine) -> sessionmaker[Session]:
 
 
 def initialize_database(engine: Engine | None = None) -> Engine:
-    """Create the current metadata and verify that the configured database is reachable."""
+    """Verify database connectivity without mutating the business schema."""
 
     active_engine = engine or build_engine()
-    Base.metadata.create_all(bind=active_engine)
     with active_engine.connect() as connection:
         connection.execute(text("SELECT 1"))
     return active_engine
 
 
+def build_alembic_config(settings: Settings | None = None) -> Config:
+    active_settings = settings or get_settings()
+    repository_root = Path(__file__).resolve().parents[2]
+    config = Config(str(repository_root / "alembic.ini"))
+    config.set_main_option("script_location", str(repository_root / "migrations"))
+    config.set_main_option("sqlalchemy.url", active_settings.database_url)
+    return config
+
+
+def upgrade_database(settings: Settings | None = None, revision: str = "head") -> None:
+    """Apply explicit Alembic migrations to the configured database."""
+
+    command.upgrade(build_alembic_config(settings), revision)
+
+
 def main() -> None:
-    engine = initialize_database()
+    settings = get_settings()
+    upgrade_database(settings)
+    engine = initialize_database(build_engine(settings))
     engine.dispose()
-    print("DevCockpit database initialized.")
+    print("DevCockpit database migrated and verified.")
 
 
 if __name__ == "__main__":
