@@ -13,7 +13,10 @@ from app.infrastructure.database import Base
 class RoadmapChangeProposalRecord(Base):
     __tablename__ = "roadmap_change_proposals"
     __table_args__ = (
-        CheckConstraint("status IN ('DRAFT','CANCELLED')", name="ck_roadmap_proposal_status"),
+        CheckConstraint(
+            "status IN ('DRAFT','CONFIRMED','APPLIED','CANCELLED')",
+            name="ck_roadmap_proposal_status",
+        ),
         CheckConstraint("version >= 1 AND current_revision >= 1", name="ck_roadmap_proposal_version"),
         CheckConstraint(
             "roadmap_issue_number >= 1 AND length(trim(project_id)) > 0 "
@@ -44,6 +47,15 @@ class RoadmapChangeProposalRecord(Base):
     cancelled_by: Mapped[str | None] = mapped_column(Text)
     cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     cancellation_command_id: Mapped[str | None] = mapped_column(String(36), unique=True)
+    confirmed_revision: Mapped[int | None] = mapped_column(Integer)
+    confirmed_preview_digest: Mapped[str | None] = mapped_column(String(64))
+    confirmation_command_id: Mapped[str | None] = mapped_column(String(36), unique=True)
+    confirmed_by: Mapped[str | None] = mapped_column(Text)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    writeback_authorization_decision_id: Mapped[str | None] = mapped_column(
+        ForeignKey("decisions.decision_id", ondelete="RESTRICT")
+    )
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class RoadmapChangeProposalRevisionRecord(Base):
@@ -76,6 +88,7 @@ class RoadmapChangeProposalRevisionRecord(Base):
 _UUID_FIELDS = {
     "proposal_id", "source_decision_id", "creation_command_id",
     "cancellation_command_id", "revision_command_id",
+    "confirmation_command_id", "writeback_authorization_decision_id",
 }
 
 
@@ -127,6 +140,14 @@ class SqlAlchemyRoadmapChangeProposalRepository:
         record = self.session.scalar(
             select(RoadmapChangeProposalRecord).where(
                 RoadmapChangeProposalRecord.cancellation_command_id == str(identity)
+            )
+        )
+        return domain_entity(record, RoadmapChangeProposal)
+
+    def by_confirmation_command(self, identity):
+        record = self.session.scalar(
+            select(RoadmapChangeProposalRecord).where(
+                RoadmapChangeProposalRecord.confirmation_command_id == str(identity)
             )
         )
         return domain_entity(record, RoadmapChangeProposal)
