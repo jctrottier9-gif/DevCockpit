@@ -379,3 +379,90 @@ def test_po_to_arch_resolution_is_atomic_on_failure(env, monkeypatch):
             if item.predecessor_handoff_id == po.handoff_id
         ]
         assert linked_arch == []
+
+
+def test_arch_to_po_transfer_and_execution_poller_never_expose_dev_gap(env):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from app.application.executions import evaluate_project_execution
+
+    arch = direct_handoff(env)
+    arch_response = returned_response(env, arch.request_dispatch_id)
+    barrier = Barrier(2)
+    command = TransferHandoffToPO(
+        uuid4(),
+        arch.version,
+        "PO?",
+        "Context",
+        "JC",
+        source_response_id=arch_response.response_id,
+    )
+
+    def do_transfer():
+        barrier.wait()
+        return transfer_handoff_to_po(
+            arch.handoff_id,
+            command,
+            project_catalog=env["catalog"],
+            roadmap_reader=env["roadmap"],
+            uow_factory=env["uow"],
+        )
+
+    def do_poll():
+        barrier.wait()
+        return evaluate_project_execution(
+            PROJECT,
+            roadmap_reader=env["roadmap"],
+            evidence_reader=env["evidence"],
+            uow_factory=env["uow"],
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        transfer_result, _ = [
+            future.result()
+            for future in (
+                pool.submit(do_transfer),
+                pool.submit(do_poll),
+            )
+        ]
+
+    assert transfer_result.target_role == "PO"
+    with env["uow"]() as uow:
+        active = uow.handoffs.active(PROJECT.project_id, KEY)
+        assert active is not None and active.target_role == "PO"
+        assert [
+            item for item in uow.prompt_dispatches.list_prepared()
+            if item.project_id == PROJECT.project_id
+            and item.work_item_id == KEY
+            and item.role.value == "DEV"
+        ] == []
+
+
+def test_arch_open_transfer_rejects_response_from_wrong_dispatch(env):
+    arch = direct_handoff(env)
+    unrelated = create_prompt_dispatch(
+        CreatePromptDispatchCommand(
+            PROJECT.project_id,
+            KEY,
+            "ARCH",
+            "unrelated ARCH prompt",
+            str(uuid4()),
+        ),
+        uow_factory=env["uow"],
+    )
+    wrong_response = returned_response(env, unrelated.dispatch_id, "wrong source")
+    with pytest.raises(OrchestrationConflict, match="does not originate"):
+        transfer_handoff_to_po(
+            arch.handoff_id,
+            TransferHandoffToPO(
+                uuid4(),
+                arch.version,
+                "PO?",
+                "Context",
+                "JC",
+                source_response_id=wrong_response.response_id,
+            ),
+            project_catalog=env["catalog"],
+            roadmap_reader=env["roadmap"],
+            uow_factory=env["uow"],
+        )

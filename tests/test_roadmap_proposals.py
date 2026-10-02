@@ -201,6 +201,23 @@ def test_proposal_creation_revision_preview_cancellation_and_restart(env):
             uow_factory=env["uow"],
         )
 
+    changed_catalog = ProjectCatalog((
+        Project("DevCockpit", "jctrottier9-gif/AnotherRepo", 99),
+    ))
+    with pytest.raises(OrchestrationConflict, match="target is frozen"):
+        create_roadmap_change_proposal_revision(
+            proposal.proposal_id,
+            CreateRoadmapChangeProposalRevision(
+                uuid4(),
+                proposal.version,
+                operations("État C"),
+                "JC",
+            ),
+            project_catalog=changed_catalog,
+            roadmap_reader=env["roadmap"],
+            uow_factory=env["uow"],
+        )
+
     preview1 = preview_roadmap_change_proposal_revision(
         proposal.proposal_id,
         1,

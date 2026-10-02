@@ -455,8 +455,10 @@ def preview_digest(
         },
         "proposal_id": str(proposal_id),
         "revision": revision,
+        "base_body": base_body,
         "base_body_hash": body_hash(base_body),
         "operations": list(canonical_operations(operations)),
+        "proposed_body": proposed_body,
         "proposed_body_hash": body_hash(proposed_body),
     }
     return sha256(json.dumps(

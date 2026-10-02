@@ -286,3 +286,84 @@ def test_preview_same_revision_is_deterministic_and_new_revision_changes_digest(
         revision_command_id=uuid4(),
     )
     assert build_preview(proposal, revision2)["preview_digest"] != first["preview_digest"]
+
+
+def test_v2_multiple_and_incomplete_blocks_fail_closed():
+    block = v2("A | WORK | READY | #1 | MAIN | A | -")
+    multiple = block + "\n" + v2("B | WORK | BLOCKED | #1 | MAIN | B | -")
+    assert "MULTIPLE_CANONICAL_BLOCK" in {
+        item.code for item in parse_canonical_pipeline(multiple).diagnostics
+    }
+
+    incomplete = """<!-- COCKPIT_PIPELINE_V2 -->
+KEY | TYPE | STATUS | PARENT | LANE | TITLE | REPLACES
+A | WORK | READY | #1 | MAIN | A | -
+"""
+    assert "MISSING_END_MARKER" in {
+        item.code for item in parse_canonical_pipeline(incomplete).diagnostics
+    }
+
+
+def test_transition_rejects_historical_deletion_and_key_reuse():
+    base = base_roadmap()
+    deleted = base.replace(
+        "DC-041 | WORK | READY | #11 | MAIN | boucle Product Owner\n",
+        "",
+    )
+    assert "HISTORICAL_WORK_ITEM_REMOVED" in {
+        item.code for item in validate_transition(base, deleted, [])
+    }
+
+    reused = base.replace(
+        "DC-041 | WORK | READY | #11 | MAIN | boucle Product Owner",
+        "DC-041 | ARCHITECTURE_GATE | READY | #11 | MAIN | different identity",
+    )
+    assert "WORK_ITEM_KEY_REUSED" in {
+        item.code for item in validate_transition(base, reused, [])
+    }
+
+
+def test_transition_rejects_hidden_ready_promotion_and_gate_skip():
+    base = base_roadmap()
+    hidden = base.replace(
+        "DC-041 | WORK | READY | #11 | MAIN | boucle Product Owner",
+        "DC-041 | WORK | BLOCKED | #11 | MAIN | boucle Product Owner",
+    ).replace(
+        "DC-050 | WORK | BLOCKED | #1 | MAIN | scheduler",
+        "DC-050 | WORK | READY | #1 | MAIN | scheduler",
+    )
+    assert "HIDDEN_READY_PROMOTION" in {
+        item.code for item in validate_transition(base, hidden, [])
+    }
+
+    gate_base = """# Gate
+<!-- COCKPIT_PIPELINE_V1 -->
+KEY | TYPE | STATUS | PARENT | LANE | TITLE
+ASTRA-X | ARCHITECTURE_GATE | BLOCKED | #1 | MAIN | unresolved gate
+X | WORK | BLOCKED | #1 | MAIN | candidate
+<!-- /COCKPIT_PIPELINE_V1 -->
+"""
+    operations = [{"type": "set_status", "key": "X", "status": "READY"}]
+    gate_proposed = generate_proposed_body(gate_base, operations)
+    assert "ARCHITECTURE_GATE_SKIPPED" in {
+        item.code for item in validate_transition(gate_base, gate_proposed, operations)
+    }
+
+
+def test_generation_fails_closed_on_invalid_result_and_order_is_deterministic():
+    base = base_roadmap()
+    with pytest.raises(ValueError, match="generated roadmap body is invalid"):
+        generate_proposed_body(
+            base,
+            [{"type": "set_status", "key": "DC-041", "status": "SUPERSEDED"}],
+        )
+
+    operations = [{"type": "set_order", "key": "DC-050", "after": "ASTRA-041"}]
+    first = generate_proposed_body(base, operations)
+    second = generate_proposed_body(base, operations)
+    assert first == second
+    assert [item.key for item in parse_canonical_pipeline(first).work_items] == [
+        "ASTRA-041",
+        "DC-050",
+        "DC-041",
+    ]
