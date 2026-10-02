@@ -107,6 +107,7 @@ class Fences:
 class ResourceLocks:
     def __init__(self) -> None:
         self.by_owner_surface = {}
+        self.acquire_calls = 0
 
     def list_for_project(self, project_id):
         return tuple(
@@ -142,6 +143,7 @@ class ResourceLocks:
         now,
         lease_seconds,
     ):
+        self.acquire_calls += 1
         requirements = tuple(requirements)
         for requirement in requirements:
             for holder in self.list_active_for_project(project_id):
@@ -680,3 +682,120 @@ def test_expired_lock_is_visible_then_recovered_after_restart_without_redispatch
     assert lock.lease_owner_id == "process-two"
     assert lock.version == 3
     assert len(dispatches.by_key) == 1
+
+
+
+def test_ci_red_execution_restores_required_lock_before_follow_up():
+    project = project_with_locks(
+        ("A", (("api:contracts", ResourceLockMode.EXCLUSIVE),)),
+        ("B", (("api:contracts", ResourceLockMode.EXCLUSIVE),)),
+    )
+    locks = ResourceLocks()
+    dispatches, uow_factory = factory(resource_locks=locks)
+    evidence = EvidenceReader(
+        {
+            "A": ExecutionEvidence(
+                default_branch="main",
+                pull_requests=(pr("A", head_sha="aaa"),),
+                workflow_runs=(
+                    WorkflowRunEvidence(
+                        run_id=301,
+                        name="CI",
+                        status="completed",
+                        conclusion="failure",
+                        attempt=1,
+                        head_sha="aaa",
+                        failed_jobs=("backend",),
+                    ),
+                ),
+            ),
+        }
+    )
+
+    result = evaluate_project_parallel_dev_executions(
+        project,
+        roadmap_reader=RoadmapReader(
+            v3(
+                "A | WORK | READY | #1 | MAIN | A | - | -",
+                "B | WORK | READY | #1 | AUX | B | - | -",
+            )
+        ),
+        evidence_reader=evidence,
+        uow_factory=uow_factory,
+        max_parallel_dev_executions=2,
+    )
+
+    by_key = {item.execution.work_item.key: item for item in result.projection.items}
+    a_lock = locks.list_for_owner(project.project_id, "A")[0]
+    assert a_lock.state is ResourceLockState.ACTIVE
+    assert a_lock.surface.key == "api:contracts"
+    assert by_key["A"].execution.state is ExecutionState.CI_RED
+    assert by_key["B"].lock_conflict is not None
+    assert by_key["B"].lock_conflict.holder_work_item_id == "A"
+    assert len(result.dispatches) == 1
+    assert result.dispatches[0].work_item_id == "A"
+    assert result.dispatches[0].agent_session == "DevCockpit:DEV:A"
+    assert len(dispatches.by_key) == 1
+
+
+def test_invalid_scheduler_does_not_release_existing_resource_lock():
+    project = project_with_locks(
+        ("A", (("roadmap:#1", ResourceLockMode.EXCLUSIVE),)),
+    )
+    locks = ResourceLocks()
+    _, uow_factory = factory(resource_locks=locks)
+    roadmap = RoadmapReader(v3("A | WORK | READY | #1 | MAIN | A | - | -"))
+
+    evaluate_project_parallel_dev_executions(
+        project,
+        roadmap_reader=roadmap,
+        evidence_reader=EvidenceReader(),
+        uow_factory=uow_factory,
+        max_parallel_dev_executions=1,
+    )
+    assert locks.list_for_owner(project.project_id, "A")[0].state is ResourceLockState.ACTIVE
+
+    roadmap.body = """<!-- COCKPIT_PIPELINE_V3 -->
+KEY | TYPE | STATUS | PARENT | LANE | TITLE | REPLACES | DEPENDS_ON
+broken
+<!-- /COCKPIT_PIPELINE_V3 -->"""
+    result = evaluate_project_parallel_dev_executions(
+        project,
+        roadmap_reader=roadmap,
+        evidence_reader=EvidenceReader(),
+        uow_factory=uow_factory,
+        max_parallel_dev_executions=1,
+    )
+
+    assert result.dispatches == ()
+    assert result.projection.scheduler.valid is False
+    assert locks.list_for_owner(project.project_id, "A")[0].state is ResourceLockState.ACTIVE
+
+
+def test_lock_conflict_does_not_waste_capacity_needed_by_independent_candidate():
+    project = project_with_locks(
+        ("A", (("migration:alembic", ResourceLockMode.EXCLUSIVE),)),
+        ("B", (("migration:alembic", ResourceLockMode.EXCLUSIVE),)),
+        ("C", (("adr:0010", ResourceLockMode.EXCLUSIVE),)),
+    )
+    _, uow_factory = factory()
+
+    result = evaluate_project_parallel_dev_executions(
+        project,
+        roadmap_reader=RoadmapReader(
+            v3(
+                "A | WORK | READY | #1 | MAIN | A | - | -",
+                "B | WORK | READY | #1 | AUX | B | - | -",
+                "C | WORK | READY | #1 | AUX2 | C | - | -",
+            )
+        ),
+        evidence_reader=EvidenceReader(),
+        uow_factory=uow_factory,
+        max_parallel_dev_executions=2,
+    )
+
+    assert [dispatch.work_item_id for dispatch in result.dispatches] == ["A", "C"]
+    by_key = {item.execution.work_item.key: item for item in result.projection.items}
+    assert by_key["A"].active
+    assert by_key["C"].active
+    assert by_key["B"].lock_conflict is not None
