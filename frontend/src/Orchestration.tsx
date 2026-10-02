@@ -450,7 +450,7 @@ function Consultation({
           proposal={proposal}
           actor={actor}
           busy={busy}
-          writebackAuthorized={h.decision.accepts_residual_writeback_risk}
+          writebackAuthorized={h.decision?.accepts_residual_writeback_risk ?? false}
           command={command}
         />)}
     </section>}
