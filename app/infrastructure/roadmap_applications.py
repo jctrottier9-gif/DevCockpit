@@ -94,6 +94,7 @@ class RoadmapChangeApplicationAttemptRecord(Base):
         nullable=False,
     )
     attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    command_id: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
     outcome: Mapped[str] = mapped_column(String(40), nullable=False)
     patch_may_have_been_emitted: Mapped[bool] = mapped_column(Boolean, nullable=False)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -120,7 +121,7 @@ class RoadmapTargetFence:
     active_application_id: UUID | None
 
 
-_UUID_FIELDS = {"application_id", "proposal_id", "application_command_id", "attempt_id"}
+_UUID_FIELDS = {"application_id", "proposal_id", "application_command_id", "attempt_id", "command_id"}
 
 
 def _values(entity):
@@ -211,6 +212,14 @@ class SqlAlchemyRoadmapChangeApplicationAttemptRepository:
             self.session.get(RoadmapChangeApplicationAttemptRecord, str(identity)),
             RoadmapChangeApplicationAttempt,
         )
+
+    def by_command(self, identity):
+        record = self.session.scalar(
+            select(RoadmapChangeApplicationAttemptRecord).where(
+                RoadmapChangeApplicationAttemptRecord.command_id == str(identity)
+            )
+        )
+        return _entity(record, RoadmapChangeApplicationAttempt)
 
     def list_for_application(self, application_id):
         records = self.session.scalars(
