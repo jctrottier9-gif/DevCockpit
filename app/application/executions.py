@@ -22,6 +22,7 @@ from app.domain.execution import (
 from app.domain.project import Project
 from app.domain.prompt_dispatch import PromptDispatch, PromptDispatchRole
 from app.domain.roadmap import WorkItem, WorkItemType
+from app.domain.scheduler import derive_scheduler_projection
 
 
 class ExecutionSourceError(RuntimeError):
@@ -82,6 +83,23 @@ def read_project_execution(
             work_item=None,
             code="NO_MAIN_READY",
             message="The canonical MAIN lane does not currently contain a READY WorkItem.",
+        )
+
+    scheduler = derive_scheduler_projection(roadmap.pipeline)
+    scheduler_item = next(
+        item for item in scheduler.items if item.work_item.key == work_item.key
+    )
+    if not scheduler_item.executable:
+        dependencies = ", ".join(scheduler_item.unsatisfied_dependencies)
+        message = (
+            f"{work_item.key} is not authorized by the deterministic scheduler."
+            if not dependencies
+            else f"{work_item.key} is waiting for dependencies: {dependencies}."
+        )
+        return blocked_projection(
+            work_item=work_item,
+            code=scheduler_item.reason.value,
+            message=message,
         )
 
     if work_item.type is not WorkItemType.WORK:
@@ -191,7 +209,7 @@ Contexte canonique :
 - Roadmap maître : #{project.roadmap_issue_number}
 - Statut canonique : READY
 
-Travaille sur le main actuel et synchronise-toi avec le vrai main avant de commencer. Lis d'abord AGENTS.md, consulte le roadmap maître #{project.roadmap_issue_number} et son bloc canonique COCKPIT_PIPELINE_V1 ou COCKPIT_PIPELINE_V2 explicitement présent, puis consulte le WorkItem {work_item.key} et les ADR applicables. Inspecte le code et les tests existants avant de modifier quoi que ce soit.
+Travaille sur le main actuel et synchronise-toi avec le vrai main avant de commencer. Lis d'abord AGENTS.md, consulte le roadmap maître #{project.roadmap_issue_number} et son bloc canonique COCKPIT_PIPELINE_V1, COCKPIT_PIPELINE_V2 ou COCKPIT_PIPELINE_V3 explicitement présent, puis consulte le WorkItem {work_item.key} et les ADR applicables. Inspecte le code et les tests existants avant de modifier quoi que ce soit.
 
 Implémente uniquement la tranche autorisée, respecte strictement son scope et poursuis jusqu'au cycle de livraison prévu dans AGENTS.md. Ne commence pas la tranche suivante.
 """
