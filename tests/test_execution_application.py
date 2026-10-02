@@ -68,10 +68,20 @@ class EmptyHandoffs:
         return False
 
 
+class EmptyFenceRepository:
+    class Snapshot:
+        generation = 0
+        active_application_id = None
+
+    def snapshot(self, repository_full_name, roadmap_issue_number):
+        return self.Snapshot()
+
+
 class FakeUnitOfWork:
     def __init__(self, repository: InMemoryDispatchRepository) -> None:
         self.prompt_dispatches = repository
         self.handoffs = EmptyHandoffs()
+        self.roadmap_target_fences = EmptyFenceRepository()
 
     def __enter__(self):
         return self
