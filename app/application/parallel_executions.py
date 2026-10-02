@@ -200,6 +200,7 @@ def evaluate_project_parallel_dev_executions(
                         uow=uow,
                     )
                 )
+        uow.commit()
         projection = _project_parallel_state(
             project,
             issue=issue,
@@ -209,7 +210,6 @@ def evaluate_project_parallel_dev_executions(
             max_parallel_dev_executions=max_parallel_dev_executions,
             global_inhibition=None,
         )
-        uow.commit()
 
     return ParallelDevExecutionEvaluation(
         projection=projection,
