@@ -63,9 +63,14 @@ class GitHubRoadmapWriter:
                 "GitHub PATCH outcome is uncertain; explicit reconciliation is required"
             ) from exc
 
-        if response.status_code >= 400:
+        if response.status_code >= 500:
+            raise RoadmapWriteUncertainError(
+                f"GitHub returned HTTP {response.status_code} after PATCH; "
+                "the remote outcome is uncertain"
+            )
+        if response.status_code < 200 or response.status_code >= 300:
             raise RoadmapWriteNotEmittedError(
-                f"GitHub rejected roadmap body PATCH with HTTP {response.status_code}"
+                f"GitHub definitively rejected roadmap body PATCH with HTTP {response.status_code}"
             )
 
 
