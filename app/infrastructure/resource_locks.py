@@ -52,7 +52,7 @@ class ResourceLockRecord(Base):
         CheckConstraint(
             "version >= 1 AND length(trim(project_id)) > 0 "
             "AND length(trim(work_item_id)) > 0 AND length(trim(agent_session)) > 0 "
-            "AND length(trim(surface)) > 0",
+            "AND length(trim(lease_owner_id)) > 0 AND length(trim(surface)) > 0",
             name="ck_resource_lock_identity",
         ),
         CheckConstraint(
@@ -79,6 +79,7 @@ class ResourceLockRecord(Base):
     project_id: Mapped[str] = mapped_column(String(200), nullable=False)
     work_item_id: Mapped[str] = mapped_column(String(200), nullable=False)
     agent_session: Mapped[str] = mapped_column(String(450), nullable=False)
+    lease_owner_id: Mapped[str] = mapped_column(String(100), nullable=False)
     surface: Mapped[str] = mapped_column(String(400), nullable=False)
     mode: Mapped[str] = mapped_column(String(16), nullable=False)
     state: Mapped[str] = mapped_column(String(16), nullable=False)
@@ -172,6 +173,7 @@ class SqlAlchemyResourceLockRepository:
                 f"found {record.version}"
             )
         record.agent_session = lock.agent_session
+        record.lease_owner_id = lock.lease_owner_id
         record.mode = lock.mode.value
         record.state = lock.state.value
         record.acquired_at = lock.acquired_at
@@ -187,6 +189,7 @@ class SqlAlchemyResourceLockRepository:
         project_id: str,
         work_item_id: str,
         agent_session: str,
+        lease_owner_id: str,
         requirements: Iterable[ResourceLockRequirement],
         now: datetime,
         lease_seconds: float,
@@ -239,6 +242,7 @@ class SqlAlchemyResourceLockRepository:
                     project_id=project_id,
                     work_item_id=work_item_id,
                     agent_session=agent_session,
+                    lease_owner_id=lease_owner_id,
                     requirement=requirement,
                     now=now,
                     lease_seconds=lease_seconds,
@@ -246,6 +250,7 @@ class SqlAlchemyResourceLockRepository:
             else:
                 lock = existing.reactivate(
                     agent_session=agent_session,
+                    lease_owner_id=lease_owner_id,
                     requirement=requirement,
                     now=now,
                     lease_seconds=lease_seconds,
@@ -265,6 +270,7 @@ def _record_from_domain(lock: ResourceLock) -> ResourceLockRecord:
         project_id=lock.project_id,
         work_item_id=lock.work_item_id,
         agent_session=lock.agent_session,
+        lease_owner_id=lock.lease_owner_id,
         surface=lock.surface.key,
         mode=lock.mode.value,
         state=lock.state.value,
@@ -283,6 +289,7 @@ def _domain_from_record(record: ResourceLockRecord) -> ResourceLock:
         project_id=record.project_id,
         work_item_id=record.work_item_id,
         agent_session=record.agent_session,
+        lease_owner_id=record.lease_owner_id,
         surface=ConflictSurface(record.surface),
         mode=ResourceLockMode(record.mode),
         state=ResourceLockState(record.state),
