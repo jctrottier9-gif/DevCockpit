@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import AttentionCenter from './AttentionCenter'
+import FlowAnalytics from './FlowAnalytics'
 import Orchestration from './Orchestration'
 
 type LoadState = 'loading' | 'ready' | 'error'
@@ -280,6 +281,7 @@ function App() {
         <div className={'health health--' + state} aria-live="polite">
           {state === 'loading' ? 'Reading GitHub execution…' : state === 'ready' ? 'Execution loaded' : error}
         </div>
+        {roadmap && <FlowAnalytics projectId={roadmap.project.project_id} />}
         {pipeline && !pipeline.valid ? (
           <ul className="diagnostics">
             {pipeline.diagnostics.map((diagnostic) => (

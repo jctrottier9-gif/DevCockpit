@@ -233,3 +233,110 @@ details { margin: 1rem 0; }
 .attention-actions a {
   font-weight: 700;
 }
+
+
+.flow-analytics {
+  margin: 2rem 0;
+  padding: 1.25rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.flow-analytics h2 {
+  margin: 0.15rem 0;
+  font-size: 1.5rem;
+}
+
+.flow-analytics p {
+  margin: 0.4rem 0;
+}
+
+.flow-summary,
+.flow-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.flow-summary div,
+.flow-metrics article {
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.8rem;
+  border: 1px solid #dfe4ec;
+  border-radius: 10px;
+  background: white;
+}
+
+.flow-summary span,
+.flow-metrics span,
+.flow-range,
+.flow-timeline span,
+.flow-attempts span {
+  color: #687386;
+  font-size: 0.82rem;
+}
+
+.flow-deliveries {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.flow-delivery {
+  padding: 1rem;
+  border: 1px solid #dfe4ec;
+  border-radius: 12px;
+  background: white;
+}
+
+.flow-delivery-heading {
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.flow-delivery-heading div {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.flow-delivery-heading span {
+  color: #687386;
+  font-size: 0.85rem;
+}
+
+.flow-timeline {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0.75rem;
+  margin-top: 1rem;
+}
+
+.flow-timeline div,
+.flow-attempts div {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.flow-duration-row {
+  display: flex;
+  gap: 0.75rem 1rem;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+  font-size: 0.85rem;
+}
+
+.flow-missing {
+  color: #687386;
+  font-size: 0.85rem;
+}
+
+.flow-attempts {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}

@@ -418,6 +418,34 @@ Items are deduplicated by the real human need: project + role + WorkItem + actio
 
 The Attention Center owns no dismiss state. An item disappears on refresh when its source condition is no longer true. React renders the backend projection and opens existing WorkItem/PR/orchestration targets; it does not recalculate CI, Handoff, roadmap, ResourceLock or transport eligibility rules.
 
+## Flow Analytics (DC-061)
+
+Flow Analytics is a separate, read-only GitHub projection for delivery history. It is loaded on demand and is deliberately kept out of the execution poller:
+
+~~~text
+GET /api/projects/{project_id}/analytics
+~~~
+
+GitHub remains the authority for every delivery timestamp. The projection reuses the strict WorkItem-to-PR identity rule from ADR-0005 and never derives delivery evidence from ChatGPT, PromptDispatch, browser state or local poll timestamps.
+
+Per selected WorkItem delivery, the backend exposes:
+
+- `first_commit_at`: earliest usable `commit.committer.date` from commits returned by the strongly associated PR;
+- `pr_created_at`: GitHub PR `created_at`;
+- `first_green_ci_at`: earliest observable PR commit whose latest workflow attempts are all completed with `success / neutral / skipped`, using the last required workflow completion timestamp for that commit;
+- `merged_at`: GitHub PR `merged_at`;
+- commit → PR, PR → first fully green CI, green CI → merge and total observable durations;
+- total observed workflow attempts, red attempts and whether a red attempt is observably followed by a fully green CI;
+- the observable workflow run/attempt history and GitHub links.
+
+Zero observed workflows is never treated as green. Missing timestamps or incomplete sub-history remain `null` / unavailable, and only independent metrics continue to be calculated. When CI attempt history is incomplete, `recovered_after_red` remains unknown rather than inventing `false`.
+
+Docs-only exclusion is backend-owned and conservative. A delivery is excluded only when the complete GitHub changed-file list is non-empty and every changed file is under `docs/` or is a recognized root documentation file such as `README.md` or `AGENTS.md`. Incomplete changed-file evidence retains the delivery and emits a diagnostic rather than excluding it.
+
+Aggregates are deterministic medians calculated only from deliveries that actually contain the required metric bounds. Every median exposes its observation count. The summary also exposes delivery counts, CI attempt/red totals, docs-only exclusions, recovery observation counts and the actual first/last observed merge timestamps. No arbitrary velocity window, percentile, composite score or developer ranking is produced.
+
+No analytics table or migration is introduced by DC-061. GitHub history is reconstructed on demand and React renders the backend projection without recalculating identity, timestamps, durations, medians, docs-only policy or CI recovery.
+
 ## Frontend setup
 
 Install frontend dependencies:
