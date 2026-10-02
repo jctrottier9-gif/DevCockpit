@@ -75,8 +75,19 @@ type SchedulerResponse = {
   }
 }
 
-type ExecutionResponse = {
-  project: Project
+type ParallelExecutionItem = {
+  role: string
+  agent_session: string
+  scheduler: {
+    state: string
+    reason: string
+    dependencies: string[]
+    unsatisfied_dependencies: string[]
+  }
+  slot_state: string
+  active: boolean
+  waiting_for_capacity: boolean
+  inhibition_reason: string | null
   work_item: WorkItem | null
   execution_state: string
   next_action: string
@@ -97,6 +108,18 @@ type ExecutionResponse = {
   diagnostics: Diagnostic[]
 }
 
+type ParallelExecutionsResponse = {
+  project: Project
+  source: { status: 'available' | 'unavailable'; code?: string }
+  capacity: null | {
+    limit: number
+    used: number
+    available: number
+  }
+  executable_candidates: string[]
+  executions: ParallelExecutionItem[]
+}
+
 const actionLabels: Record<string, string> = {
   START_DEV: 'Démarrer DEV',
   WAIT_FOR_PR: 'Attendre la PR',
@@ -111,7 +134,7 @@ const actionLabels: Record<string, string> = {
 function App() {
   const [state, setState] = useState<LoadState>('loading')
   const [roadmap, setRoadmap] = useState<RoadmapResponse | null>(null)
-  const [execution, setExecution] = useState<ExecutionResponse | null>(null)
+  const [executions, setExecutions] = useState<ParallelExecutionsResponse | null>(null)
   const [scheduler, setScheduler] = useState<SchedulerResponse | null>(null)
   const [responses, setResponses] = useState<ImportedResponse[]>([])
   const [error, setError] = useState('')
@@ -133,18 +156,18 @@ function App() {
         }
 
         const encodedProject = encodeURIComponent(project.project_id)
-        const [roadmapResponse, executionResponse, schedulerResponse, responsesResponse] = await Promise.all([
+        const [roadmapResponse, executionsResponse, schedulerResponse, responsesResponse] = await Promise.all([
           fetch('/api/projects/' + encodedProject + '/roadmap', { signal: controller.signal }),
-          fetch('/api/projects/' + encodedProject + '/execution', { signal: controller.signal }),
+          fetch('/api/projects/' + encodedProject + '/executions', { signal: controller.signal }),
           fetch('/api/projects/' + encodedProject + '/scheduler', { signal: controller.signal }),
           fetch('/api/projects/' + encodedProject + '/responses', { signal: controller.signal }),
         ])
         const roadmapPayload = (await roadmapResponse.json()) as RoadmapResponse
-        const executionPayload = (await executionResponse.json()) as ExecutionResponse
+        const executionsPayload = (await executionsResponse.json()) as ParallelExecutionsResponse
         const schedulerPayload = (await schedulerResponse.json()) as SchedulerResponse
         const responsesPayload = (await responsesResponse.json()) as { responses: ImportedResponse[] }
         setRoadmap(roadmapPayload)
-        setExecution(executionPayload)
+        setExecutions(executionsPayload)
         setScheduler(schedulerPayload)
         setResponses(responsesPayload.responses ?? [])
 
@@ -153,8 +176,8 @@ function App() {
           setState('error')
           return
         }
-        if (!executionResponse.ok) {
-          setError('GitHub execution projection unavailable')
+        if (!executionsResponse.ok) {
+          setError(executionsPayload.source.code ?? 'GitHub execution projections unavailable')
           setState('error')
           return
         }
@@ -184,7 +207,8 @@ function App() {
 
   const pipeline = roadmap?.pipeline
   const ready = pipeline?.active_ready_item
-  const displayedWorkItem = execution?.work_item ?? ready
+  const primaryExecution = executions?.executions.find(item => item.active) ?? executions?.executions[0] ?? null
+  const displayedWorkItem = primaryExecution?.work_item ?? ready
 
   return (
     <main className="shell">
@@ -198,11 +222,11 @@ function App() {
             <div><span>Roadmap</span><strong>#{roadmap.project.roadmap_issue_number}</strong></div>
             <div><span>Pipeline</span><strong>{pipeline ? (pipeline.valid ? 'valid' : 'invalid') : 'unavailable'}</strong></div>
             <div><span>WorkItem</span><strong>{displayedWorkItem?.key ?? 'none'}</strong></div>
-            <div><span>État</span><strong>{execution?.execution_state ?? 'unavailable'}</strong></div>
-            <div><span>Branche</span><strong>{execution?.branch ?? '—'}</strong></div>
-            <div><span>PR</span><strong>{execution?.pull_request ? '#' + execution.pull_request.number : '—'}</strong></div>
-            <div><span>CI</span><strong>{execution?.ci?.state ?? '—'}</strong></div>
-            <div><span>Action</span><strong>{execution ? (actionLabels[execution.next_action] ?? execution.next_action) : '—'}</strong></div>
+            <div><span>État</span><strong>{primaryExecution?.execution_state ?? 'unavailable'}</strong></div>
+            <div><span>Branche</span><strong>{primaryExecution?.branch ?? '—'}</strong></div>
+            <div><span>PR</span><strong>{primaryExecution?.pull_request ? '#' + primaryExecution.pull_request.number : '—'}</strong></div>
+            <div><span>CI</span><strong>{primaryExecution?.ci?.state ?? '—'}</strong></div>
+            <div><span>Action</span><strong>{primaryExecution ? (actionLabels[primaryExecution.next_action] ?? primaryExecution.next_action) : '—'}</strong></div>
           </div>
         ) : null}
         <div className={'health health--' + state} aria-live="polite">
@@ -217,15 +241,36 @@ function App() {
             ))}
           </ul>
         ) : null}
-        {execution && execution.diagnostics.length > 0 ? (
+        {primaryExecution && primaryExecution.diagnostics.length > 0 ? (
           <ul className="diagnostics">
-            {execution.diagnostics.map((diagnostic) => (
+            {primaryExecution.diagnostics.map((diagnostic) => (
               <li key={diagnostic.code}>
                 {diagnostic.code}: {diagnostic.message}
               </li>
             ))}
           </ul>
         ) : null}
+        {executions?.capacity && <section className="responses">
+          <h2>Exécutions DEV parallèles</h2>
+          <p>
+            DEV capacity: {executions.capacity.used} / {executions.capacity.limit}
+            {' · '}disponible: {executions.capacity.available}
+          </p>
+          <div className="response-list">
+            {executions.executions.map(item => <article className="response-card" key={item.work_item?.key ?? item.agent_session}>
+              <div className="response-meta">
+                <strong>{item.work_item?.key ?? '—'} · {item.slot_state}</strong>
+                <span>{item.agent_session}</span>
+                <span>Scheduler: {item.scheduler.state} · {item.scheduler.reason}</span>
+                <span>Execution: {item.execution_state} · {actionLabels[item.next_action] ?? item.next_action}</span>
+                <span>PR: {item.pull_request ? '#' + item.pull_request.number : '—'} · CI: {item.ci?.state ?? '—'}</span>
+                <span>
+                  {item.active ? 'Actif' : item.waiting_for_capacity ? 'En attente de capacité' : item.inhibition_reason ?? 'Éligible'}
+                </span>
+              </div>
+            </article>)}
+          </div>
+        </section>}
         {scheduler?.scheduler && <section className="responses">
           <h2>Scheduler déterministe</h2>
           <p>Pipeline V{scheduler.scheduler.pipeline_version ?? '—'} · candidats : {scheduler.scheduler.executable_candidates.join(', ') || 'aucun'}</p>
