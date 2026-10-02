@@ -13,6 +13,7 @@ Current decisions:
 - [ADR-0007 — Explicit handoffs and accepted decisions](ADR-0007-explicit-handoffs-and-accepted-decisions.md)
 - [ADR-0008 — Explicit roadmap change proposals and GitHub writeback](ADR-0008-explicit-roadmap-change-proposals-and-github-writeback.md)
 - [ADR-0009 — Canonical dependencies and deterministic scheduler](ADR-0009-canonical-dependencies-and-deterministic-scheduler.md)
+- [ADR-0010 — ResourceLocks and deterministic conflict surfaces](ADR-0010-resource-locks-and-conflict-surfaces.md)
 
 ## Rule
 
