@@ -71,6 +71,7 @@ class PullRequestEvidence:
     url: str | None = None
     updated_at: str | None = None
     merged_at: str | None = None
+    created_at: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +84,8 @@ class WorkflowRunEvidence:
     head_sha: str
     url: str | None = None
     failed_jobs: tuple[str, ...] = ()
+    created_at: str | None = None
+    updated_at: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
