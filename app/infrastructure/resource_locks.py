@@ -248,6 +248,22 @@ class SqlAlchemyResourceLockRepository:
                     lease_seconds=lease_seconds,
                 )
             else:
+                if (
+                    existing.state is ResourceLockState.ACTIVE
+                    and (
+                        existing.mode is not requirement.mode
+                        or existing.agent_session != agent_session
+                    )
+                ):
+                    return (), ResourceLockConflict(
+                        surface=requirement.surface,
+                        requested_mode=requirement.mode,
+                        holder_work_item_id=existing.work_item_id,
+                        holder_agent_session=existing.agent_session,
+                        holder_mode=existing.mode,
+                        holder_state=existing.state,
+                        reason="RESOURCE_LOCK_REQUIREMENT_CHANGED",
+                    )
                 lock = existing.reactivate(
                     agent_session=agent_session,
                     lease_owner_id=lease_owner_id,
