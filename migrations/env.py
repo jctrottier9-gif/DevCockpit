@@ -4,7 +4,13 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from app.infrastructure.database import Base
-from app.infrastructure import handoffs, chatgpt_responses, prompt_deliveries, prompt_dispatches  # noqa: F401
+from app.infrastructure import (  # noqa: F401
+    chatgpt_responses,
+    handoffs,
+    prompt_deliveries,
+    prompt_dispatches,
+    resource_locks,
+)
 
 
 config = context.config
