@@ -210,6 +210,18 @@ class SqlAlchemyHandoffRepository:
         )
         return [entity(record, Handoff) for record in records]
 
+    def list_for_project(self, project_id):
+        records = self.session.scalars(
+            select(HandoffRecord)
+            .where(HandoffRecord.project_id == project_id)
+            .order_by(
+                HandoffRecord.work_item_id,
+                HandoffRecord.created_at,
+                HandoffRecord.handoff_id,
+            )
+        )
+        return [entity(record, Handoff) for record in records]
+
     def active(self, project_id, work_item_id):
         return next(
             (handoff for handoff in self.list_for_work_item(project_id, work_item_id) if handoff.blocking),
