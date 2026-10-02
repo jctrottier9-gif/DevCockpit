@@ -170,7 +170,7 @@ Contexte canonique :
 - Roadmap maître : #{project.roadmap_issue_number}
 - Statut canonique : READY
 
-Travaille sur le main actuel et synchronise-toi avec le vrai main avant de commencer. Lis d'abord AGENTS.md, consulte le roadmap maître #{project.roadmap_issue_number} et son bloc canonique COCKPIT_PIPELINE_V1, puis consulte le WorkItem {work_item.key} et les ADR applicables. Inspecte le code et les tests existants avant de modifier quoi que ce soit.
+Travaille sur le main actuel et synchronise-toi avec le vrai main avant de commencer. Lis d'abord AGENTS.md, consulte le roadmap maître #{project.roadmap_issue_number} et son bloc canonique COCKPIT_PIPELINE_V1 ou COCKPIT_PIPELINE_V2 explicitement présent, puis consulte le WorkItem {work_item.key} et les ADR applicables. Inspecte le code et les tests existants avant de modifier quoi que ce soit.
 
 Implémente uniquement la tranche autorisée, respecte strictement son scope et poursuis jusqu'au cycle de livraison prévu dans AGENTS.md. Ne commence pas la tranche suivante.
 """

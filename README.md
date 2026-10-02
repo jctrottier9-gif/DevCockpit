@@ -579,3 +579,38 @@ The current application and canonical roadmap still use COCKPIT_PIPELINE_V1. DC-
 A PO Decision is not a roadmap mutation. A RoadmapChangeProposal remains local and non-canonical until an exact revision is explicitly confirmed, applied through the future targeted writer, and reconciled. Direct GitHub PATCH in DC-041B also remains gated by an explicit product decision accepting the residual race between the final GitHub reread and PATCH; proposal/preview can exist even if direct writeback remains disabled.
 
 See docs/architecture/ADR-0008-explicit-roadmap-change-proposals-and-github-writeback.md.
+
+
+## DC-041A — boucle Product Owner et proposals locales
+
+DevCockpit prend en charge trois consultations explicites, sans interprétation automatique du texte ChatGPT :
+
+```text
+DEV → ARCH → DEV
+DEV → PO → DEV
+ARCH → PO → nouvelle consultation ARCH
+```
+
+Les combinaisons de Handoff sont fermées : `ARCH + TECHNICAL_GUIDANCE`, `PO + PRODUCT_CLARIFICATION` et `PO + ROADMAP_REVIEW`. Une réponse importée reste distincte d'une `Decision`; une `Decision` reste distincte d'une `RoadmapChangeProposal`. Le transfert `ARCH → PO` clôt le Handoff précédent avec `TRANSFERRED` et ouvre le PO dans la même transaction. Après une clarification PO issue d'ARCH, le backend prépare une nouvelle consultation ARCH dans la session logique `<project>:ARCH:<work-item>`; React ne choisit jamais librement le rôle de reprise.
+
+Les Decisions acceptées utilisent les types `ARCHITECTURE_GUIDANCE`, `PRODUCT_CLARIFICATION` ou `SCOPE_DECISION`, avec les effets `CONTINUE_IN_SCOPE` ou `HOLD_FOR_AUTHORIZATION`. Un redécoupage n'est jamais inféré d'une réponse brute : il faut une `SCOPE_DECISION` PO explicitement acceptée et tenue pour autorisation, puis une création explicite de `RoadmapChangeProposal`.
+
+Une proposal est locale et possède un target GitHub figé, des révisions immuables et des opérations structurées. Chaque révision fige le body GitHub de base, ses hashes, les opérations, le body généré et les versions de génération/validation. Le preview est recalculé uniquement depuis cette révision figée et expose le diff complet, les changements de pipeline, READY avant/après, replacements, issue mappings, diagnostics bloquants et un digest stable.
+
+Le parser canonique accepte explicitement :
+
+```text
+COCKPIT_PIPELINE_V1
+KEY | TYPE | STATUS | PARENT | LANE | TITLE
+```
+
+et :
+
+```text
+COCKPIT_PIPELINE_V2
+KEY | TYPE | STATUS | PARENT | LANE | TITLE | REPLACES
+```
+
+V2 ajoute `SUPERSEDED` et `REPLACES`. Les anciens WorkItems restent présents; un WorkItem `SUPERSEDED` doit être remplacé par au moins une nouvelle clé, et le replacement ne constitue pas une dependency. Les blocs V1/V2 ambigus, mixtes, incomplets ou de version inconnue échouent fermés.
+
+DC-041A reste entièrement read-only envers GitHub : le backend peut lire le roadmap nécessaire à une nouvelle révision, mais il n'expose aucun endpoint `confirm`, `apply` ou `reconcile`, et aucun `RoadmapWriter` n'est présent. L'application distante du body et la réconciliation appartiennent exclusivement à DC-041B.

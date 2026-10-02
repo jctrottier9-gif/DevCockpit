@@ -1,17 +1,42 @@
-from dataclasses import asdict
+from dataclasses import asdict, is_dataclass
+from typing import Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import IntegrityError, OperationalError
 
-from app.application.handoffs import (CreateHandoff, AcceptDecision, CancelHandoff,
-    create_handoff, accept_decision, cancel_handoff, read_orchestration)
-from app.domain.handoff import DecisionEffect, OrchestrationConflict
+from app.application.handoffs import (
+    AcceptDecision,
+    CancelHandoff,
+    CreateHandoff,
+    TransferHandoffToPO,
+    accept_decision,
+    cancel_handoff,
+    create_handoff,
+    read_orchestration,
+    transfer_handoff_to_po,
+)
+from app.application.roadmap_changes import (
+    CancelRoadmapChangeProposal,
+    CreateRoadmapChangeProposal,
+    CreateRoadmapChangeProposalRevision,
+    cancel_roadmap_change_proposal,
+    create_roadmap_change_proposal,
+    create_roadmap_change_proposal_revision,
+    preview_roadmap_change_proposal_revision,
+    read_roadmap_change_proposal,
+)
+from app.domain.handoff import (
+    DecisionEffect,
+    DecisionType,
+    HandoffPurpose,
+    OrchestrationConflict,
+)
 
 
 class CommandBody(BaseModel):
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra="forbid")
 
 
 class CreateBody(CommandBody):
@@ -21,6 +46,18 @@ class CreateBody(CommandBody):
     question: str = Field(min_length=1)
     context: str = Field(min_length=1)
     created_by: str = Field(min_length=1)
+    target_role: Literal["ARCH", "PO"] = "ARCH"
+    purpose: HandoffPurpose = HandoffPurpose.TECHNICAL_GUIDANCE
+
+
+class TransferToPOBody(CommandBody):
+    transfer_command_id: UUID
+    expected_version: int = Field(ge=1)
+    question: str = Field(min_length=1)
+    context: str = Field(min_length=1)
+    created_by: str = Field(min_length=1)
+    purpose: HandoffPurpose = HandoffPurpose.PRODUCT_CLARIFICATION
+    source_response_id: UUID | None = None
 
 
 class AcceptBody(CommandBody):
@@ -30,6 +67,7 @@ class AcceptBody(CommandBody):
     summary: str = Field(min_length=1)
     effect: DecisionEffect
     accepted_by: str = Field(min_length=1)
+    decision_type: DecisionType = DecisionType.ARCHITECTURE_GUIDANCE
 
 
 class CancelBody(CommandBody):
@@ -39,44 +77,146 @@ class CancelBody(CommandBody):
     reason: str = Field(min_length=1)
 
 
+class CreateProposalBody(CommandBody):
+    creation_command_id: UUID
+    revision_command_id: UUID
+    operations: list[dict[str, Any]]
+    created_by: str = Field(min_length=1)
+
+
+class CreateRevisionBody(CommandBody):
+    revision_command_id: UUID
+    expected_version: int = Field(ge=1)
+    operations: list[dict[str, Any]]
+    created_by: str = Field(min_length=1)
+
+
+class CancelProposalBody(CommandBody):
+    cancellation_command_id: UUID
+    expected_version: int = Field(ge=1)
+    cancelled_by: str = Field(min_length=1)
+
+
 def build_orchestration_router(*, project_catalog, roadmap_reader, evidence_reader, uow_factory):
-    router = APIRouter(tags=['orchestration'])
+    router = APIRouter(tags=["orchestration"])
 
     def project(identity):
         result = project_catalog.get(identity)
         if result is None:
-            raise HTTPException(404, 'Project not found')
+            raise HTTPException(404, "Project not found")
         return result
 
-    def mutate(operation, *args, **kwargs):
+    def execute(operation, *args, **kwargs):
         try:
-            return asdict(operation(*args, **kwargs, uow_factory=uow_factory))
+            result = operation(*args, **kwargs, uow_factory=uow_factory)
+            return asdict(result) if is_dataclass(result) else result
         except OrchestrationConflict as exc:
             raise HTTPException(409, str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
         except IntegrityError as exc:
-            raise HTTPException(409, 'Concurrent or conflicting orchestration command; refresh and retry') from exc
+            raise HTTPException(
+                409,
+                "Concurrent or conflicting orchestration command; refresh and retry",
+            ) from exc
         except OperationalError as exc:
-            raise HTTPException(503, 'Persistence temporarily unavailable; retry the same command') from exc
+            raise HTTPException(
+                503,
+                "Persistence temporarily unavailable; retry the same command",
+            ) from exc
 
-    @router.post('/api/projects/{project_id}/work-items/{key}/handoffs')
+    @router.post("/api/projects/{project_id}/work-items/{key}/handoffs")
     def create(project_id: str, key: str, body: CreateBody):
-        return mutate(create_handoff, project(project_id), key,
-                      CreateHandoff(**body.model_dump()), roadmap_reader=roadmap_reader)
+        return execute(
+            create_handoff,
+            project(project_id),
+            key,
+            CreateHandoff(**body.model_dump()),
+            roadmap_reader=roadmap_reader,
+        )
 
-    @router.get('/api/projects/{project_id}/work-items/{key}/orchestration')
+    @router.get("/api/projects/{project_id}/work-items/{key}/orchestration")
     def read(project_id: str, key: str):
-        return read_orchestration(project(project_id), key, roadmap_reader=roadmap_reader,
-                                  evidence_reader=evidence_reader, uow_factory=uow_factory)
+        return read_orchestration(
+            project(project_id),
+            key,
+            roadmap_reader=roadmap_reader,
+            evidence_reader=evidence_reader,
+            uow_factory=uow_factory,
+        )
 
-    @router.post('/api/handoffs/{handoff_id}/decisions')
+    @router.post("/api/handoffs/{handoff_id}/transfer-to-po")
+    def transfer_to_po(handoff_id: UUID, body: TransferToPOBody):
+        return execute(
+            transfer_handoff_to_po,
+            handoff_id,
+            TransferHandoffToPO(**body.model_dump()),
+            project_catalog=project_catalog,
+            roadmap_reader=roadmap_reader,
+        )
+
+    @router.post("/api/handoffs/{handoff_id}/decisions")
     def accept(handoff_id: UUID, body: AcceptBody):
-        return mutate(accept_decision, handoff_id, AcceptDecision(**body.model_dump()),
-            project_catalog=project_catalog, roadmap_reader=roadmap_reader, evidence_reader=evidence_reader)
+        return execute(
+            accept_decision,
+            handoff_id,
+            AcceptDecision(**body.model_dump()),
+            project_catalog=project_catalog,
+            roadmap_reader=roadmap_reader,
+            evidence_reader=evidence_reader,
+        )
 
-    @router.post('/api/handoffs/{handoff_id}/cancel')
+    @router.post("/api/handoffs/{handoff_id}/cancel")
     def cancel(handoff_id: UUID, body: CancelBody):
-        return mutate(cancel_handoff, handoff_id, CancelHandoff(**body.model_dump()))
+        return execute(
+            cancel_handoff,
+            handoff_id,
+            CancelHandoff(**body.model_dump()),
+        )
+
+    @router.post("/api/decisions/{decision_id}/roadmap-change-proposals")
+    def create_proposal(decision_id: UUID, body: CreateProposalBody):
+        return execute(
+            create_roadmap_change_proposal,
+            decision_id,
+            CreateRoadmapChangeProposal(**body.model_dump()),
+            project_catalog=project_catalog,
+            roadmap_reader=roadmap_reader,
+        )
+
+    @router.post("/api/roadmap-change-proposals/{proposal_id}/revisions")
+    def revise_proposal(proposal_id: UUID, body: CreateRevisionBody):
+        return execute(
+            create_roadmap_change_proposal_revision,
+            proposal_id,
+            CreateRoadmapChangeProposalRevision(**body.model_dump()),
+            project_catalog=project_catalog,
+            roadmap_reader=roadmap_reader,
+        )
+
+    @router.get("/api/roadmap-change-proposals/{proposal_id}")
+    def get_proposal(proposal_id: UUID):
+        return execute(
+            read_roadmap_change_proposal,
+            proposal_id,
+        )
+
+    @router.get("/api/roadmap-change-proposals/{proposal_id}/revisions/{revision}/preview")
+    def preview_proposal(proposal_id: UUID, revision: int):
+        if revision < 1:
+            raise HTTPException(422, "revision must be >= 1")
+        return execute(
+            preview_roadmap_change_proposal_revision,
+            proposal_id,
+            revision,
+        )
+
+    @router.post("/api/roadmap-change-proposals/{proposal_id}/cancel")
+    def cancel_proposal(proposal_id: UUID, body: CancelProposalBody):
+        return execute(
+            cancel_roadmap_change_proposal,
+            proposal_id,
+            CancelRoadmapChangeProposal(**body.model_dump()),
+        )
 
     return router

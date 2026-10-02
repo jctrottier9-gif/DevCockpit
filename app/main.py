@@ -70,7 +70,7 @@ def _project_payload(project: Project) -> dict[str, object]:
     }
 
 
-def _work_item_payload(item: WorkItem) -> dict[str, str]:
+def _work_item_payload(item: WorkItem) -> dict[str, object]:
     return {
         "key": item.key,
         "type": item.type.value,
@@ -78,6 +78,7 @@ def _work_item_payload(item: WorkItem) -> dict[str, str]:
         "parent": item.parent,
         "lane": item.lane,
         "title": item.title,
+        "replaces": item.replaces,
     }
 
 
@@ -92,6 +93,7 @@ def _diagnostic_payload(diagnostic: PipelineDiagnostic) -> dict[str, object]:
 def _pipeline_payload(pipeline: PipelineParseResult) -> dict[str, object]:
     return {
         "valid": pipeline.valid,
+        "version": pipeline.version,
         "work_items": [_work_item_payload(item) for item in pipeline.work_items],
         "diagnostics": [_diagnostic_payload(item) for item in pipeline.diagnostics],
         "active_ready_item": (
