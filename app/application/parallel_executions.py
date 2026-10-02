@@ -182,7 +182,28 @@ def evaluate_project_parallel_dev_executions(
             )
             return ParallelDevExecutionEvaluation(projection=projection, dispatches=())
 
+        if not scheduler.valid:
+            projection = _project_parallel_state(
+                project,
+                issue=issue,
+                scheduler=scheduler,
+                snapshots=snapshots,
+                uow=uow,
+                max_parallel_dev_executions=max_parallel_dev_executions,
+                global_inhibition="SCHEDULER_INVALID",
+                now=now,
+            )
+            return ParallelDevExecutionEvaluation(projection=projection, dispatches=())
+
         _reconcile_resource_locks(
+            project,
+            snapshots=snapshots,
+            uow=uow,
+            now=now,
+            lease_seconds=resource_lock_lease_seconds,
+            lease_owner_id=lease_owner_id,
+        )
+        _restore_active_execution_locks(
             project,
             snapshots=snapshots,
             uow=uow,
@@ -382,6 +403,43 @@ def _reconcile_resource_locks(
                 )
             )
     uow.flush()
+
+
+def _restore_active_execution_locks(
+    project: Project,
+    *,
+    snapshots: tuple[_CandidateSnapshot, ...],
+    uow,
+    now: datetime,
+    lease_seconds: float,
+    lease_owner_id: str,
+) -> None:
+    for snapshot in snapshots:
+        if snapshot.execution.state in {ExecutionState.READY, ExecutionState.BLOCKED}:
+            continue
+        work_item = snapshot.scheduler.work_item
+        requirements = project.resource_lock_requirements_for(work_item.key)
+        if not requirements:
+            continue
+        owner_records = uow.resource_locks.list_for_owner(
+            project.project_id,
+            work_item.key,
+        )
+        if _holds_required_locks(requirements, owner_records=owner_records):
+            continue
+        uow.resource_locks.acquire_many(
+            project_id=project.project_id,
+            work_item_id=work_item.key,
+            agent_session=build_agent_session(
+                project.project_id,
+                PromptDispatchRole.DEV,
+                work_item.key,
+            ),
+            lease_owner_id=lease_owner_id,
+            requirements=requirements,
+            now=now,
+            lease_seconds=lease_seconds,
+        )
 
 
 def _project_parallel_state(
