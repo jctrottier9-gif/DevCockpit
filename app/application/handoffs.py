@@ -574,7 +574,6 @@ def accept_decision(
             project = project_catalog.get(handoff.project_id)
             if project is None:
                 raise OrchestrationConflict("Project not found")
-            roadmap, item = _authorized_item(project, handoff.work_item_id, roadmap_reader)
             projection, allowed = _current_resume_context(
                 handoff,
                 project,
@@ -584,6 +583,11 @@ def accept_decision(
             held_reason = "Canonical WorkItem or current GitHub evidence no longer authorizes a resume"
             if allowed:
                 if handoff.role is PromptDispatchRole.PO and handoff.predecessor_handoff_id is not None:
+                    roadmap, item = _authorized_item(
+                        project,
+                        handoff.work_item_id,
+                        roadmap_reader,
+                    )
                     resume, child = _prepare_arch_resume(
                         uow,
                         handoff=handoff,
