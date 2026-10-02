@@ -50,6 +50,7 @@ class RoadmapChangeProposalRecord(Base):
     confirmed_revision: Mapped[int | None] = mapped_column(Integer)
     confirmed_preview_digest: Mapped[str | None] = mapped_column(String(64))
     confirmation_command_id: Mapped[str | None] = mapped_column(String(36), unique=True)
+    confirmation_expected_proposal_version: Mapped[int | None] = mapped_column(Integer)
     confirmed_by: Mapped[str | None] = mapped_column(Text)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     writeback_authorization_decision_id: Mapped[str | None] = mapped_column(
