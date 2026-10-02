@@ -147,3 +147,89 @@ button { cursor: pointer; padding: .65rem 1rem; margin: .4rem .4rem .4rem 0; }
 button:disabled { cursor: wait; opacity: .55; }
 pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 details { margin: 1rem 0; }
+
+
+.attention-center {
+  margin: 1.5rem 0 2rem;
+  padding: 1.25rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.attention-center--action {
+  border-width: 2px;
+}
+
+.attention-header {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.attention-header h2 {
+  margin: 0.15rem 0;
+  font-size: 1.5rem;
+}
+
+.attention-header p {
+  margin: 0.2rem 0;
+}
+
+.attention-kicker {
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+}
+
+.attention-clear {
+  margin: 1rem 0 0;
+  color: #4b5563;
+}
+
+.attention-list {
+  display: grid;
+  gap: 0.8rem;
+  margin-top: 1rem;
+}
+
+.attention-item {
+  padding: 1rem;
+  border: 1px solid #dfe4ec;
+  border-radius: 10px;
+  background: white;
+}
+
+.attention-item h3 {
+  margin: 0.55rem 0 0.35rem;
+  font-size: 1rem;
+}
+
+.attention-item p {
+  margin: 0.35rem 0;
+}
+
+.attention-item-heading {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  font-size: 0.82rem;
+}
+
+.attention-item-heading span,
+.attention-meta {
+  color: #687386;
+}
+
+.attention-actions {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 0.8rem;
+}
+
+.attention-actions a {
+  font-weight: 700;
+}
