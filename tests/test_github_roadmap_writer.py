@@ -36,7 +36,7 @@ def test_writer_patches_only_configured_roadmap_body():
     assert seen["json"] == '{"body":"after"}'
 
 
-@pytest.mark.parametrize("status", [400, 401, 403, 404, 409, 422, 500])
+@pytest.mark.parametrize("status", [300, 400, 401, 403, 404, 409, 422])
 def test_writer_http_rejection_is_proven_not_applied(status):
     writer = GitHubRoadmapWriter(
         transport=httpx.MockTransport(lambda _: httpx.Response(status))
@@ -72,3 +72,12 @@ def test_issue_mapping_reader_unavailability_fails_closed():
     reader = GitHubIssueMappingReader(transport=httpx.MockTransport(handler))
     with pytest.raises(RoadmapSourceError):
         reader.exists(PROJECT.repository_full_name, 28)
+
+
+@pytest.mark.parametrize("status", [500, 502, 503, 504])
+def test_writer_server_failure_is_uncertain(status):
+    writer = GitHubRoadmapWriter(
+        transport=httpx.MockTransport(lambda _: httpx.Response(status))
+    )
+    with pytest.raises(RoadmapWriteUncertainError):
+        writer.write(PROJECT, "after")
