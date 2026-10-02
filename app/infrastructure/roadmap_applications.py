@@ -18,7 +18,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
-from app.domain.handoff import OrchestrationConflict
+from app.domain.handoff import OrchestrationConflict, WritebackRiskAuthorization
 from app.domain.roadmap_change import (
     ApplicationAttemptOutcome,
     ApplicationStatus,
@@ -26,6 +26,19 @@ from app.domain.roadmap_change import (
     RoadmapChangeApplicationAttempt,
 )
 from app.infrastructure.database import Base
+
+
+class RoadmapWritebackAuthorizationRecord(Base):
+    __tablename__ = "roadmap_writeback_authorizations"
+
+    decision_id: Mapped[str] = mapped_column(
+        ForeignKey("decisions.decision_id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    project_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    accepted_by: Mapped[str] = mapped_column(Text, nullable=False)
+    accepted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    acceptance_command_id: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
 
 
 class RoadmapChangeApplicationRecord(Base):
@@ -121,7 +134,10 @@ class RoadmapTargetFence:
     active_application_id: UUID | None
 
 
-_UUID_FIELDS = {"application_id", "proposal_id", "application_command_id", "attempt_id", "command_id"}
+_UUID_FIELDS = {
+    "application_id", "proposal_id", "application_command_id", "attempt_id", "command_id",
+    "decision_id", "acceptance_command_id",
+}
 
 
 def _values(entity):
@@ -158,6 +174,28 @@ def _entity(record, cls):
     elif cls is RoadmapChangeApplicationAttempt:
         data["outcome"] = ApplicationAttemptOutcome(data["outcome"])
     return cls(**data)
+
+
+class SqlAlchemyRoadmapWritebackAuthorizationRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def for_decision(self, decision_id):
+        return _entity(
+            self.session.get(RoadmapWritebackAuthorizationRecord, str(decision_id)),
+            WritebackRiskAuthorization,
+        )
+
+    def by_command(self, identity):
+        record = self.session.scalar(
+            select(RoadmapWritebackAuthorizationRecord).where(
+                RoadmapWritebackAuthorizationRecord.acceptance_command_id == str(identity)
+            )
+        )
+        return _entity(record, WritebackRiskAuthorization)
+
+    def add(self, authorization):
+        self.session.add(RoadmapWritebackAuthorizationRecord(**_values(authorization)))
 
 
 class SqlAlchemyRoadmapChangeApplicationRepository:
