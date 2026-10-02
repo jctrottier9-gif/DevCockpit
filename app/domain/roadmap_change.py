@@ -201,6 +201,7 @@ class RoadmapChangeApplicationAttempt:
     attempt_id: UUID
     application_id: UUID
     attempt_number: int
+    command_id: UUID
     outcome: ApplicationAttemptOutcome
     patch_may_have_been_emitted: bool
     started_at: datetime
