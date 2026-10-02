@@ -119,9 +119,13 @@ def _merge_item(existing: AttentionItem, incoming: AttentionItem) -> AttentionIt
     for key, value in (incoming.context or {}).items():
         if key not in context or context[key] in (None, "", [], {}):
             context[key] = value
+    transport_blocks = incoming.kind is AttentionKind.TRANSPORT_BLOCKED
     return replace(
         existing,
         level=level,
+        kind=incoming.kind if transport_blocks else existing.kind,
+        title=incoming.title if transport_blocks else existing.title,
+        primary_action=incoming.primary_action if transport_blocks else existing.primary_action,
         reason=" · ".join(reasons),
         evidence=tuple(
             evidence[key]
