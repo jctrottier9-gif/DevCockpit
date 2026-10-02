@@ -3,7 +3,8 @@ from uuid import uuid4
 from sqlalchemy import inspect, text
 
 from app.config import Settings
-from app.infrastructure.database import build_engine, upgrade_database
+from app.infrastructure.database import build_engine, build_session_factory, upgrade_database
+from app.infrastructure.prompt_dispatches import SqlAlchemyUnitOfWork
 
 
 def test_upgrade_populated_0005_preserves_all_history_and_adds_writeback_tables(tmp_path):
@@ -190,3 +191,14 @@ DC-041B | WORK | READY | #28 | MAIN | B | DC-041
         item["name"] for item in inspector.get_indexes("roadmap_change_applications")
     }
     engine.dispose()
+
+    restarted_engine = build_engine(settings)
+    restarted_factory = build_session_factory(restarted_engine)
+    with SqlAlchemyUnitOfWork(restarted_factory) as uow:
+        persisted = uow.roadmap_change_proposals.get(proposal_id)
+        persisted_revision = uow.roadmap_change_proposal_revisions.get(proposal_id, 1)
+        assert persisted is not None
+        assert persisted.status.value == "DRAFT"
+        assert persisted_revision is not None
+        assert persisted_revision.proposed_body == proposed_body
+    restarted_engine.dispose()
