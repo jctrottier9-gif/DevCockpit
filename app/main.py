@@ -22,6 +22,12 @@ from app.application.executions import (
     evaluate_project_execution,
     read_project_execution,
 )
+from app.application.parallel_executions import (
+    DevExecutionItem,
+    ParallelDevExecutionProjection,
+    evaluate_project_parallel_dev_executions,
+    read_project_parallel_dev_executions,
+)
 from app.application.projects import ProjectCatalog
 from app.application.prompt_deliveries import (
     AcknowledgementResult,
@@ -226,6 +232,53 @@ def _execution_payload(
     }
 
 
+def _parallel_execution_item_payload(
+    project: Project,
+    item: DevExecutionItem,
+) -> dict[str, object]:
+    payload = _execution_payload(project, item.execution)
+    payload.pop("project", None)
+    return {
+        "role": "DEV",
+        "agent_session": item.agent_session,
+        "scheduler": {
+            "state": item.scheduler.state.value,
+            "reason": item.scheduler.reason.value,
+            "dependencies": list(item.scheduler.dependencies),
+            "unsatisfied_dependencies": list(item.scheduler.unsatisfied_dependencies),
+        },
+        "slot_state": item.slot_state.value,
+        "active": item.active,
+        "waiting_for_capacity": item.waiting_for_capacity,
+        "inhibition_reason": item.inhibition_reason,
+        **payload,
+    }
+
+
+def _parallel_executions_payload(
+    projection: ParallelDevExecutionProjection,
+) -> dict[str, object]:
+    return {
+        "project": _project_payload(projection.project),
+        "source": {
+            "status": "available",
+            "repository_full_name": projection.issue.repository_full_name,
+            "issue_number": projection.issue.issue_number,
+            "updated_at": projection.issue.updated_at,
+        },
+        "capacity": {
+            "limit": projection.max_parallel_dev_executions,
+            "used": projection.active_count,
+            "available": projection.available_capacity,
+        },
+        "executable_candidates": list(projection.scheduler.executable_candidates),
+        "executions": [
+            _parallel_execution_item_payload(projection.project, item)
+            for item in projection.items
+        ],
+    }
+
+
 
 def _response_payload(response) -> dict[str, object]:
     return {
@@ -287,11 +340,12 @@ def create_app(
             for project in active_project_catalog.list():
                 try:
                     await asyncio.to_thread(
-                        evaluate_project_execution,
+                        evaluate_project_parallel_dev_executions,
                         project,
                         roadmap_reader=active_roadmap_reader,
                         evidence_reader=active_execution_reader,
                         uow_factory=uow_factory,
+                        max_parallel_dev_executions=active_settings.max_parallel_dev_executions,
                     )
                 except asyncio.CancelledError:
                     raise
@@ -384,6 +438,56 @@ def create_app(
                 },
             )
         return _scheduler_payload(projection)
+
+    @application.get("/api/projects/{project_id}/executions", tags=["projects"])
+    def project_executions(project_id: str):
+        project = active_project_catalog.get(project_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        try:
+            projection = read_project_parallel_dev_executions(
+                project,
+                roadmap_reader=active_roadmap_reader,
+                evidence_reader=active_execution_reader,
+                uow_factory=uow_factory,
+                max_parallel_dev_executions=active_settings.max_parallel_dev_executions,
+            )
+        except RoadmapSourceError as exc:
+            return JSONResponse(
+                status_code=502,
+                content={
+                    "project": _project_payload(project),
+                    "source": {"status": "unavailable", "code": exc.code},
+                    "capacity": None,
+                    "executable_candidates": [],
+                    "executions": [],
+                },
+            )
+        return _parallel_executions_payload(projection)
+
+    @application.post("/api/projects/{project_id}/executions/evaluate", tags=["projects"])
+    def evaluate_executions(project_id: str) -> dict[str, object]:
+        project = active_project_catalog.get(project_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        evaluation = evaluate_project_parallel_dev_executions(
+            project,
+            roadmap_reader=active_roadmap_reader,
+            evidence_reader=active_execution_reader,
+            uow_factory=uow_factory,
+            max_parallel_dev_executions=active_settings.max_parallel_dev_executions,
+        )
+        payload = _parallel_executions_payload(evaluation.projection)
+        payload["prompt_dispatches"] = [
+            {
+                "dispatch_id": str(dispatch.dispatch_id),
+                "work_item_id": dispatch.work_item_id,
+                "agent_session": dispatch.agent_session,
+                "idempotency_key": dispatch.idempotency_key,
+            }
+            for dispatch in evaluation.dispatches
+        ]
+        return payload
 
     @application.get("/api/projects/{project_id}/responses", tags=["projects"])
     def project_responses(project_id: str) -> dict[str, object]:
