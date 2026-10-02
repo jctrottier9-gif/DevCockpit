@@ -760,19 +760,43 @@ def read_orchestration(project, work_item_id, *, roadmap_reader, evidence_reader
                 and decision.decision_type == DecisionType.SCOPE_DECISION.value
                 and decision.effect is DecisionEffect.HOLD_FOR_AUTHORIZATION
             )
+            authorization = (
+                uow.roadmap_writeback_authorizations.for_decision(decision.decision_id)
+                if decision else None
+            )
             consultations.append({
                 **asdict(handoff),
                 "responses": responses,
                 "indication": (
                     "Réponse à examiner" if responses else "En attente de réponse"
                 ) if handoff.status is HandoffStatus.OPEN else handoff.status,
-                "decision": asdict(decision) if decision else None,
+                "decision": (
+                    {
+                        **asdict(decision),
+                        "accepts_residual_writeback_risk": authorization is not None,
+                    }
+                    if decision else None
+                ),
                 "proposals": [
                     {
                         "proposal_id": proposal.proposal_id,
                         "status": proposal.status,
                         "version": proposal.version,
                         "current_revision": proposal.current_revision,
+                        "confirmed_revision": proposal.confirmed_revision,
+                        "confirmed_preview_digest": proposal.confirmed_preview_digest,
+                        "applications": [
+                            {
+                                "application_id": application.application_id,
+                                "status": application.status,
+                                "version": application.version,
+                                "revision": application.revision,
+                                "last_remote_body_hash": application.last_remote_body_hash,
+                            }
+                            for application in uow.roadmap_change_applications.list_for_proposal(
+                                proposal.proposal_id
+                            )
+                        ],
                     }
                     for proposal in proposals
                 ],
