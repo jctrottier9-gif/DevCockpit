@@ -9,11 +9,21 @@ type Dispatch = {
   delivery: null | { acknowledged: boolean }
 }
 type Source = Dispatch & { responses: Response[] }
+type RoadmapApplicationSummary = {
+  application_id: string
+  status: string
+  version: number
+  revision: number
+  last_remote_body_hash: string | null
+}
 type ProposalSummary = {
   proposal_id: string
   status: string
   version: number
   current_revision: number
+  confirmed_revision: number | null
+  confirmed_preview_digest: string | null
+  applications: RoadmapApplicationSummary[]
 }
 type Handoff = {
   handoff_id: string
@@ -38,6 +48,7 @@ type Handoff = {
     effect: string
     decision_type: string
     accepted_by: string
+    accepts_residual_writeback_risk: boolean
   }
   proposals: ProposalSummary[]
   actions: {
@@ -275,6 +286,7 @@ function Consultation({
   const [responseId, setResponseId] = useState('')
   const [summary, setSummary] = useState('')
   const [effect, setEffect] = useState('')
+  const [acceptWritebackRisk, setAcceptWritebackRisk] = useState(false)
   const [reason, setReason] = useState('')
   const [transferOpen, setTransferOpen] = useState(false)
   const [transferResponseId, setTransferResponseId] = useState('')
@@ -322,6 +334,7 @@ function Consultation({
         decision_type: decisionType,
         effect,
         accepted_by: actor,
+        accepts_residual_writeback_risk: acceptWritebackRisk,
       })
     }}>
       <label>
@@ -342,6 +355,14 @@ function Consultation({
           <option value="HOLD_FOR_AUTHORIZATION">Attendre une autorisation</option>
         </select>
       </label>
+      {h.target_role === 'PO' && h.purpose === 'ROADMAP_REVIEW' && <label>
+        <input
+          type="checkbox"
+          checked={acceptWritebackRisk}
+          onChange={event => setAcceptWritebackRisk(event.target.checked)}
+        />
+        J’accepte explicitement pour MVP-3 la fenêtre de concurrence résiduelle entre le dernier GET GitHub et le PATCH du body.
+      </label>}
       <p>Rôle repris si autorisé : <strong>{h.resume_role}</strong></p>
       <button disabled={busy || !actor.trim() || !responseId}>
         Accepter la conclusion
@@ -387,6 +408,7 @@ function Consultation({
     {h.decision && <section>
       <h4>Decision acceptée</h4>
       <p>{h.decision.decision_type} · {h.decision.effect} · {h.decision.accepted_by}</p>
+      <p>Risque writeback direct : <strong>{h.decision.accepts_residual_writeback_risk ? 'accepté explicitement' : 'non accepté'}</strong></p>
       <pre>{h.decision.summary}</pre>
       {h.resume_dispatch
         ? <Prompt value={h.resume_dispatch} label={`Reprise ${h.resume_role} préparée`} />
