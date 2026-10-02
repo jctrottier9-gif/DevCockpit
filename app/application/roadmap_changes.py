@@ -83,7 +83,6 @@ class ConfirmRoadmapChangeProposal:
     expected_proposal_version: int
     confirmation_command_id: UUID
     confirmed_by: str
-    writeback_authorization_decision_id: UUID
 
 
 @dataclass(frozen=True)
@@ -133,7 +132,12 @@ def _require_admissible_decision(uow, decision_id):
 
 def _require_writeback_authorization(uow, decision_id, project_id):
     decision = uow.decisions.get(decision_id)
-    if decision is None:
+    authorization = (
+        uow.roadmap_writeback_authorizations.for_decision(decision_id)
+        if decision is not None
+        else None
+    )
+    if decision is None or authorization is None:
         raise OrchestrationConflict(
             "Direct GitHub writeback requires an explicit Product Decision accepting the residual race"
         )
@@ -144,12 +148,13 @@ def _require_writeback_authorization(uow, decision_id, project_id):
         or handoff.target_role != "PO"
         or handoff.purpose != HandoffPurpose.ROADMAP_REVIEW.value
         or decision.decision_type != DecisionType.SCOPE_DECISION.value
-        or decision.effect is not DecisionEffect.CONTINUE_IN_SCOPE
+        or decision.effect is not DecisionEffect.HOLD_FOR_AUTHORIZATION
+        or authorization.project_id != project_id
     ):
         raise OrchestrationConflict(
             "Product Decision does not authorize direct GitHub writeback for this project"
         )
-    return decision
+    return authorization
 
 
 def _project_for_target(project_catalog, proposal):
@@ -380,8 +385,7 @@ def confirm_roadmap_change_proposal(
                 or replay.confirmed_revision != command.revision
                 or replay.confirmed_preview_digest != command.preview_digest
                 or replay.confirmed_by != command.confirmed_by
-                or replay.writeback_authorization_decision_id
-                != command.writeback_authorization_decision_id
+                or replay.writeback_authorization_decision_id != replay.source_decision_id
             ):
                 raise OrchestrationConflict(
                     "Confirmation command already used with different content"
@@ -396,7 +400,7 @@ def confirm_roadmap_change_proposal(
         project = _project_for_target(project_catalog, proposal)
         _require_writeback_authorization(
             uow,
-            command.writeback_authorization_decision_id,
+            proposal.source_decision_id,
             proposal.project_id,
         )
         revision = uow.roadmap_change_proposal_revisions.get(
@@ -430,8 +434,7 @@ def confirm_roadmap_change_proposal(
                 or replay.confirmed_revision != command.revision
                 or replay.confirmed_preview_digest != command.preview_digest
                 or replay.confirmed_by != command.confirmed_by
-                or replay.writeback_authorization_decision_id
-                != command.writeback_authorization_decision_id
+                or replay.writeback_authorization_decision_id != replay.source_decision_id
             ):
                 raise OrchestrationConflict(
                     "Confirmation command already used with different content"
@@ -446,7 +449,7 @@ def confirm_roadmap_change_proposal(
         _project_for_target(project_catalog, proposal)
         _require_writeback_authorization(
             uow,
-            command.writeback_authorization_decision_id,
+            proposal.source_decision_id,
             proposal.project_id,
         )
         revision = uow.roadmap_change_proposal_revisions.get(proposal_id, command.revision)
@@ -464,7 +467,7 @@ def confirm_roadmap_change_proposal(
             confirmation_command_id=command.confirmation_command_id,
             confirmed_by=command.confirmed_by,
             confirmed_at=utc_now(),
-            writeback_authorization_decision_id=command.writeback_authorization_decision_id,
+            writeback_authorization_decision_id=proposal.source_decision_id,
         )
         uow.roadmap_change_proposals.save(
             confirmed,
