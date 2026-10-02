@@ -28,9 +28,11 @@ from app.domain.execution import ExecutionEvidence
 from app.domain.handoff import DecisionEffect, OrchestrationConflict, utc_now
 from app.domain.project import Project
 from app.domain.roadmap_change import (
+    ApplicationAttemptOutcome,
     ApplicationStatus,
     ProposalStatus,
     RoadmapChangeApplication,
+    RoadmapChangeApplicationAttempt,
 )
 from app.infrastructure.database import build_engine, build_session_factory, upgrade_database
 from app.infrastructure.prompt_dispatches import SqlAlchemyUnitOfWork
@@ -656,3 +658,113 @@ def test_reconciliation_command_same_identity_with_changed_content_conflicts(env
             roadmap_reader=env["roadmap"],
             uow_factory=env["uow"],
         )
+
+
+@pytest.mark.parametrize(
+    "drifted_project",
+    [
+        Project("DevCockpit", "jctrottier9-gif/OtherRepo", 1),
+        Project("DevCockpit", "jctrottier9-gif/DevCockpit", 99),
+    ],
+)
+def test_confirmation_refuses_repo_or_issue_target_drift(env, drifted_project):
+    proposal, preview = _proposal(env)
+    with pytest.raises(OrchestrationConflict, match="target is frozen"):
+        confirm_roadmap_change_proposal(
+            proposal.proposal_id,
+            ConfirmRoadmapChangeProposal(
+                1,
+                preview["preview_digest"],
+                proposal.version,
+                uuid4(),
+                "JC",
+            ),
+            project_catalog=ProjectCatalog((drifted_project,)),
+            roadmap_reader=env["roadmap"],
+            uow_factory=env["uow"],
+        )
+
+
+@pytest.mark.parametrize(
+    "drifted_project",
+    [
+        Project("DevCockpit", "jctrottier9-gif/OtherRepo", 1),
+        Project("DevCockpit", "jctrottier9-gif/DevCockpit", 99),
+    ],
+)
+def test_apply_refuses_repo_or_issue_target_drift(env, drifted_project):
+    proposal, preview = _proposal(env)
+    confirmed, _ = _confirm(env, proposal, preview)
+    writer = Writer(env["roadmap"])
+
+    with pytest.raises(OrchestrationConflict, match="target is frozen"):
+        apply_roadmap_change_proposal(
+            proposal.proposal_id,
+            ApplyRoadmapChangeProposal(uuid4(), confirmed.version, "JC"),
+            project_catalog=ProjectCatalog((drifted_project,)),
+            roadmap_reader=env["roadmap"],
+            roadmap_writer=writer,
+            issue_mapping_reader=IssueMappings(),
+            uow_factory=env["uow"],
+        )
+    assert writer.calls == []
+
+
+def test_restart_with_applying_never_emits_a_new_patch(env):
+    proposal, preview = _proposal(env)
+    confirmed, _ = _confirm(env, proposal, preview)
+    with env["uow"]() as uow:
+        revision = uow.roadmap_change_proposal_revisions.get(proposal.proposal_id, 1)
+        now = utc_now()
+        application = RoadmapChangeApplication(
+            application_id=uuid4(),
+            proposal_id=proposal.proposal_id,
+            revision=1,
+            project_id=PROJECT.project_id,
+            repository_full_name=PROJECT.repository_full_name,
+            roadmap_issue_number=PROJECT.roadmap_issue_number,
+            base_body=revision.base_body,
+            base_body_hash=revision.base_body_hash,
+            expected_body=revision.proposed_body,
+            expected_body_hash=revision.proposed_body_hash,
+            application_command_id=uuid4(),
+            expected_proposal_version=confirmed.version,
+            requested_by="JC",
+            status=ApplicationStatus.APPLYING,
+            version=1,
+            created_at=now,
+            updated_at=now,
+        )
+        attempt = RoadmapChangeApplicationAttempt(
+            attempt_id=uuid4(),
+            application_id=application.application_id,
+            attempt_number=1,
+            command_id=application.application_command_id,
+            outcome=ApplicationAttemptOutcome.APPLYING,
+            patch_may_have_been_emitted=True,
+            started_at=now,
+            requested_by="JC",
+        )
+        uow.roadmap_change_applications.add(application)
+        uow.flush()
+        uow.roadmap_target_fences.claim(
+            PROJECT.repository_full_name,
+            PROJECT.roadmap_issue_number,
+            application.application_id,
+        )
+        uow.roadmap_change_application_attempts.add(attempt)
+        uow.commit()
+
+    env["engine"].dispose()
+    restarted_engine = build_engine(env["settings"])
+    restarted_factory = build_session_factory(restarted_engine)
+    restarted_uow = lambda: SqlAlchemyUnitOfWork(restarted_factory)
+    reconciled = reconcile_roadmap_change_application(
+        application.application_id,
+        ReconcileRoadmapChangeApplication(uuid4(), application.version, "JC"),
+        project_catalog=env["catalog"],
+        roadmap_reader=env["roadmap"],
+        uow_factory=restarted_uow,
+    )
+    assert reconciled.status is ApplicationStatus.RECONCILIATION_REQUIRED
+    restarted_engine.dispose()
