@@ -20,6 +20,7 @@ from app.infrastructure.roadmap_applications import (
     SqlAlchemyRoadmapChangeApplicationAttemptRepository,
     SqlAlchemyRoadmapChangeApplicationRepository,
     SqlAlchemyRoadmapTargetFenceRepository,
+    SqlAlchemyRoadmapWritebackAuthorizationRepository,
 )
 
 
@@ -114,6 +115,7 @@ class SqlAlchemyUnitOfWork:
         self.roadmap_change_applications: SqlAlchemyRoadmapChangeApplicationRepository
         self.roadmap_change_application_attempts: SqlAlchemyRoadmapChangeApplicationAttemptRepository
         self.roadmap_target_fences: SqlAlchemyRoadmapTargetFenceRepository
+        self.roadmap_writeback_authorizations: SqlAlchemyRoadmapWritebackAuthorizationRepository
 
     def __enter__(self) -> SqlAlchemyUnitOfWork:
         self._session = self._session_factory()
@@ -134,6 +136,7 @@ class SqlAlchemyUnitOfWork:
         self.roadmap_change_applications = SqlAlchemyRoadmapChangeApplicationRepository(self._session)
         self.roadmap_change_application_attempts = SqlAlchemyRoadmapChangeApplicationAttemptRepository(self._session)
         self.roadmap_target_fences = SqlAlchemyRoadmapTargetFenceRepository(self._session)
+        self.roadmap_writeback_authorizations = SqlAlchemyRoadmapWritebackAuthorizationRepository(self._session)
         self.prompt_dispatches = SqlAlchemyPromptDispatchRepository(self._session)
         self.prompt_deliveries = SqlAlchemyPromptDeliveryRepository(self._session)
         self.chatgpt_responses = SqlAlchemyImportedChatGptResponseRepository(self._session)
