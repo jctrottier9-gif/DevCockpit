@@ -55,6 +55,7 @@ def _create_proposals(*, extended: bool) -> None:
             sa.Column("confirmed_revision", sa.Integer(), nullable=True),
             sa.Column("confirmed_preview_digest", sa.String(length=64), nullable=True),
             sa.Column("confirmation_command_id", sa.String(length=36), nullable=True),
+            sa.Column("confirmation_expected_proposal_version", sa.Integer(), nullable=True),
             sa.Column("confirmed_by", sa.Text(), nullable=True),
             sa.Column("confirmed_at", sa.DateTime(timezone=True), nullable=True),
             sa.Column("writeback_authorization_decision_id", sa.String(length=36), nullable=True),
@@ -94,12 +95,16 @@ def _create_proposals(*, extended: bool) -> None:
                 "AND confirmed_preview_digest IS NOT NULL "
                 "AND length(confirmed_preview_digest) = 64 "
                 "AND confirmation_command_id IS NOT NULL "
+                "AND confirmation_expected_proposal_version IS NOT NULL "
+                "AND confirmation_expected_proposal_version >= 1 "
                 "AND confirmed_by IS NOT NULL AND length(trim(confirmed_by)) > 0 "
                 "AND confirmed_at IS NOT NULL "
                 "AND writeback_authorization_decision_id IS NOT NULL) "
                 "OR (status NOT IN ('CONFIRMED','APPLIED') "
                 "AND confirmed_revision IS NULL AND confirmed_preview_digest IS NULL "
-                "AND confirmation_command_id IS NULL AND confirmed_by IS NULL "
+                "AND confirmation_command_id IS NULL "
+                "AND confirmation_expected_proposal_version IS NULL "
+                "AND confirmed_by IS NULL "
                 "AND confirmed_at IS NULL AND writeback_authorization_decision_id IS NULL)",
                 name="ck_roadmap_proposal_confirmation",
             ),
@@ -251,6 +256,7 @@ def upgrade() -> None:
         sa.Column("expected_body", sa.Text(), nullable=False),
         sa.Column("expected_body_hash", sa.String(length=64), nullable=False),
         sa.Column("application_command_id", sa.String(length=36), nullable=False),
+        sa.Column("expected_proposal_version", sa.Integer(), nullable=False),
         sa.Column("requested_by", sa.Text(), nullable=False),
         sa.Column("status", sa.String(length=32), nullable=False),
         sa.Column("version", sa.Integer(), nullable=False),
@@ -262,7 +268,8 @@ def upgrade() -> None:
             name="ck_roadmap_application_status",
         ),
         sa.CheckConstraint(
-            "revision >= 1 AND roadmap_issue_number >= 1 AND version >= 1",
+            "revision >= 1 AND roadmap_issue_number >= 1 AND version >= 1 "
+            "AND expected_proposal_version >= 1",
             name="ck_roadmap_application_numbers",
         ),
         sa.CheckConstraint(
@@ -289,12 +296,16 @@ def upgrade() -> None:
         sa.Column("attempt_number", sa.Integer(), nullable=False),
         sa.Column("command_id", sa.String(length=36), nullable=False),
         sa.Column("outcome", sa.String(length=40), nullable=False),
+        sa.Column("expected_application_version", sa.Integer(), nullable=True),
+        sa.Column("requested_by", sa.Text(), nullable=True),
         sa.Column("patch_may_have_been_emitted", sa.Boolean(), nullable=False),
         sa.Column("started_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("detail", sa.Text(), nullable=True),
         sa.CheckConstraint(
-            "attempt_number >= 1",
+            "attempt_number >= 1 "
+            "AND (expected_application_version IS NULL OR expected_application_version >= 1) "
+            "AND (requested_by IS NULL OR length(trim(requested_by)) > 0)",
             name="ck_roadmap_application_attempt_number",
         ),
         sa.CheckConstraint(
