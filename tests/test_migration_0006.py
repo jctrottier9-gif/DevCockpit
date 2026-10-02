@@ -181,6 +181,7 @@ DC-041B | WORK | READY | #28 | MAIN | B | DC-041
     assert {
         "roadmap_change_proposals",
         "roadmap_change_proposal_revisions",
+        "roadmap_writeback_authorizations",
         "roadmap_change_applications",
         "roadmap_change_application_attempts",
         "roadmap_target_fences",
