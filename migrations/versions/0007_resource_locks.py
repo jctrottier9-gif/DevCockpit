@@ -23,6 +23,7 @@ def upgrade() -> None:
         sa.Column("project_id", sa.String(length=200), nullable=False),
         sa.Column("work_item_id", sa.String(length=200), nullable=False),
         sa.Column("agent_session", sa.String(length=450), nullable=False),
+        sa.Column("lease_owner_id", sa.String(length=100), nullable=False),
         sa.Column("surface", sa.String(length=400), nullable=False),
         sa.Column("mode", sa.String(length=16), nullable=False),
         sa.Column("state", sa.String(length=16), nullable=False),
@@ -43,7 +44,7 @@ def upgrade() -> None:
         sa.CheckConstraint(
             "version >= 1 AND length(trim(project_id)) > 0 "
             "AND length(trim(work_item_id)) > 0 AND length(trim(agent_session)) > 0 "
-            "AND length(trim(surface)) > 0",
+            "AND length(trim(lease_owner_id)) > 0 AND length(trim(surface)) > 0",
             name="ck_resource_lock_identity",
         ),
         sa.CheckConstraint(
