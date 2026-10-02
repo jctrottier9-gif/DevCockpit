@@ -294,7 +294,7 @@ def create_roadmap_change_proposal_revision(
 
         proposal = _require_proposal(uow, proposal_id)
         if proposal.status is not ProposalStatus.DRAFT:
-            raise OrchestrationConflict("Only a DRAFT proposal can be revised")
+            raise OrchestrationConflict("Proposal cannot be revised unless it is DRAFT")
         if proposal.version != command.expected_version:
             raise OrchestrationConflict("Proposal version changed; refresh before revising")
 
