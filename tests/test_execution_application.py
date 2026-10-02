@@ -69,19 +69,24 @@ class EmptyHandoffs:
 
 
 class EmptyFenceRepository:
+    def __init__(self):
+        self.generation = 0
+        self.active_application_id = None
+
     class Snapshot:
-        generation = 0
-        active_application_id = None
+        def __init__(self, generation, active_application_id):
+            self.generation = generation
+            self.active_application_id = active_application_id
 
     def snapshot(self, repository_full_name, roadmap_issue_number):
-        return self.Snapshot()
+        return self.Snapshot(self.generation, self.active_application_id)
 
 
 class FakeUnitOfWork:
-    def __init__(self, repository: InMemoryDispatchRepository) -> None:
+    def __init__(self, repository: InMemoryDispatchRepository, fences: EmptyFenceRepository) -> None:
         self.prompt_dispatches = repository
         self.handoffs = EmptyHandoffs()
-        self.roadmap_target_fences = EmptyFenceRepository()
+        self.roadmap_target_fences = fences
 
     def __enter__(self):
         return self
@@ -96,8 +101,9 @@ class FakeUnitOfWork:
         return None
 
 
-def uow_factory(repository: InMemoryDispatchRepository):
-    return lambda: FakeUnitOfWork(repository)
+def uow_factory(repository: InMemoryDispatchRepository, fences=None):
+    shared_fences = fences or EmptyFenceRepository()
+    return lambda: FakeUnitOfWork(repository, shared_fences)
 
 
 def open_pr() -> PullRequestEvidence:
@@ -223,5 +229,46 @@ def test_github_source_failure_fails_closed_without_dispatch() -> None:
 
     assert result.projection.state is ExecutionState.BLOCKED
     assert {item.code for item in result.projection.diagnostics} == {"GITHUB_UNAVAILABLE"}
+    assert result.dispatch is None
+    assert repository.by_key == {}
+
+
+def test_poller_generation_fence_rejects_projection_read_before_writeback():
+    repository = InMemoryDispatchRepository()
+    fences = EmptyFenceRepository()
+
+    class RacingEvidenceReader(EvidenceReader):
+        def read(self, project, work_item):
+            # Simulate a roadmap application that starts and reaches a terminal
+            # state while this poller is reading old GitHub evidence.
+            fences.generation += 1
+            fences.active_application_id = None
+            return super().read(project, work_item)
+
+    result = evaluate_project_execution(
+        PROJECT,
+        roadmap_reader=RoadmapReader(),
+        evidence_reader=RacingEvidenceReader(ExecutionEvidence(default_branch="main")),
+        uow_factory=uow_factory(repository, fences),
+    )
+
+    assert result.projection.state is ExecutionState.READY
+    assert result.dispatch is None
+    assert repository.by_key == {}
+
+
+def test_poller_is_inhibited_while_roadmap_application_is_active():
+    repository = InMemoryDispatchRepository()
+    fences = EmptyFenceRepository()
+    fences.generation = 4
+    fences.active_application_id = "active"
+
+    result = evaluate_project_execution(
+        PROJECT,
+        roadmap_reader=RoadmapReader(),
+        evidence_reader=EvidenceReader(ExecutionEvidence(default_branch="main")),
+        uow_factory=uow_factory(repository, fences),
+    )
+
     assert result.dispatch is None
     assert repository.by_key == {}
