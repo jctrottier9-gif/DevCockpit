@@ -25,9 +25,13 @@ from app.application.roadmap_changes import (
 from app.application.roadmaps import RoadmapIssue, RoadmapSourceError
 from app.config import Settings
 from app.domain.execution import ExecutionEvidence
-from app.domain.handoff import DecisionEffect, OrchestrationConflict
+from app.domain.handoff import DecisionEffect, OrchestrationConflict, utc_now
 from app.domain.project import Project
-from app.domain.roadmap_change import ApplicationStatus, ProposalStatus
+from app.domain.roadmap_change import (
+    ApplicationStatus,
+    ProposalStatus,
+    RoadmapChangeApplication,
+)
 from app.infrastructure.database import build_engine, build_session_factory, upgrade_database
 from app.infrastructure.prompt_dispatches import SqlAlchemyUnitOfWork
 
@@ -189,18 +193,19 @@ def _scope_decision(env, *, authorize_writeback):
         return uow.decisions.for_handoff(handoff.handoff_id)
 
 
-def _proposal(env, *, authorized=True):
+def _proposal(env, *, authorized=True, proposal_operations=None):
     decision = _scope_decision(env, authorize_writeback=authorized)
+    selected_operations = proposal_operations or [{
+        "type": "update_current_state_prose",
+        "expected": "État A",
+        "replacement": "État B",
+    }]
     proposal = create_roadmap_change_proposal(
         decision.decision_id,
         CreateRoadmapChangeProposal(
             uuid4(),
             uuid4(),
-            [{
-                "type": "update_current_state_prose",
-                "expected": "État A",
-                "replacement": "État B",
-            }],
+            selected_operations,
             "JC",
         ),
         project_catalog=env["catalog"],
@@ -500,3 +505,154 @@ def test_github_unavailable_after_uncertain_patch_remains_reconciliation_require
         uow_factory=env["uow"],
     )
     assert reconciled.status is ApplicationStatus.RECONCILIATION_REQUIRED
+
+
+def test_apply_revalidates_required_issue_mappings_and_never_creates_issue(env):
+    proposal, preview = _proposal(
+        env,
+        proposal_operations=[
+            {
+                "type": "add_work_item",
+                "key": "DC-049",
+                "item_type": "WORK",
+                "status": "BLOCKED",
+                "parent": "#1",
+                "lane": "MAIN",
+                "title": "future slice",
+                "after": "DC-041B",
+            },
+            {
+                "type": "update_issue_mapping",
+                "key": "DC-049",
+                "issue_number": 99,
+            },
+        ],
+    )
+    assert preview["blocking_diagnostics"] == []
+    confirmed, _ = _confirm(env, proposal, preview)
+    writer = Writer(env["roadmap"])
+    mappings = IssueMappings(exists=False)
+
+    with pytest.raises(OrchestrationConflict, match="does not exist"):
+        apply_roadmap_change_proposal(
+            proposal.proposal_id,
+            ApplyRoadmapChangeProposal(uuid4(), confirmed.version, "JC"),
+            project_catalog=env["catalog"],
+            roadmap_reader=env["roadmap"],
+            roadmap_writer=writer,
+            issue_mapping_reader=mappings,
+            uow_factory=env["uow"],
+        )
+
+    assert mappings.calls == [(PROJECT.repository_full_name, 99)]
+    assert writer.calls == []
+
+
+def test_same_target_application_is_locally_serialized(env):
+    proposal, preview = _proposal(env)
+    confirmed, _ = _confirm(env, proposal, preview)
+
+    with env["uow"]() as uow:
+        revision = uow.roadmap_change_proposal_revisions.get(proposal.proposal_id, 1)
+        now = utc_now()
+        active = RoadmapChangeApplication(
+            application_id=uuid4(),
+            proposal_id=proposal.proposal_id,
+            revision=1,
+            project_id=PROJECT.project_id,
+            repository_full_name=PROJECT.repository_full_name,
+            roadmap_issue_number=PROJECT.roadmap_issue_number,
+            base_body=revision.base_body,
+            base_body_hash=revision.base_body_hash,
+            expected_body=revision.proposed_body,
+            expected_body_hash=revision.proposed_body_hash,
+            application_command_id=uuid4(),
+            expected_proposal_version=confirmed.version,
+            requested_by="other",
+            status=ApplicationStatus.PREPARED,
+            version=1,
+            created_at=now,
+            updated_at=now,
+        )
+        uow.roadmap_change_applications.add(active)
+        uow.flush()
+        uow.roadmap_target_fences.claim(
+            PROJECT.repository_full_name,
+            PROJECT.roadmap_issue_number,
+            active.application_id,
+        )
+        uow.commit()
+
+    writer = Writer(env["roadmap"])
+    with pytest.raises(OrchestrationConflict, match="Another roadmap application is active"):
+        apply_roadmap_change_proposal(
+            proposal.proposal_id,
+            ApplyRoadmapChangeProposal(uuid4(), confirmed.version, "JC"),
+            project_catalog=env["catalog"],
+            roadmap_reader=env["roadmap"],
+            roadmap_writer=writer,
+            issue_mapping_reader=IssueMappings(),
+            uow_factory=env["uow"],
+        )
+    assert writer.calls == []
+
+
+def test_application_command_same_identity_with_changed_content_conflicts(env):
+    proposal, preview = _proposal(env)
+    confirmed, _ = _confirm(env, proposal, preview)
+    writer = Writer(env["roadmap"])
+    command = ApplyRoadmapChangeProposal(uuid4(), confirmed.version, "JC")
+    application = apply_roadmap_change_proposal(
+        proposal.proposal_id,
+        command,
+        project_catalog=env["catalog"],
+        roadmap_reader=env["roadmap"],
+        roadmap_writer=writer,
+        issue_mapping_reader=IssueMappings(),
+        uow_factory=env["uow"],
+    )
+    assert application.status is ApplicationStatus.APPLIED
+
+    with pytest.raises(OrchestrationConflict, match="different content"):
+        apply_roadmap_change_proposal(
+            proposal.proposal_id,
+            replace(command, requested_by="Other"),
+            project_catalog=env["catalog"],
+            roadmap_reader=env["roadmap"],
+            roadmap_writer=writer,
+            issue_mapping_reader=IssueMappings(),
+            uow_factory=env["uow"],
+        )
+
+
+def test_reconciliation_command_same_identity_with_changed_content_conflicts(env):
+    proposal, preview = _proposal(env)
+    confirmed, _ = _confirm(env, proposal, preview)
+    writer = Writer(env["roadmap"], "uncertain")
+    application = apply_roadmap_change_proposal(
+        proposal.proposal_id,
+        ApplyRoadmapChangeProposal(uuid4(), confirmed.version, "JC"),
+        project_catalog=env["catalog"],
+        roadmap_reader=env["roadmap"],
+        roadmap_writer=writer,
+        issue_mapping_reader=IssueMappings(),
+        uow_factory=env["uow"],
+    )
+    command = ReconcileRoadmapChangeApplication(uuid4(), application.version, "JC")
+    first = reconcile_roadmap_change_application(
+        application.application_id,
+        command,
+        project_catalog=env["catalog"],
+        roadmap_reader=env["roadmap"],
+        uow_factory=env["uow"],
+    )
+    assert first.status is ApplicationStatus.RECONCILIATION_REQUIRED
+
+    with pytest.raises(OrchestrationConflict, match="different content"):
+        reconcile_roadmap_change_application(
+            application.application_id,
+            replace(command, reconciled_by="Other"),
+            project_catalog=env["catalog"],
+            roadmap_reader=env["roadmap"],
+            uow_factory=env["uow"],
+        )
