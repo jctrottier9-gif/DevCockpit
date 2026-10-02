@@ -47,6 +47,24 @@ def test_parses_resourceplanner_like_compound_keys_and_architecture_gate() -> No
     assert result.work_items[0].type is WorkItemType.ARCHITECTURE_GATE
 
 
+def test_parses_resourceplanner_environment_gates_without_losing_active_ready() -> None:
+    result = parse_canonical_pipeline(
+        pipeline(
+            "ENV-492 | ENVIRONMENT_GATE | DONE | #492 | MAIN | SQLite to SQL Server cutover",
+            "ENV-208 | ENVIRONMENT_GATE | DONE | #208 | MAIN | SQL Server authoritative",
+            "ASTRA-363 | ARCHITECTURE_GATE | READY | #363 | MAIN | FAT SAT architecture",
+            "363A | WORK | BLOCKED | #363 | MAIN | first implementation slice",
+        )
+    )
+
+    assert result.valid is True
+    assert result.diagnostics == ()
+    assert result.work_items[0].type is WorkItemType.ENVIRONMENT_GATE
+    assert result.work_items[1].type is WorkItemType.ENVIRONMENT_GATE
+    assert result.active_ready_item is not None
+    assert result.active_ready_item.key == "ASTRA-363"
+
+
 def test_parses_taskplanner_like_keys_without_replacing_identity() -> None:
     result = parse_canonical_pipeline(
         pipeline(

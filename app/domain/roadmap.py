@@ -33,6 +33,7 @@ _VERSION_MARKER_PATTERN = re.compile(r"^<!--\s*/?COCKPIT_PIPELINE_V([0-9]+)\s*--
 class WorkItemType(StrEnum):
     WORK = "WORK"
     ARCHITECTURE_GATE = "ARCHITECTURE_GATE"
+    ENVIRONMENT_GATE = "ENVIRONMENT_GATE"
 
 
 class WorkItemStatus(StrEnum):

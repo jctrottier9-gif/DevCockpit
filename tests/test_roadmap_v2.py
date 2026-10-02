@@ -1,6 +1,6 @@
 import pytest
 
-from app.domain.roadmap import WorkItemStatus, parse_canonical_pipeline
+from app.domain.roadmap import WorkItemStatus, WorkItemType, parse_canonical_pipeline
 from app.domain.roadmap_change import (
     ProposalStatus,
     RoadmapChangeProposal,
@@ -79,6 +79,18 @@ def split_operations():
         {"type": "update_issue_mapping", "key": "DC-041A", "issue_number": 27},
         {"type": "update_issue_mapping", "key": "DC-041B", "issue_number": 28},
     ]
+
+
+def test_v2_accepts_environment_gate_type() -> None:
+    parsed = parse_canonical_pipeline(v2(
+        "ENV-1 | ENVIRONMENT_GATE | DONE | #1 | MAIN | environment gate | -",
+        "A | WORK | READY | #1 | MAIN | implementation | -",
+    ))
+
+    assert parsed.valid
+    assert parsed.work_items[0].type is WorkItemType.ENVIRONMENT_GATE
+    assert parsed.active_ready_item is not None
+    assert parsed.active_ready_item.key == "A"
 
 
 def test_v2_split_one_old_to_many_is_valid():

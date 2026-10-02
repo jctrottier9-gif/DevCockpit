@@ -1,6 +1,6 @@
 import pytest
 
-from app.domain.roadmap import WorkItemStatus, parse_canonical_pipeline, render_canonical_pipeline
+from app.domain.roadmap import WorkItemStatus, WorkItemType, parse_canonical_pipeline, render_canonical_pipeline
 
 
 def v3(*rows: str) -> str:
@@ -10,6 +10,19 @@ def v3(*rows: str) -> str:
         *rows,
         "<!-- /COCKPIT_PIPELINE_V3 -->",
     ])
+
+
+def test_v3_accepts_and_round_trips_environment_gate_type() -> None:
+    parsed = parse_canonical_pipeline(v3(
+        "ENV-1 | ENVIRONMENT_GATE | DONE | #1 | MAIN | environment gate | - | -",
+        "A | WORK | READY | #1 | MAIN | implementation | - | ENV-1",
+    ))
+
+    assert parsed.valid
+    assert parsed.work_items[0].type is WorkItemType.ENVIRONMENT_GATE
+    assert parse_canonical_pipeline(
+        render_canonical_pipeline(parsed.work_items, version=3)
+    ) == parsed
 
 
 def test_v3_parses_explicit_dependencies_and_round_trips():
