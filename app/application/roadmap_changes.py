@@ -386,8 +386,6 @@ def confirm_roadmap_change_proposal(
                 or replay.confirmed_preview_digest != command.preview_digest
                 or replay.confirmation_expected_proposal_version
                 != command.expected_proposal_version
-                or replay.confirmation_expected_proposal_version
-                != command.expected_proposal_version
                 or replay.confirmed_by != command.confirmed_by
                 or replay.writeback_authorization_decision_id != replay.source_decision_id
             ):
@@ -437,6 +435,8 @@ def confirm_roadmap_change_proposal(
                 replay.proposal_id != proposal_id
                 or replay.confirmed_revision != command.revision
                 or replay.confirmed_preview_digest != command.preview_digest
+                or replay.confirmation_expected_proposal_version
+                != command.expected_proposal_version
                 or replay.confirmed_by != command.confirmed_by
                 or replay.writeback_authorization_decision_id != replay.source_decision_id
             ):
