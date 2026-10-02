@@ -42,6 +42,10 @@ from app.domain.roadmap import PipelineDiagnostic, PipelineParseResult, WorkItem
 from app.infrastructure.database import build_engine, build_session_factory
 from app.infrastructure.github_execution import GitHubExecutionReader
 from app.infrastructure.github_roadmaps import GitHubRoadmapReader
+from app.infrastructure.github_roadmap_writer import (
+    GitHubIssueMappingReader,
+    GitHubRoadmapWriter,
+)
 from app.infrastructure.project_config import load_projects
 from app.infrastructure.prompt_dispatches import SqlAlchemyUnitOfWork
 from app.infrastructure.websocket_transport import (
@@ -198,6 +202,8 @@ def create_app(
     project_catalog: ProjectCatalog | None = None,
     roadmap_reader: RoadmapIssueReader | None = None,
     execution_reader: ExecutionEvidenceReader | None = None,
+    roadmap_writer=None,
+    issue_mapping_reader=None,
 ) -> FastAPI:
     active_settings = settings or get_settings()
     engine = build_engine(active_settings)
@@ -216,6 +222,14 @@ def create_app(
         timeout_seconds=active_settings.github_timeout_seconds,
     )
     active_execution_reader = execution_reader or GitHubExecutionReader(
+        token=token,
+        timeout_seconds=active_settings.github_timeout_seconds,
+    )
+    active_roadmap_writer = roadmap_writer or GitHubRoadmapWriter(
+        token=token,
+        timeout_seconds=active_settings.github_timeout_seconds,
+    )
+    active_issue_mapping_reader = issue_mapping_reader or GitHubIssueMappingReader(
         token=token,
         timeout_seconds=active_settings.github_timeout_seconds,
     )
@@ -271,10 +285,16 @@ def create_app(
     application.state.project_catalog = active_project_catalog
     application.state.roadmap_reader = active_roadmap_reader
     application.state.execution_reader = active_execution_reader
+    application.state.roadmap_writer = active_roadmap_writer
+    application.state.issue_mapping_reader = active_issue_mapping_reader
 
     application.include_router(build_orchestration_router(
-        project_catalog=active_project_catalog, roadmap_reader=active_roadmap_reader,
-        evidence_reader=active_execution_reader, uow_factory=uow_factory,
+        project_catalog=active_project_catalog,
+        roadmap_reader=active_roadmap_reader,
+        roadmap_writer=active_roadmap_writer,
+        issue_mapping_reader=active_issue_mapping_reader,
+        evidence_reader=active_execution_reader,
+        uow_factory=uow_factory,
     ))
 
     @application.get("/api/health", tags=["system"])
