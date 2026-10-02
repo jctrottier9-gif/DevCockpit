@@ -71,6 +71,7 @@ class RoadmapChangeProposal:
     confirmed_revision: int | None = None
     confirmed_preview_digest: str | None = None
     confirmation_command_id: UUID | None = None
+    confirmation_expected_proposal_version: int | None = None
     confirmed_by: str | None = None
     confirmed_at: datetime | None = None
     writeback_authorization_decision_id: UUID | None = None
@@ -97,6 +98,7 @@ class RoadmapChangeProposal:
             self.confirmed_revision,
             self.confirmed_preview_digest,
             self.confirmation_command_id,
+            self.confirmation_expected_proposal_version,
             self.confirmed_by,
             self.confirmed_at,
             self.writeback_authorization_decision_id,
@@ -107,6 +109,7 @@ class RoadmapChangeProposal:
             if (
                 self.confirmed_revision < 1
                 or self.confirmed_revision > self.current_revision
+                or self.confirmation_expected_proposal_version < 1
                 or not self.confirmed_preview_digest.strip()
                 or not self.confirmed_by.strip()
                 or self.confirmed_at.tzinfo is None
@@ -167,6 +170,7 @@ class RoadmapChangeApplication:
     expected_body: str
     expected_body_hash: str
     application_command_id: UUID
+    expected_proposal_version: int
     requested_by: str
     status: ApplicationStatus
     version: int
@@ -176,7 +180,12 @@ class RoadmapChangeApplication:
 
     def __post_init__(self):
         ApplicationStatus(self.status)
-        if self.revision < 1 or self.roadmap_issue_number < 1 or self.version < 1:
+        if (
+            self.revision < 1
+            or self.roadmap_issue_number < 1
+            or self.version < 1
+            or self.expected_proposal_version < 1
+        ):
             raise ValueError("Invalid roadmap application identity")
         if (
             not self.project_id.strip()
@@ -203,6 +212,8 @@ class RoadmapChangeApplicationAttempt:
     attempt_number: int
     command_id: UUID
     outcome: ApplicationAttemptOutcome
+    expected_application_version: int | None = None
+    requested_by: str | None = None
     patch_may_have_been_emitted: bool
     started_at: datetime
     completed_at: datetime | None = None
@@ -212,6 +223,10 @@ class RoadmapChangeApplicationAttempt:
         ApplicationAttemptOutcome(self.outcome)
         if self.attempt_number < 1 or self.started_at.tzinfo is None:
             raise ValueError("Invalid application attempt")
+        if self.expected_application_version is not None and self.expected_application_version < 1:
+            raise ValueError("Invalid expected application version")
+        if self.requested_by is not None and not self.requested_by.strip():
+            raise ValueError("Attempt attribution must not be blank")
         if self.completed_at is not None:
             if self.completed_at.tzinfo is None or self.completed_at < self.started_at:
                 raise ValueError("Invalid application attempt completion timestamp")
