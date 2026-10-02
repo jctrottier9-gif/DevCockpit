@@ -7,6 +7,11 @@ from app.application.roadmaps import RoadmapIssue
 from app.config import Settings
 from app.domain.execution import ExecutionEvidence
 from app.domain.project import Project
+from app.domain.resource_lock import (
+    ResourceLockMode,
+    ResourceLockRequirement,
+    WorkItemResourceLockDeclaration,
+)
 from app.infrastructure.database import upgrade_database
 from app.main import create_app
 
@@ -104,3 +109,95 @@ def test_parallel_execution_api_exposes_capacity_and_is_idempotent(tmp_path):
 def test_parallel_execution_limit_is_validated(value):
     with pytest.raises(ValidationError):
         Settings(max_parallel_dev_executions=value)
+
+
+
+LOCKED_PROJECT = Project(
+    "DevCockpit",
+    "jctrottier9-gif/DevCockpit",
+    1,
+    resource_locks=(
+        WorkItemResourceLockDeclaration(
+            "A",
+            (ResourceLockRequirement.build("migration:alembic", ResourceLockMode.EXCLUSIVE),),
+        ),
+        WorkItemResourceLockDeclaration(
+            "B",
+            (ResourceLockRequirement.build("migration:alembic", ResourceLockMode.EXCLUSIVE),),
+        ),
+    ),
+)
+
+
+class LockedRoadmapReader:
+    def read(self, project: Project) -> RoadmapIssue:
+        return RoadmapIssue(
+            project.repository_full_name,
+            project.roadmap_issue_number,
+            """<!-- COCKPIT_PIPELINE_V3 -->
+KEY | TYPE | STATUS | PARENT | LANE | TITLE | REPLACES | DEPENDS_ON
+A | WORK | READY | #1 | MAIN | A | - | -
+B | WORK | READY | #1 | AUX | B | - | -
+<!-- /COCKPIT_PIPELINE_V3 -->""",
+            "2026-10-02T12:00:00Z",
+        )
+
+
+def test_resource_lock_conflict_is_exposed_and_survives_application_restart(tmp_path):
+    settings = Settings(
+        execution_poll_seconds=0,
+        max_parallel_dev_executions=2,
+        database_url=f"sqlite+pysqlite:///{tmp_path / 'locks-api.db'}",
+    )
+    upgrade_database(settings)
+
+    first_app = create_app(
+        settings,
+        project_catalog=ProjectCatalog([LOCKED_PROJECT]),
+        roadmap_reader=LockedRoadmapReader(),
+        execution_reader=EvidenceReader(),
+    )
+    first_client = TestClient(first_app)
+    first = first_client.post("/api/projects/DevCockpit/executions/evaluate")
+    assert first.status_code == 200
+    first_payload = first.json()
+    assert [item["work_item_id"] for item in first_payload["prompt_dispatches"]] == ["A"]
+
+    by_key = {
+        item["work_item"]["key"]: item
+        for item in first_payload["executions"]
+    }
+    assert by_key["A"]["slot_state"] == "ACTIVE"
+    assert by_key["A"]["resource_locks"]["held"][0]["surface"] == "migration:alembic"
+    assert by_key["B"]["slot_state"] == "WAITING_FOR_RESOURCE_LOCK"
+    assert by_key["B"]["resource_locks"]["conflict"] == {
+        "surface": "migration:alembic",
+        "requested_mode": "EXCLUSIVE",
+        "holder_work_item_id": "A",
+        "holder_agent_session": "DevCockpit:DEV:A",
+        "holder_mode": "EXCLUSIVE",
+        "holder_state": "ACTIVE",
+        "reason": "INCOMPATIBLE_RESOURCE_LOCK",
+    }
+    first_client.close()
+
+    restarted_app = create_app(
+        settings,
+        project_catalog=ProjectCatalog([LOCKED_PROJECT]),
+        roadmap_reader=LockedRoadmapReader(),
+        execution_reader=EvidenceReader(),
+    )
+    restarted_client = TestClient(restarted_app)
+    read_back = restarted_client.get("/api/projects/DevCockpit/executions")
+    assert read_back.status_code == 200
+    restarted_by_key = {
+        item["work_item"]["key"]: item
+        for item in read_back.json()["executions"]
+    }
+    assert restarted_by_key["A"]["active"] is True
+    assert restarted_by_key["B"]["resource_locks"]["conflict"]["holder_work_item_id"] == "A"
+
+    repoll = restarted_client.post("/api/projects/DevCockpit/executions/evaluate")
+    assert repoll.status_code == 200
+    assert repoll.json()["prompt_dispatches"] == []
+    restarted_client.close()

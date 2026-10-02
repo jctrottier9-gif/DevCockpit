@@ -12,6 +12,7 @@ from app.infrastructure.chatgpt_responses import SqlAlchemyImportedChatGptRespon
 from app.infrastructure.database import Base
 from app.infrastructure.handoffs import SqlAlchemyDecisionRepository, SqlAlchemyHandoffRepository
 from app.infrastructure.prompt_deliveries import SqlAlchemyPromptDeliveryRepository
+from app.infrastructure.resource_locks import SqlAlchemyResourceLockRepository
 from app.infrastructure.roadmap_changes import (
     SqlAlchemyRoadmapChangeProposalRepository,
     SqlAlchemyRoadmapChangeProposalRevisionRepository,
@@ -110,6 +111,7 @@ class SqlAlchemyUnitOfWork:
         self.chatgpt_responses: SqlAlchemyImportedChatGptResponseRepository
         self.handoffs: SqlAlchemyHandoffRepository
         self.decisions: SqlAlchemyDecisionRepository
+        self.resource_locks: SqlAlchemyResourceLockRepository
         self.roadmap_change_proposals: SqlAlchemyRoadmapChangeProposalRepository
         self.roadmap_change_proposal_revisions: SqlAlchemyRoadmapChangeProposalRevisionRepository
         self.roadmap_change_applications: SqlAlchemyRoadmapChangeApplicationRepository
@@ -120,8 +122,8 @@ class SqlAlchemyUnitOfWork:
     def __enter__(self) -> SqlAlchemyUnitOfWork:
         self._session = self._session_factory()
         # Reserve SQLite's writer before reading policy. Handoff transfer,
-        # proposal revision and the execution poller therefore share one writer
-        # boundary and cannot expose an "unblocked" gap.
+        # proposal revision, ResourceLock acquisition and the execution poller
+        # therefore share one writer boundary and cannot expose an "unblocked" gap.
         if self._session.get_bind().dialect.name == "sqlite":
             try:
                 self._session.execute(text("BEGIN IMMEDIATE"))
@@ -131,6 +133,7 @@ class SqlAlchemyUnitOfWork:
                 raise
         self.handoffs = SqlAlchemyHandoffRepository(self._session)
         self.decisions = SqlAlchemyDecisionRepository(self._session)
+        self.resource_locks = SqlAlchemyResourceLockRepository(self._session)
         self.roadmap_change_proposals = SqlAlchemyRoadmapChangeProposalRepository(self._session)
         self.roadmap_change_proposal_revisions = SqlAlchemyRoadmapChangeProposalRevisionRepository(self._session)
         self.roadmap_change_applications = SqlAlchemyRoadmapChangeApplicationRepository(self._session)

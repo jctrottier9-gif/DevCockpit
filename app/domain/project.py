@@ -3,6 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 
+from app.domain.resource_lock import (
+    ResourceLockRequirement,
+    WorkItemResourceLockDeclaration,
+)
+
 
 _PROJECT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")
 _REPOSITORY_PATTERN = re.compile(
@@ -19,6 +24,7 @@ class Project:
     project_id: str
     repository_full_name: str
     roadmap_issue_number: int
+    resource_locks: tuple[WorkItemResourceLockDeclaration, ...] = ()
 
     def __post_init__(self) -> None:
         if not _PROJECT_ID_PATTERN.fullmatch(self.project_id):
@@ -27,3 +33,17 @@ class Project:
             raise ProjectConfigurationError("repository_full_name must use owner/name form")
         if self.roadmap_issue_number <= 0:
             raise ProjectConfigurationError("roadmap_issue_number must be greater than zero")
+        identities = [declaration.work_item_id for declaration in self.resource_locks]
+        if len(identities) != len(set(identities)):
+            raise ProjectConfigurationError(
+                "resource_locks must contain at most one declaration per WorkItem"
+            )
+
+    def resource_lock_requirements_for(
+        self,
+        work_item_id: str,
+    ) -> tuple[ResourceLockRequirement, ...]:
+        for declaration in self.resource_locks:
+            if declaration.work_item_id == work_item_id:
+                return declaration.requirements
+        return ()

@@ -87,7 +87,45 @@ type ParallelExecutionItem = {
   slot_state: string
   active: boolean
   waiting_for_capacity: boolean
+  waiting_for_resource_lock: boolean
   inhibition_reason: string | null
+  resource_locks: {
+    required: { surface: string; mode: string }[]
+    held: {
+      lock_id: string
+      surface: string
+      mode: string
+      state: string
+      work_item_id: string
+      agent_session: string
+      lease_expires_at: string
+      version: number
+      released_at: string | null
+      release_reason: string | null
+    }[]
+    records: {
+      lock_id: string
+      surface: string
+      mode: string
+      state: string
+      work_item_id: string
+      agent_session: string
+      lease_expires_at: string
+      version: number
+      released_at: string | null
+      release_reason: string | null
+    }[]
+    conflict: null | {
+      surface: string
+      requested_mode: string
+      holder_work_item_id: string
+      holder_agent_session: string
+      holder_mode: string
+      holder_state: string
+      reason: string
+    }
+    recovery_state: string | null
+  }
   work_item: WorkItem | null
   execution_state: string
   next_action: string
@@ -265,8 +303,28 @@ function App() {
                 <span>Execution: {item.execution_state} · {actionLabels[item.next_action] ?? item.next_action}</span>
                 <span>PR: {item.pull_request ? '#' + item.pull_request.number : '—'} · CI: {item.ci?.state ?? '—'}</span>
                 <span>
-                  {item.active ? 'Actif' : item.waiting_for_capacity ? 'En attente de capacité' : item.inhibition_reason ?? 'Éligible'}
+                  {item.active
+                    ? 'Actif'
+                    : item.waiting_for_capacity
+                      ? 'En attente de capacité'
+                      : item.waiting_for_resource_lock
+                        ? 'En attente de ResourceLock'
+                        : item.inhibition_reason ?? 'Éligible'}
                 </span>
+                <span>
+                  Surfaces requises: {item.resource_locks.required.map(lock => lock.surface + ' [' + lock.mode + ']').join(', ') || '—'}
+                </span>
+                <span>
+                  Surfaces détenues: {item.resource_locks.held.map(lock => lock.surface + ' [' + lock.mode + ']').join(', ') || '—'}
+                </span>
+                {item.resource_locks.conflict && <span>
+                  Conflit: {item.resource_locks.conflict.surface} [{item.resource_locks.conflict.requested_mode}]
+                  {' · '}détenu par {item.resource_locks.conflict.holder_work_item_id}
+                  {' · '}{item.resource_locks.conflict.reason}
+                </span>}
+                {item.resource_locks.recovery_state && <span>
+                  Recovery: {item.resource_locks.recovery_state}
+                </span>}
               </div>
             </article>)}
           </div>

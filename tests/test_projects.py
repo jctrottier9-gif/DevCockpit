@@ -55,3 +55,43 @@ def test_project_identity_is_not_derived_from_issue_or_repository() -> None:
 def test_invalid_project_configuration_is_rejected(project) -> None:
     with pytest.raises(ProjectConfigurationError):
         project()
+
+
+
+def test_project_config_parses_explicit_resource_lock_declarations(tmp_path: Path) -> None:
+    path = tmp_path / "projects.json"
+    path.write_text(
+        json.dumps(
+            {
+                "projects": [
+                    {
+                        "project_id": "DevCockpit",
+                        "repository_full_name": "jctrottier9-gif/DevCockpit",
+                        "roadmap_issue_number": 1,
+                        "resource_locks": {
+                            "DC-052": [
+                                {
+                                    "surface": "migration:alembic",
+                                    "mode": "EXCLUSIVE",
+                                },
+                                {
+                                    "surface": "api:contracts",
+                                    "mode": "SHARED",
+                                },
+                            ]
+                        },
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    project = load_projects(path)[0]
+    requirements = project.resource_lock_requirements_for("DC-052")
+
+    assert [(item.surface.key, item.mode.value) for item in requirements] == [
+        ("migration:alembic", "EXCLUSIVE"),
+        ("api:contracts", "SHARED"),
+    ]
+    assert project.resource_lock_requirements_for("DC-060") == ()

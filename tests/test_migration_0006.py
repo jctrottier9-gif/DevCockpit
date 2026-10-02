@@ -176,7 +176,7 @@ DC-041B | WORK | READY | #28 | MAIN | B | DC-041
         assert connection.execute(text("PRAGMA foreign_key_check")).all() == []
         assert connection.execute(
             text("SELECT version_num FROM alembic_version")
-        ).scalar_one() == "0006_roadmap_writeback"
+        ).scalar_one() == "0007_resource_locks"
 
     inspector = inspect(engine)
     assert {
