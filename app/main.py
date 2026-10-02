@@ -34,6 +34,7 @@ from app.application.roadmaps import (
     RoadmapSourceError,
     read_project_roadmap,
 )
+from app.application.schedulers import ProjectSchedulerProjection, read_project_scheduler
 from app.config import Settings, get_settings
 from app.domain.execution import ExecutionProjection
 from app.domain.project import Project
@@ -83,6 +84,7 @@ def _work_item_payload(item: WorkItem) -> dict[str, object]:
         "lane": item.lane,
         "title": item.title,
         "replaces": item.replaces,
+        "depends_on": list(item.depends_on),
     }
 
 
@@ -118,6 +120,48 @@ def _roadmap_payload(projection: ProjectRoadmapProjection) -> dict[str, object]:
             "updated_at": projection.issue.updated_at,
         },
         "pipeline": _pipeline_payload(projection.pipeline),
+    }
+
+
+def _scheduler_payload(projection: ProjectSchedulerProjection) -> dict[str, object]:
+    scheduler = projection.scheduler
+    return {
+        "project": _project_payload(projection.project),
+        "source": {
+            "status": "available",
+            "repository_full_name": projection.issue.repository_full_name,
+            "issue_number": projection.issue.issue_number,
+            "updated_at": projection.issue.updated_at,
+        },
+        "scheduler": {
+            "valid": scheduler.valid,
+            "pipeline_version": scheduler.pipeline_version,
+            "executable_candidates": list(scheduler.executable_candidates),
+            "selected_candidate": scheduler.selected_candidate,
+            "diagnostics": [
+                {
+                    "code": diagnostic.code,
+                    "message": diagnostic.message,
+                    "line_number": diagnostic.line_number,
+                }
+                for diagnostic in scheduler.diagnostics
+            ],
+            "work_items": [
+                {
+                    "key": item.work_item.key,
+                    "type": item.work_item.type.value,
+                    "canonical_status": item.work_item.status.value,
+                    "dependencies": list(item.dependencies),
+                    "unsatisfied_dependencies": list(item.unsatisfied_dependencies),
+                    "scheduler_state": item.state.value,
+                    "executable": item.executable,
+                    "reason": item.reason.value,
+                    "expected_role": item.expected_role,
+                    "next_action": item.next_action.value,
+                }
+                for item in scheduler.items
+            ],
+        },
     }
 
 
@@ -322,6 +366,24 @@ def create_app(
                 },
             )
         return _roadmap_payload(projection)
+
+    @application.get("/api/projects/{project_id}/scheduler", tags=["projects"])
+    def project_scheduler(project_id: str):
+        project = active_project_catalog.get(project_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        try:
+            projection = read_project_scheduler(project, reader=active_roadmap_reader)
+        except RoadmapSourceError as exc:
+            return JSONResponse(
+                status_code=502,
+                content={
+                    "project": _project_payload(project),
+                    "source": {"status": "unavailable", "code": exc.code},
+                    "scheduler": None,
+                },
+            )
+        return _scheduler_payload(projection)
 
     @application.get("/api/projects/{project_id}/responses", tags=["projects"])
     def project_responses(project_id: str) -> dict[str, object]:

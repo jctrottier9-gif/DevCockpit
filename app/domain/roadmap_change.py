@@ -397,7 +397,8 @@ def _apply_pipeline_operations(
         else:
             raise ValueError(f"unsupported roadmap operation type: {kind}")
 
-    return items, 2 if force_v2 else int(parsed.version or 1)
+    minimum_version = 2 if force_v2 else 1
+    return items, max(int(parsed.version or 1), minimum_version)
 
 
 def generate_proposed_body(base_body: str, operations: Any) -> str:

@@ -9,10 +9,22 @@ V1_START_MARKER = "<!-- COCKPIT_PIPELINE_V1 -->"
 V1_END_MARKER = "<!-- /COCKPIT_PIPELINE_V1 -->"
 V2_START_MARKER = "<!-- COCKPIT_PIPELINE_V2 -->"
 V2_END_MARKER = "<!-- /COCKPIT_PIPELINE_V2 -->"
+V3_START_MARKER = "<!-- COCKPIT_PIPELINE_V3 -->"
+V3_END_MARKER = "<!-- /COCKPIT_PIPELINE_V3 -->"
 START_MARKER = V1_START_MARKER
 END_MARKER = V1_END_MARKER
 V1_COLUMNS = ("KEY", "TYPE", "STATUS", "PARENT", "LANE", "TITLE")
 V2_COLUMNS = ("KEY", "TYPE", "STATUS", "PARENT", "LANE", "TITLE", "REPLACES")
+V3_COLUMNS = (
+    "KEY",
+    "TYPE",
+    "STATUS",
+    "PARENT",
+    "LANE",
+    "TITLE",
+    "REPLACES",
+    "DEPENDS_ON",
+)
 EXPECTED_COLUMNS = V1_COLUMNS
 _PARENT_PATTERN = re.compile(r"^#[1-9][0-9]*$")
 _VERSION_MARKER_PATTERN = re.compile(r"^<!--\s*/?COCKPIT_PIPELINE_V([0-9]+)\s*-->$")
@@ -39,6 +51,13 @@ class WorkItem:
     lane: str
     title: str
     replaces: str | None = None
+    depends_on: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class Dependency:
+    work_item_key: str
+    prerequisite_key: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +75,14 @@ class PipelineParseResult:
     active_ready_item: WorkItem | None
     version: int | None = None
 
+    @property
+    def dependencies(self) -> tuple[Dependency, ...]:
+        return tuple(
+            Dependency(item.key, prerequisite)
+            for item in self.work_items
+            for prerequisite in item.depends_on
+        )
+
 
 def _diagnostic(code: str, message: str, line_number: int | None = None) -> PipelineDiagnostic:
     return PipelineDiagnostic(code=code, message=message, line_number=line_number)
@@ -70,7 +97,11 @@ def _split_row(raw_line: str) -> list[str]:
 
 
 def _select_version(lines: list[str]) -> tuple[int | None, list[PipelineDiagnostic]]:
-    positions = {1: {"start": [], "end": []}, 2: {"start": [], "end": []}}
+    positions = {
+        1: {"start": [], "end": []},
+        2: {"start": [], "end": []},
+        3: {"start": [], "end": []},
+    }
     unknown: list[tuple[int, int]] = []
     for index, raw in enumerate(lines):
         line = raw.strip()
@@ -96,7 +127,7 @@ def _select_version(lines: list[str]) -> tuple[int | None, list[PipelineDiagnost
     if len(present) > 1:
         return None, [_diagnostic(
             "MULTIPLE_PIPELINE_VERSIONS",
-            "roadmap must not contain V1 and V2 canonical pipeline blocks simultaneously",
+            "roadmap must not contain multiple canonical pipeline versions simultaneously",
         )]
     if not present:
         return None, [
@@ -117,8 +148,12 @@ def _select_version(lines: list[str]) -> tuple[int | None, list[PipelineDiagnost
 
 
 def _marker_positions(lines: list[str], version: int) -> tuple[int, int]:
-    start_marker = V1_START_MARKER if version == 1 else V2_START_MARKER
-    end_marker = V1_END_MARKER if version == 1 else V2_END_MARKER
+    markers = {
+        1: (V1_START_MARKER, V1_END_MARKER),
+        2: (V2_START_MARKER, V2_END_MARKER),
+        3: (V3_START_MARKER, V3_END_MARKER),
+    }
+    start_marker, end_marker = markers[version]
     start = next(index for index, line in enumerate(lines) if line.strip() == start_marker)
     end = next(index for index, line in enumerate(lines) if line.strip() == end_marker)
     return start, end
@@ -175,14 +210,104 @@ def _replacement_diagnostics(work_items: list[WorkItem]) -> list[PipelineDiagnos
     return diagnostics
 
 
+def _dependency_diagnostics(work_items: list[WorkItem]) -> list[PipelineDiagnostic]:
+    diagnostics: list[PipelineDiagnostic] = []
+    by_key = {item.key: item for item in work_items}
+
+    for item in work_items:
+        for prerequisite in item.depends_on:
+            if prerequisite == item.key:
+                diagnostics.append(_diagnostic(
+                    "SELF_DEPENDENCY",
+                    f"{item.key} cannot depend on itself",
+                ))
+            elif prerequisite not in by_key:
+                diagnostics.append(_diagnostic(
+                    "DEPENDENCY_TARGET_MISSING",
+                    f"{item.key} references missing dependency {prerequisite}",
+                ))
+
+    if diagnostics:
+        return diagnostics
+
+    graph = {item.key: item.depends_on for item in work_items}
+    order = {item.key: index for index, item in enumerate(work_items)}
+    state: dict[str, int] = {}
+    stack: list[str] = []
+    stack_index: dict[str, int] = {}
+    cycles: dict[tuple[str, ...], tuple[str, ...]] = {}
+
+    def normalize_cycle(nodes: list[str]) -> tuple[str, ...]:
+        start = min(range(len(nodes)), key=lambda index: order[nodes[index]])
+        rotated = nodes[start:] + nodes[:start]
+        return tuple((*rotated, rotated[0]))
+
+    def visit(node: str) -> None:
+        state[node] = 1
+        stack_index[node] = len(stack)
+        stack.append(node)
+        for prerequisite in graph[node]:
+            prerequisite_state = state.get(prerequisite, 0)
+            if prerequisite_state == 0:
+                visit(prerequisite)
+            elif prerequisite_state == 1:
+                cycle_nodes = stack[stack_index[prerequisite]:]
+                normalized = normalize_cycle(cycle_nodes)
+                cycles[normalized[:-1]] = normalized
+        stack.pop()
+        stack_index.pop(node, None)
+        state[node] = 2
+
+    for item in work_items:
+        if state.get(item.key, 0) == 0:
+            visit(item.key)
+
+    for key in sorted(cycles, key=lambda cycle: tuple(order[node] for node in cycle)):
+        cycle = cycles[key]
+        diagnostics.append(_diagnostic(
+            "DEPENDENCY_CYCLE",
+            "dependency cycle detected: " + " -> ".join(cycle),
+        ))
+    return diagnostics
+
+
+def _parse_dependencies(
+    raw_dependencies: str,
+    *,
+    line_number: int,
+) -> tuple[tuple[str, ...], PipelineDiagnostic | None]:
+    if raw_dependencies == "-":
+        return (), None
+    if not raw_dependencies:
+        return (), _diagnostic(
+            "INVALID_DEPENDS_ON",
+            "DEPENDS_ON must be '-' or a comma-separated list of WorkItem KEYs",
+            line_number,
+        )
+    dependencies = tuple(part.strip() for part in raw_dependencies.split(","))
+    if any(not dependency for dependency in dependencies):
+        return (), _diagnostic(
+            "INVALID_DEPENDS_ON",
+            "DEPENDS_ON contains an empty dependency",
+            line_number,
+        )
+    if len(set(dependencies)) != len(dependencies):
+        return (), _diagnostic(
+            "DUPLICATE_DEPENDENCY",
+            "DEPENDS_ON must not repeat the same WorkItem KEY",
+            line_number,
+        )
+    return dependencies, None
+
+
 def parse_canonical_pipeline(body: str) -> PipelineParseResult:
-    """Parse exactly one explicit V1 or V2 canonical block and fail closed."""
+    """Parse exactly one explicit V1, V2 or V3 canonical block and fail closed."""
 
     lines = body.splitlines()
     version, diagnostics = _select_version(lines)
     if diagnostics:
         return _invalid(*diagnostics, version=version)
-    assert version in (1, 2)
+    assert version in (1, 2, 3)
 
     start, end = _marker_positions(lines, version)
     if end <= start:
@@ -195,7 +320,7 @@ def parse_canonical_pipeline(body: str) -> PipelineParseResult:
     if not block:
         return _invalid(_diagnostic("EMPTY_PIPELINE", "canonical pipeline block is empty"), version=version)
 
-    expected_columns = V1_COLUMNS if version == 1 else V2_COLUMNS
+    expected_columns = {1: V1_COLUMNS, 2: V2_COLUMNS, 3: V3_COLUMNS}[version]
     header_line_number, header = block[0]
     header_cells = _split_row(header)
     if header_cells != list(expected_columns):
@@ -240,8 +365,21 @@ def parse_canonical_pipeline(body: str) -> PipelineParseResult:
         if version == 1:
             key, raw_type, raw_status, parent, lane, title = cells
             raw_replaces = "-"
-        else:
+            raw_dependencies = "-"
+        elif version == 2:
             key, raw_type, raw_status, parent, lane, title, raw_replaces = cells
+            raw_dependencies = "-"
+        else:
+            (
+                key,
+                raw_type,
+                raw_status,
+                parent,
+                lane,
+                title,
+                raw_replaces,
+                raw_dependencies,
+            ) = cells
 
         row_valid = True
         if not key:
@@ -282,7 +420,7 @@ def parse_canonical_pipeline(body: str) -> PipelineParseResult:
             row_valid = False
 
         replaces: str | None = None
-        if version == 2:
+        if version >= 2:
             if not raw_replaces:
                 row_diagnostics.append(_diagnostic(
                     "INVALID_REPLACES", "REPLACES must be '-' or an existing WorkItem KEY", line_number
@@ -291,8 +429,29 @@ def parse_canonical_pipeline(body: str) -> PipelineParseResult:
             elif raw_replaces != "-":
                 replaces = raw_replaces
 
+        depends_on: tuple[str, ...] = ()
+        if version >= 3:
+            depends_on, dependency_error = _parse_dependencies(
+                raw_dependencies,
+                line_number=line_number,
+            )
+            if dependency_error is not None:
+                row_diagnostics.append(dependency_error)
+                row_valid = False
+
         if row_valid and item_type is not None and status is not None:
-            work_items.append(WorkItem(key, item_type, status, parent, lane, title, replaces))
+            work_items.append(
+                WorkItem(
+                    key,
+                    item_type,
+                    status,
+                    parent,
+                    lane,
+                    title,
+                    replaces,
+                    depends_on,
+                )
+            )
 
     main_ready = [
         item for item in work_items
@@ -303,8 +462,10 @@ def parse_canonical_pipeline(body: str) -> PipelineParseResult:
             "MULTIPLE_MAIN_READY", "MAIN is sequential and may contain at most one READY WorkItem"
         ))
 
-    if version == 2 and not row_diagnostics:
+    if version >= 2 and not row_diagnostics:
         row_diagnostics.extend(_replacement_diagnostics(work_items))
+    if version >= 3 and not row_diagnostics:
+        row_diagnostics.extend(_dependency_diagnostics(work_items))
 
     valid = not row_diagnostics
     active_ready_item = main_ready[0] if valid and len(main_ready) == 1 else None
@@ -313,28 +474,56 @@ def parse_canonical_pipeline(body: str) -> PipelineParseResult:
 
 def render_canonical_pipeline(work_items: tuple[WorkItem, ...] | list[WorkItem], *, version: int) -> str:
     if version == 1:
-        if any(item.status is WorkItemStatus.SUPERSEDED or item.replaces for item in work_items):
-            raise ValueError("V1 cannot represent SUPERSEDED or REPLACES")
+        if any(
+            item.status is WorkItemStatus.SUPERSEDED or item.replaces or item.depends_on
+            for item in work_items
+        ):
+            raise ValueError("V1 cannot represent SUPERSEDED, REPLACES or DEPENDS_ON")
         rows = [
             " | ".join((item.key, item.type.value, item.status.value, item.parent, item.lane, item.title))
             for item in work_items
         ]
         return "\n".join((V1_START_MARKER, " | ".join(V1_COLUMNS), *rows, V1_END_MARKER))
-    if version != 2:
+
+    if version == 2:
+        if any(item.depends_on for item in work_items):
+            raise ValueError("V2 cannot represent DEPENDS_ON")
+        rows = [
+            " | ".join((
+                item.key,
+                item.type.value,
+                item.status.value,
+                item.parent,
+                item.lane,
+                item.title,
+                item.replaces or "-",
+            ))
+            for item in work_items
+        ]
+        return "\n".join((V2_START_MARKER, " | ".join(V2_COLUMNS), *rows, V2_END_MARKER))
+
+    if version != 3:
         raise ValueError(f"Unsupported canonical pipeline version: {version}")
+
     rows = [
         " | ".join((
-            item.key, item.type.value, item.status.value, item.parent,
-            item.lane, item.title, item.replaces or "-"
+            item.key,
+            item.type.value,
+            item.status.value,
+            item.parent,
+            item.lane,
+            item.title,
+            item.replaces or "-",
+            ", ".join(item.depends_on) if item.depends_on else "-",
         ))
         for item in work_items
     ]
-    return "\n".join((V2_START_MARKER, " | ".join(V2_COLUMNS), *rows, V2_END_MARKER))
+    return "\n".join((V3_START_MARKER, " | ".join(V3_COLUMNS), *rows, V3_END_MARKER))
 
 
 def replace_canonical_pipeline(body: str, rendered_block: str) -> str:
     parsed = parse_canonical_pipeline(body)
-    if not parsed.valid or parsed.version not in (1, 2):
+    if not parsed.valid or parsed.version not in (1, 2, 3):
         raise ValueError("Cannot replace an invalid canonical pipeline")
     lines = body.splitlines()
     start, end = _marker_positions(lines, parsed.version)

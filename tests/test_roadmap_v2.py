@@ -149,10 +149,10 @@ A | WORK | READY | #1 | MAIN | A
     assert "MULTIPLE_PIPELINE_VERSIONS" in {
         item.code for item in parse_canonical_pipeline(mixed).diagnostics
     }
-    unknown = """<!-- COCKPIT_PIPELINE_V3 -->
+    unknown = """<!-- COCKPIT_PIPELINE_V4 -->
 KEY | TYPE | STATUS | PARENT | LANE | TITLE
 A | WORK | READY | #1 | MAIN | A
-<!-- /COCKPIT_PIPELINE_V3 -->"""
+<!-- /COCKPIT_PIPELINE_V4 -->"""
     assert "UNKNOWN_PIPELINE_VERSION" in {
         item.code for item in parse_canonical_pipeline(unknown).diagnostics
     }
