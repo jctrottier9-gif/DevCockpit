@@ -111,7 +111,7 @@ def test_upgrade_populated_0004_preserves_handoff_decision_and_history(tmp_path)
             "ts": timestamp,
         })
 
-    upgrade_database(settings)
+    upgrade_database(settings, "0005_po_roadmap_proposals")
 
     with engine.connect() as connection:
         handoff = connection.execute(text("""
