@@ -8,6 +8,7 @@ from uuid import uuid4
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
+from app.api.attention import build_attention_router
 from app.api.orchestration import build_orchestration_router
 from app.application.chatgpt_responses import (
     ChatGptResponseImportError,
@@ -449,6 +450,15 @@ def create_app(
         issue_mapping_reader=active_issue_mapping_reader,
         evidence_reader=active_execution_reader,
         uow_factory=uow_factory,
+    ))
+
+    application.include_router(build_attention_router(
+        project_catalog=active_project_catalog,
+        roadmap_reader=active_roadmap_reader,
+        evidence_reader=active_execution_reader,
+        uow_factory=uow_factory,
+        max_parallel_dev_executions=active_settings.max_parallel_dev_executions,
+        companion_connections=connection_manager,
     ))
 
     @application.get("/api/health", tags=["system"])
