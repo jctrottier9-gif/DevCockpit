@@ -450,6 +450,7 @@ function Consultation({
           proposal={proposal}
           actor={actor}
           busy={busy}
+          writebackAuthorized={h.decision.accepts_residual_writeback_risk}
           command={command}
         />)}
     </section>}
@@ -476,11 +477,13 @@ function ProposalEditor({
   proposal,
   actor,
   busy,
+  writebackAuthorized,
   command,
 }: {
   proposal: ProposalSummary
   actor: string
   busy: boolean
+  writebackAuthorized: boolean
   command: (
     url: string,
     identityField: string,
@@ -549,7 +552,10 @@ function ProposalEditor({
       <details><summary>Après</summary><pre>{preview.proposed_body}</pre></details>
     </div>}
 
-    {proposal.status === 'DRAFT' && preview && preview.revision === proposal.current_revision && <>
+    {proposal.status === 'DRAFT' && !writebackAuthorized &&
+      <p>Confirmation GitHub bloquée : la Decision PO n’a pas accepté explicitement le risque résiduel GET→PATCH.</p>}
+
+    {proposal.status === 'DRAFT' && writebackAuthorized && preview && preview.revision === proposal.current_revision &&
       <button
         disabled={busy || !actor.trim() || preview.blocking_diagnostics.length > 0}
         onClick={() => void command(
@@ -564,7 +570,9 @@ function ProposalEditor({
         )}
       >
         Confirmer cette révision exacte
-      </button>
+      </button>}
+
+    {proposal.status === 'DRAFT' &&
       <button
         disabled={busy || !actor.trim()}
         onClick={() => void command(
@@ -574,8 +582,7 @@ function ProposalEditor({
         )}
       >
         Annuler la proposal
-      </button>
-    </>}
+      </button>}
 
     {proposal.status === 'CONFIRMED' && <>
       <p>Révision confirmée : {proposal.confirmed_revision} · digest <code>{proposal.confirmed_preview_digest}</code></p>
