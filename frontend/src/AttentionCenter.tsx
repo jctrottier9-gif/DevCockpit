@@ -109,7 +109,7 @@ export default function AttentionCenter({
         <h3>{item.title}</h3>
         <p>{item.reason}</p>
         {item.agent_session && <p className="attention-meta">{item.agent_session}</p>}
-        {item.context?.surface && <p className="attention-meta">
+        {item.context && typeof item.context.surface === 'string' && <p className="attention-meta">
           Surface: {String(item.context.surface)} · mode: {String(item.context.requested_mode ?? '—')}
           {' · '}détenteur: {String(item.context.holder_work_item_id ?? '—')}
           {' · '}session: {String(item.context.holder_agent_session ?? '—')}
