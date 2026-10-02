@@ -169,6 +169,19 @@ def evaluate_project_parallel_dev_executions(
             or current_fence.generation != initial_fence.generation
         )
         now = _as_utc(active_clock())
+        if fence_changed:
+            projection = _project_parallel_state(
+                project,
+                issue=issue,
+                scheduler=scheduler,
+                snapshots=snapshots,
+                uow=uow,
+                max_parallel_dev_executions=max_parallel_dev_executions,
+                global_inhibition="ROADMAP_APPLICATION_FENCE",
+                now=now,
+            )
+            return ParallelDevExecutionEvaluation(projection=projection, dispatches=())
+
         _reconcile_resource_locks(
             project,
             snapshots=snapshots,
@@ -184,16 +197,9 @@ def evaluate_project_parallel_dev_executions(
             snapshots=snapshots,
             uow=uow,
             max_parallel_dev_executions=max_parallel_dev_executions,
-            global_inhibition=(
-                "ROADMAP_APPLICATION_FENCE"
-                if fence_changed
-                else None
-            ),
+            global_inhibition=None,
             now=now,
         )
-        if fence_changed:
-            uow.commit()
-            return ParallelDevExecutionEvaluation(projection=projection, dispatches=())
 
         for item in projection.items:
             work_item = item.execution.work_item
@@ -341,6 +347,11 @@ def _reconcile_resource_locks(
                         lease_seconds=lease_seconds,
                     )
                 )
+            elif snapshot.execution.state is ExecutionState.BLOCKED:
+                # Ambiguous/unavailable GitHub evidence is not proof that the
+                # execution ended. Keep the expired ACTIVE lock conservative
+                # until evidence becomes determinate.
+                continue
             else:
                 uow.resource_locks.save(
                     lock.mark_stale(
