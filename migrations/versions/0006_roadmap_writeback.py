@@ -221,6 +221,24 @@ def upgrade() -> None:
     op.drop_table("_dc041b_proposals_backup")
 
     op.create_table(
+        "roadmap_writeback_authorizations",
+        sa.Column("decision_id", sa.String(length=36), nullable=False),
+        sa.Column("project_id", sa.String(length=200), nullable=False),
+        sa.Column("accepted_by", sa.Text(), nullable=False),
+        sa.Column("accepted_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("acceptance_command_id", sa.String(length=36), nullable=False),
+        sa.CheckConstraint(
+            "length(trim(project_id)) > 0 AND length(trim(accepted_by)) > 0",
+            name="ck_roadmap_writeback_authorization_text",
+        ),
+        sa.ForeignKeyConstraint(
+            ["decision_id"], ["decisions.decision_id"], ondelete="RESTRICT"
+        ),
+        sa.PrimaryKeyConstraint("decision_id"),
+        sa.UniqueConstraint("acceptance_command_id"),
+    )
+
+    op.create_table(
         "roadmap_change_applications",
         sa.Column("application_id", sa.String(length=36), nullable=False),
         sa.Column("proposal_id", sa.String(length=36), nullable=False),
@@ -334,6 +352,7 @@ def downgrade() -> None:
         table_name="roadmap_change_applications",
     )
     op.drop_table("roadmap_change_applications")
+    op.drop_table("roadmap_writeback_authorizations")
 
     _backup_0005_proposals_and_revisions()
     op.drop_table("roadmap_change_proposal_revisions")
