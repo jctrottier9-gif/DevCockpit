@@ -16,6 +16,8 @@ type WorkItem = {
   parent: string
   lane: string
   title: string
+  replaces?: string | null
+  depends_on?: string[]
 }
 
 type Diagnostic = {
@@ -49,6 +51,28 @@ type ImportedResponse = {
   role: string
   imported_at: string
   text: string
+}
+
+type SchedulerItem = {
+  key: string
+  canonical_status: string
+  dependencies: string[]
+  unsatisfied_dependencies: string[]
+  scheduler_state: string
+  reason: string
+  expected_role: string | null
+  next_action: string
+}
+
+type SchedulerResponse = {
+  source: { status: 'available' | 'unavailable'; code?: string }
+  scheduler: null | {
+    valid: boolean
+    pipeline_version: number | null
+    executable_candidates: string[]
+    diagnostics: Diagnostic[]
+    work_items: SchedulerItem[]
+  }
 }
 
 type ExecutionResponse = {
@@ -88,6 +112,7 @@ function App() {
   const [state, setState] = useState<LoadState>('loading')
   const [roadmap, setRoadmap] = useState<RoadmapResponse | null>(null)
   const [execution, setExecution] = useState<ExecutionResponse | null>(null)
+  const [scheduler, setScheduler] = useState<SchedulerResponse | null>(null)
   const [responses, setResponses] = useState<ImportedResponse[]>([])
   const [error, setError] = useState('')
   const [orchestrationKey, setOrchestrationKey] = useState('')
@@ -108,16 +133,19 @@ function App() {
         }
 
         const encodedProject = encodeURIComponent(project.project_id)
-        const [roadmapResponse, executionResponse, responsesResponse] = await Promise.all([
+        const [roadmapResponse, executionResponse, schedulerResponse, responsesResponse] = await Promise.all([
           fetch('/api/projects/' + encodedProject + '/roadmap', { signal: controller.signal }),
           fetch('/api/projects/' + encodedProject + '/execution', { signal: controller.signal }),
+          fetch('/api/projects/' + encodedProject + '/scheduler', { signal: controller.signal }),
           fetch('/api/projects/' + encodedProject + '/responses', { signal: controller.signal }),
         ])
         const roadmapPayload = (await roadmapResponse.json()) as RoadmapResponse
         const executionPayload = (await executionResponse.json()) as ExecutionResponse
+        const schedulerPayload = (await schedulerResponse.json()) as SchedulerResponse
         const responsesPayload = (await responsesResponse.json()) as { responses: ImportedResponse[] }
         setRoadmap(roadmapPayload)
         setExecution(executionPayload)
+        setScheduler(schedulerPayload)
         setResponses(responsesPayload.responses ?? [])
 
         if (!roadmapResponse.ok) {
@@ -127,6 +155,11 @@ function App() {
         }
         if (!executionResponse.ok) {
           setError('GitHub execution projection unavailable')
+          setState('error')
+          return
+        }
+        if (!schedulerResponse.ok) {
+          setError(schedulerPayload.source.code ?? 'Scheduler projection unavailable')
           setState('error')
           return
         }
@@ -193,6 +226,24 @@ function App() {
             ))}
           </ul>
         ) : null}
+        {scheduler?.scheduler && <section className="responses">
+          <h2>Scheduler déterministe</h2>
+          <p>Pipeline V{scheduler.scheduler.pipeline_version ?? '—'} · candidats : {scheduler.scheduler.executable_candidates.join(', ') || 'aucun'}</p>
+          {scheduler.scheduler.diagnostics.length > 0 && <ul className="diagnostics">
+            {scheduler.scheduler.diagnostics.map(d => <li key={d.code + '-' + (d.line_number ?? 'global')}>{d.code}: {d.message}</li>)}
+          </ul>}
+          <div className="response-list">
+            {scheduler.scheduler.work_items.map(item => <article className="response-card" key={item.key}>
+              <div className="response-meta">
+                <strong>{item.key} · {item.canonical_status}</strong>
+                <span>{item.scheduler_state} · {item.reason}</span>
+                <span>Dépend de : {item.dependencies.join(', ') || '—'}</span>
+                <span>Non satisfaites : {item.unsatisfied_dependencies.join(', ') || '—'}</span>
+                <span>Rôle : {item.expected_role ?? '—'} · Action : {item.next_action}</span>
+              </div>
+            </article>)}
+          </div>
+        </section>}
         {roadmap && pipeline && <>
           <label>WorkItem à consulter<select value={orchestrationKey || displayedWorkItem?.key || ''} onChange={e => setOrchestrationKey(e.target.value)}>
             <option value="">Choisir un WorkItem</option>
