@@ -68,6 +68,7 @@ class ResourceLock:
     project_id: str
     work_item_id: str
     agent_session: str
+    lease_owner_id: str
     surface: ConflictSurface
     mode: ResourceLockMode
     state: ResourceLockState
@@ -85,6 +86,7 @@ class ResourceLock:
         project_id: str,
         work_item_id: str,
         agent_session: str,
+        lease_owner_id: str,
         requirement: ResourceLockRequirement,
         now: datetime,
         lease_seconds: float,
@@ -95,6 +97,7 @@ class ResourceLock:
             project_id=project_id,
             work_item_id=work_item_id,
             agent_session=agent_session,
+            lease_owner_id=lease_owner_id,
             surface=requirement.surface,
             mode=requirement.mode,
             state=ResourceLockState.ACTIVE,
@@ -112,6 +115,7 @@ class ResourceLock:
         project_id: str,
         work_item_id: str,
         agent_session: str,
+        lease_owner_id: str,
         surface: ConflictSurface | str,
         mode: ResourceLockMode | str,
         state: ResourceLockState | str,
@@ -127,6 +131,7 @@ class ResourceLock:
             project_id=project_id,
             work_item_id=work_item_id,
             agent_session=agent_session,
+            lease_owner_id=lease_owner_id,
             surface=surface if isinstance(surface, ConflictSurface) else ConflictSurface(surface),
             mode=mode if isinstance(mode, ResourceLockMode) else ResourceLockMode(mode),
             state=state if isinstance(state, ResourceLockState) else ResourceLockState(state),
@@ -141,12 +146,13 @@ class ResourceLock:
     def expired(self, now: datetime) -> bool:
         return self.state is ResourceLockState.ACTIVE and self.lease_expires_at <= _as_utc(now)
 
-    def renew(self, *, now: datetime, lease_seconds: float) -> "ResourceLock":
+    def renew(self, *, lease_owner_id: str, now: datetime, lease_seconds: float) -> "ResourceLock":
         if self.state is not ResourceLockState.ACTIVE:
             raise ValueError("only ACTIVE ResourceLocks can be renewed")
         current = _as_utc(now)
         return replace(
             self,
+            lease_owner_id=lease_owner_id,
             lease_expires_at=current + timedelta(seconds=lease_seconds),
             updated_at=current,
             version=self.version + 1,
@@ -182,6 +188,7 @@ class ResourceLock:
         self,
         *,
         agent_session: str,
+        lease_owner_id: str,
         requirement: ResourceLockRequirement,
         now: datetime,
         lease_seconds: float,
@@ -189,11 +196,12 @@ class ResourceLock:
         if self.state is ResourceLockState.ACTIVE:
             if self.mode is not requirement.mode or self.agent_session != agent_session:
                 raise ValueError("ACTIVE ResourceLock cannot change owner session or mode")
-            return self.renew(now=now, lease_seconds=lease_seconds)
+            return self.renew(lease_owner_id=lease_owner_id, now=now, lease_seconds=lease_seconds)
         current = _as_utc(now)
         return replace(
             self,
             agent_session=agent_session,
+            lease_owner_id=lease_owner_id,
             mode=requirement.mode,
             state=ResourceLockState.ACTIVE,
             acquired_at=current,
