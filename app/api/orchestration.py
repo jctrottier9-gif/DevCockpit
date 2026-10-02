@@ -74,6 +74,7 @@ class AcceptBody(CommandBody):
     effect: DecisionEffect
     accepted_by: str = Field(min_length=1)
     decision_type: DecisionType = DecisionType.ARCHITECTURE_GUIDANCE
+    accepts_residual_writeback_risk: bool = False
 
 
 class CancelBody(CommandBody):
@@ -109,7 +110,6 @@ class ConfirmProposalBody(CommandBody):
     expected_proposal_version: int = Field(ge=1)
     confirmation_command_id: UUID
     confirmed_by: str = Field(min_length=1)
-    writeback_authorization_decision_id: UUID
 
 
 class ApplyProposalBody(CommandBody):
