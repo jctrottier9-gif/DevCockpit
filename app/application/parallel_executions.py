@@ -142,7 +142,8 @@ def evaluate_project_parallel_dev_executions(
             project.roadmap_issue_number,
         )
         fence_changed = (
-            current_fence.active_application_id is not None
+            initial_fence.active_application_id is not None
+            or current_fence.active_application_id is not None
             or current_fence.generation != initial_fence.generation
         )
         projection = _project_parallel_state(
@@ -199,6 +200,15 @@ def evaluate_project_parallel_dev_executions(
                         uow=uow,
                     )
                 )
+        projection = _project_parallel_state(
+            project,
+            issue=issue,
+            scheduler=scheduler,
+            snapshots=snapshots,
+            uow=uow,
+            max_parallel_dev_executions=max_parallel_dev_executions,
+            global_inhibition=None,
+        )
         uow.commit()
 
     return ParallelDevExecutionEvaluation(
