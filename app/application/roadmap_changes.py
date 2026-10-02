@@ -384,6 +384,10 @@ def confirm_roadmap_change_proposal(
                 replay.proposal_id != proposal_id
                 or replay.confirmed_revision != command.revision
                 or replay.confirmed_preview_digest != command.preview_digest
+                or replay.confirmation_expected_proposal_version
+                != command.expected_proposal_version
+                or replay.confirmation_expected_proposal_version
+                != command.expected_proposal_version
                 or replay.confirmed_by != command.confirmed_by
                 or replay.writeback_authorization_decision_id != replay.source_decision_id
             ):
@@ -465,6 +469,7 @@ def confirm_roadmap_change_proposal(
             confirmed_revision=command.revision,
             confirmed_preview_digest=command.preview_digest,
             confirmation_command_id=command.confirmation_command_id,
+            confirmation_expected_proposal_version=command.expected_proposal_version,
             confirmed_by=command.confirmed_by,
             confirmed_at=utc_now(),
             writeback_authorization_decision_id=proposal.source_decision_id,
@@ -629,6 +634,7 @@ def apply_roadmap_change_proposal(
         if replay is not None:
             if (
                 replay.proposal_id != proposal_id
+                or replay.expected_proposal_version != command.expected_proposal_version
                 or replay.requested_by != command.requested_by
             ):
                 raise OrchestrationConflict(
@@ -667,6 +673,7 @@ def apply_roadmap_change_proposal(
         if replay is not None:
             if (
                 replay.proposal_id != proposal_id
+                or replay.expected_proposal_version != command.expected_proposal_version
                 or replay.requested_by != command.requested_by
             ):
                 raise OrchestrationConflict(
@@ -702,6 +709,7 @@ def apply_roadmap_change_proposal(
             expected_body=revision.proposed_body,
             expected_body_hash=revision.proposed_body_hash,
             application_command_id=command.application_command_id,
+            expected_proposal_version=command.expected_proposal_version,
             requested_by=command.requested_by,
             status=ApplicationStatus.PREPARED,
             version=1,
@@ -714,6 +722,7 @@ def apply_roadmap_change_proposal(
             attempt_number=1,
             command_id=command.application_command_id,
             outcome=ApplicationAttemptOutcome.PREPARED,
+            requested_by=command.requested_by,
             patch_may_have_been_emitted=False,
             started_at=now,
         )
@@ -854,9 +863,14 @@ def reconcile_roadmap_change_application(
             command.reconciliation_command_id
         )
         if replay is not None:
-            if replay.application_id != application_id:
+            if (
+                replay.application_id != application_id
+                or replay.expected_application_version
+                != command.expected_application_version
+                or replay.requested_by != command.reconciled_by
+            ):
                 raise OrchestrationConflict(
-                    "Reconciliation command already used for another application"
+                    "Reconciliation command already used with different content"
                 )
             return _require_application(uow, application_id)
 
@@ -887,9 +901,14 @@ def reconcile_roadmap_change_application(
             command.reconciliation_command_id
         )
         if replay is not None:
-            if replay.application_id != application_id:
+            if (
+                replay.application_id != application_id
+                or replay.expected_application_version
+                != command.expected_application_version
+                or replay.requested_by != command.reconciled_by
+            ):
                 raise OrchestrationConflict(
-                    "Reconciliation command already used for another application"
+                    "Reconciliation command already used with different content"
                 )
             return _require_application(uow, application_id)
         application = _require_application(uow, application_id)
@@ -905,6 +924,8 @@ def reconcile_roadmap_change_application(
             attempt_number=len(attempts) + 1,
             command_id=command.reconciliation_command_id,
             outcome=ApplicationAttemptOutcome.RECONCILIATION_REQUIRED,
+            expected_application_version=command.expected_application_version,
+            requested_by=command.reconciled_by,
             patch_may_have_been_emitted=patch_may_have_been_emitted,
             started_at=started,
             completed_at=started,
