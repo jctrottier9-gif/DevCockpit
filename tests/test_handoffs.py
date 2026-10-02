@@ -347,7 +347,7 @@ def test_upgrade_from_0003_preserves_existing_history(tmp_path):
         assert u.handoffs.list_for_work_item(PROJECT.project_id,KEY) == []
     with engine.connect() as c:
         assert c.execute(text('PRAGMA foreign_key_check')).all() == []
-        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one() == '0005_po_roadmap_proposals'
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one() == '0006_roadmap_writeback'
     engine.dispose()
 
 
