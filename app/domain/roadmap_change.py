@@ -212,10 +212,10 @@ class RoadmapChangeApplicationAttempt:
     attempt_number: int
     command_id: UUID
     outcome: ApplicationAttemptOutcome
-    expected_application_version: int | None = None
-    requested_by: str | None = None
     patch_may_have_been_emitted: bool
     started_at: datetime
+    expected_application_version: int | None = None
+    requested_by: str | None = None
     completed_at: datetime | None = None
     detail: str | None = None
 
