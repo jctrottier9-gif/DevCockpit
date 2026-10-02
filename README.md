@@ -396,6 +396,28 @@ GET /api/projects/{project_id}/responses
 
 It resolves session, Project, WorkItem and role through the source delivery/dispatch and displays the complete returned text. DC-040 adds separate Architect consultation and explicit decision-acceptance actions; importing a response still triggers none of them.
 
+## Attention Center (DC-060)
+
+The cockpit starts with a read-only Attention Center derived from existing backend-owned projections. It answers what needs human attention now without persisting a notification inbox or introducing a parallel state machine.
+
+The API is:
+
+~~~text
+GET /api/projects/{project_id}/attention
+~~~
+
+It exposes one explicit aggregate state:
+
+- `ACTION`: a human action is currently possible or required;
+- `WATCH`: a condition is worth surfacing but no immediate human action is useful;
+- `CLEAR`: there are no ACTION or WATCH items.
+
+The projection aggregates existing `PromptDispatch` / delivery state, `ExecutionProjection`, explicit Handoff/Decision actions, roadmap proposal/application actions, ResourceLock conflicts and transient companion connectivity. Companion disconnection is surfaced only when it blocks delivery of a prompt that is actually ready; a disconnected companion alone creates no attention item.
+
+Items are deduplicated by the real human need: project + role + WorkItem + action. For example, `CI_RED` plus its already-prepared DEV correction prompt is one logical card, while an independent ARCH/PO review on the same WorkItem remains separate. Ordering is deterministic: ACTION precedes WATCH, then stable role/WorkItem/action keys.
+
+The Attention Center owns no dismiss state. An item disappears on refresh when its source condition is no longer true. React renders the backend projection and opens existing WorkItem/PR/orchestration targets; it does not recalculate CI, Handoff, roadmap, ResourceLock or transport eligibility rules.
+
 ## Frontend setup
 
 Install frontend dependencies:
