@@ -1,0 +1,47 @@
+name: devcockpit
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      DEVCOCKPIT_APP_NAME: "${DEVCOCKPIT_APP_NAME:-DevCockpit}"
+      DEVCOCKPIT_ENVIRONMENT: "${DEVCOCKPIT_ENVIRONMENT:-docker}"
+      DEVCOCKPIT_DATABASE_URL: "sqlite+pysqlite:////data/devcockpit.db"
+      DEVCOCKPIT_PROJECTS_CONFIG_PATH: "/app/projects.json"
+      DEVCOCKPIT_GITHUB_TOKEN: "${DEVCOCKPIT_GITHUB_TOKEN:-}"
+      DEVCOCKPIT_GITHUB_TIMEOUT_SECONDS: "${DEVCOCKPIT_GITHUB_TIMEOUT_SECONDS:-5}"
+      DEVCOCKPIT_EXECUTION_POLL_SECONDS: "${DEVCOCKPIT_EXECUTION_POLL_SECONDS:-30}"
+      DEVCOCKPIT_MAX_PARALLEL_DEV_EXECUTIONS: "${DEVCOCKPIT_MAX_PARALLEL_DEV_EXECUTIONS:-2}"
+      DEVCOCKPIT_RESOURCE_LOCK_LEASE_SECONDS: "${DEVCOCKPIT_RESOURCE_LOCK_LEASE_SECONDS:-900}"
+    volumes:
+      - devcockpit_data:/data
+      - ./projects.json:/app/projects.json:ro
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=2).read()"
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:80"
+    restart: unless-stopped
+
+volumes:
+  devcockpit_data:

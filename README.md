@@ -38,6 +38,89 @@ PromptDispatch remains transport-independent. PromptDelivery is separate persist
 
 CI uses Python 3.12.7 and Node 22.20.0. Local development should use compatible Python 3.12+ and Node 22 versions.
 
+## Docker Compose
+
+DevCockpit can run locally as two containers:
+
+~~~text
+Browser
+  ↓ http://127.0.0.1:8080
+Nginx + compiled React frontend
+  ↓ /api/*
+FastAPI backend :8000
+  ↓
+SQLite persisted in the devcockpit_data volume
+~~~
+
+The backend port remains bound to loopback because the Firefox companion currently connects directly to:
+
+~~~text
+ws://127.0.0.1:8000/api/companion/ws
+~~~
+
+This preserves the current trusted-local-machine boundary; do not publish port 8000 on an untrusted network without adding authentication.
+
+### Configuration
+
+Docker Compose does not require a local `.env` file to start. For GitHub write operations, private repositories, or higher API limits, create one from the template and set a backend-only token:
+
+~~~powershell
+Copy-Item .env.example .env
+~~~
+
+On Linux/macOS:
+
+~~~bash
+cp .env.example .env
+~~~
+
+Then set:
+
+~~~dotenv
+DEVCOCKPIT_GITHUB_TOKEN=github_pat_...
+~~~
+
+Never expose this token to React or the Firefox extension. Compose overrides the SQLite URL to `sqlite+pysqlite:////data/devcockpit.db` and stores that file in the named `devcockpit_data` volume. The committed `projects.json` is mounted read-only into the backend so project configuration can be edited on the host without rebuilding the image.
+
+### Start
+
+Build and start both containers:
+
+~~~bash
+docker compose up -d --build
+~~~
+
+Open:
+
+~~~text
+http://127.0.0.1:8080
+~~~
+
+The backend health endpoint remains available at:
+
+~~~text
+http://127.0.0.1:8000/api/health
+~~~
+
+Alembic migrations are applied automatically before Uvicorn starts. The frontend waits for the backend healthcheck before starting.
+
+Useful commands:
+
+~~~bash
+docker compose ps
+docker compose logs -f
+docker compose restart
+docker compose down
+~~~
+
+`docker compose down` preserves the SQLite volume. To deliberately delete all Docker-persisted DevCockpit state, use `docker compose down -v`; that operation is destructive.
+
+After changing Python/backend dependencies or frontend dependencies, rebuild with:
+
+~~~bash
+docker compose up -d --build
+~~~
+
 ## Backend setup
 
 Create and activate a virtual environment, then install the backend and test dependencies:
