@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager, suppress
 import logging
+from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
@@ -232,6 +233,25 @@ def _execution_payload(
     }
 
 
+def _resource_lock_payload(lock) -> dict[str, object]:
+    return {
+        "lock_id": str(lock.lock_id),
+        "surface": lock.surface.key,
+        "mode": lock.mode.value,
+        "state": lock.state.value,
+        "work_item_id": lock.work_item_id,
+        "agent_session": lock.agent_session,
+        "lease_expires_at": lock.lease_expires_at.isoformat(),
+        "version": lock.version,
+        "released_at": (
+            lock.released_at.isoformat()
+            if lock.released_at is not None
+            else None
+        ),
+        "release_reason": lock.release_reason,
+    }
+
+
 def _parallel_execution_item_payload(
     project: Project,
     item: DevExecutionItem,
@@ -250,7 +270,40 @@ def _parallel_execution_item_payload(
         "slot_state": item.slot_state.value,
         "active": item.active,
         "waiting_for_capacity": item.waiting_for_capacity,
+        "waiting_for_resource_lock": item.waiting_for_resource_lock,
         "inhibition_reason": item.inhibition_reason,
+        "resource_locks": {
+            "required": [
+                {
+                    "surface": requirement.surface.key,
+                    "mode": requirement.mode.value,
+                }
+                for requirement in item.required_locks
+            ],
+            "held": [
+                _resource_lock_payload(lock)
+                for lock in item.lock_records
+                if lock.state.value == "ACTIVE"
+            ],
+            "records": [
+                _resource_lock_payload(lock)
+                for lock in item.lock_records
+            ],
+            "conflict": (
+                {
+                    "surface": item.lock_conflict.surface.key,
+                    "requested_mode": item.lock_conflict.requested_mode.value,
+                    "holder_work_item_id": item.lock_conflict.holder_work_item_id,
+                    "holder_agent_session": item.lock_conflict.holder_agent_session,
+                    "holder_mode": item.lock_conflict.holder_mode.value,
+                    "holder_state": item.lock_conflict.holder_state.value,
+                    "reason": item.lock_conflict.reason,
+                }
+                if item.lock_conflict is not None
+                else None
+            ),
+            "recovery_state": item.lock_recovery_state,
+        },
         **payload,
     }
 
@@ -306,6 +359,7 @@ def create_app(
     engine = build_engine(active_settings)
     session_factory = build_session_factory(engine)
     connection_manager = CompanionConnectionManager()
+    resource_lock_lease_owner_id = str(uuid4())
     active_project_catalog = project_catalog or ProjectCatalog(
         load_projects(active_settings.projects_config_path)
     )
@@ -346,6 +400,8 @@ def create_app(
                         evidence_reader=active_execution_reader,
                         uow_factory=uow_factory,
                         max_parallel_dev_executions=active_settings.max_parallel_dev_executions,
+                        resource_lock_lease_seconds=active_settings.resource_lock_lease_seconds,
+                        lease_owner_id=resource_lock_lease_owner_id,
                     )
                 except asyncio.CancelledError:
                     raise
@@ -476,6 +532,8 @@ def create_app(
             evidence_reader=active_execution_reader,
             uow_factory=uow_factory,
             max_parallel_dev_executions=active_settings.max_parallel_dev_executions,
+            resource_lock_lease_seconds=active_settings.resource_lock_lease_seconds,
+            lease_owner_id=resource_lock_lease_owner_id,
         )
         payload = _parallel_executions_payload(evaluation.projection)
         payload["prompt_dispatches"] = [
@@ -517,20 +575,44 @@ def create_app(
         project = active_project_catalog.get(project_id)
         if project is None:
             raise HTTPException(status_code=404, detail="Project not found")
-        evaluation = evaluate_project_execution(
+        # Legacy single-execution mutation endpoint delegates to the same
+        # ResourceLock-aware gate. It cannot bypass DC-052 acquisition.
+        evaluation = evaluate_project_parallel_dev_executions(
             project,
             roadmap_reader=active_roadmap_reader,
             evidence_reader=active_execution_reader,
             uow_factory=uow_factory,
+            max_parallel_dev_executions=1,
+            resource_lock_lease_seconds=active_settings.resource_lock_lease_seconds,
+            lease_owner_id=resource_lock_lease_owner_id,
         )
-        payload = _execution_payload(project, evaluation.projection)
+        primary = evaluation.projection.items[0] if evaluation.projection.items else None
+        if primary is None:
+            projection = read_project_execution(
+                project,
+                roadmap_reader=active_roadmap_reader,
+                evidence_reader=active_execution_reader,
+            )
+            payload = _execution_payload(project, projection)
+            payload["prompt_dispatch"] = None
+            return payload
+
+        payload = _execution_payload(project, primary.execution)
+        dispatch = next(
+            (
+                item
+                for item in evaluation.dispatches
+                if item.work_item_id == primary.scheduler.work_item.key
+            ),
+            None,
+        )
         payload["prompt_dispatch"] = (
             {
-                "dispatch_id": str(evaluation.dispatch.dispatch_id),
-                "agent_session": evaluation.dispatch.agent_session,
-                "idempotency_key": evaluation.dispatch.idempotency_key,
+                "dispatch_id": str(dispatch.dispatch_id),
+                "agent_session": dispatch.agent_session,
+                "idempotency_key": dispatch.idempotency_key,
             }
-            if evaluation.dispatch is not None
+            if dispatch is not None
             else None
         )
         return payload
