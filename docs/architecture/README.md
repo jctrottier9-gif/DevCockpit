@@ -11,6 +11,7 @@ Current decisions:
 - [ADR-0005 — GitHub execution projection and strict WorkItem identity](ADR-0005-github-execution-projection.md)
 - [ADR-0006 — Explicit ChatGPT response import](ADR-0006-explicit-chatgpt-response-import.md)
 - [ADR-0007 — Explicit handoffs and accepted decisions](ADR-0007-explicit-handoffs-and-accepted-decisions.md)
+- [ADR-0008 — Explicit roadmap change proposals and GitHub writeback](ADR-0008-explicit-roadmap-change-proposals-and-github-writeback.md)
 
 ## Rule
 

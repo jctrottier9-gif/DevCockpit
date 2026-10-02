@@ -10,7 +10,7 @@ DC-030 closes the explicit ChatGPT response-return loop. DevCockpit can now corr
 
 The next product capability is a controlled DEV ↔ Architect handoff. Imported ChatGPT prose must not become an orchestration command or an accepted decision merely because it contains words such as "architecture", "blocked" or "decision".
 
-This ADR stabilizes only the contracts required for DC-040. Product Owner redécoupage and GitHub roadmap writeback remain separate decisions for DC-041.
+This ADR initially stabilized the contracts required for DC-040. ASTRA-041 now extends the future Handoff/Decision contracts for Product Owner consultation while keeping roadmap proposal/writeback semantics in ADR-0008.
 
 ## Decision
 
@@ -248,3 +248,64 @@ Its existing explicit prompt send and explicit response return behavior is reuse
 - Handoff/Decision records provide enough durable state for DC-060 attention signals later.
 - The future scheduler may combine canonical WorkItem eligibility with local orchestration waits without treating a Handoff as a WorkItem dependency.
 - Product Owner clarification, rescoping proposals and GitHub roadmap writeback remain outside DC-040.
+
+
+## ASTRA-041 amendment — Product Owner orchestration contracts
+
+DC-040 remains the implemented baseline. The following extensions are accepted architecture for DC-041A and are not claims about current persistence constraints.
+
+### Roles, purposes and Decision types
+
+Target Handoff roles:
+
+~~~text
+ARCH
+PO
+~~~
+
+Target Handoff purposes:
+
+~~~text
+TECHNICAL_GUIDANCE
+PRODUCT_CLARIFICATION
+ROADMAP_REVIEW
+~~~
+
+RESCOPE is not a Handoff purpose; scope mutation is a possible consequence of an accepted consultation.
+
+Target Decision types:
+
+~~~text
+ARCHITECTURE_GUIDANCE
+PRODUCT_CLARIFICATION
+SCOPE_DECISION
+~~~
+
+Decision effects remain CONTINUE_IN_SCOPE and HOLD_FOR_AUTHORIZATION. The backend validates allowed role/purpose/decision-type combinations explicitly.
+
+### Sequential transfer
+
+There remains at most one active blocking Handoff per Project/WorkItem.
+
+The target lifecycle adds TRANSFERRED and RESOLVED_NO_RESUME plus provenance such as predecessor_handoff_id and optional context_decision_id.
+
+ARCH to PO transfer is an explicit atomic command. It may start from an OPEN ARCH Handoff with one explicitly selected returned response, or from a DECIDED ARCH Handoff whose Decision is HOLD_FOR_AUTHORIZATION. HOLD alone never creates a PO Handoff automatically.
+
+### Deterministic resume and sessions
+
+Resume routing is derived by the backend:
+
+~~~text
+DEV -> PO -> resume DEV
+
+ARCH -> PO -> create linked ARCH consultation
+             and reuse the same ARCH AgentSession
+
+accepted rescope replaces WorkItem -> no resume of the old WorkItem
+~~~
+
+React never chooses resume_role.
+
+The logical session convention stays <project>:<role>:<work-item>. Repeated consultation of the same role and WorkItem key reuses that role session. New WorkItem keys created by an accepted split receive new role sessions.
+
+RoadmapChangeProposal, preview, V1/V2 semantics, GitHub writeback and reconciliation belong to ADR-0008 rather than this Handoff/Decision ADR.

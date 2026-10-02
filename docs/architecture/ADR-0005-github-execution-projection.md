@@ -119,3 +119,14 @@ Both prompts reuse the logical AgentSession `<project>:DEV:<work-item>`.
 GitHub execution projection remains unchanged and fully observable while a blocking Handoff is active.
 
 However, prompt preparation is a separate application concern: DC-040 may inhibit automatic DEV `INITIAL` and `CI_RED` PromptDispatch creation for a WorkItem while its local Handoff state requires Architect guidance or authorization. This inhibition does not add `NEEDS_ARCHITECT`/`NEEDS_PO` to `ExecutionState`, does not rewrite CI evidence, and must be checked transactionally with dispatch creation. See ADR-0007.
+
+
+## ASTRA-041 amendment — proposal/application fencing
+
+ExecutionProjection continues to derive only from the currently canonical roadmap plus observable GitHub delivery evidence. RoadmapChangeProposal, proposal revision, confirmation and writeback-application states are local orchestration state and are not new ExecutionState values.
+
+The current canonical parser remains V1 until DC-041A delivers explicit V1/V2 support. SUPERSEDED and REPLACES therefore describe accepted future V2 semantics, not states understood by the current DC-021 implementation.
+
+The existing GitHub reader remains read-only. DC-041B may add a separate targeted RoadmapWriter for the configured roadmap issue body only.
+
+While a roadmap application is active or its remote outcome is uncertain, automatic work preparation for the affected target must be fenced locally so a projection computed before writeback cannot create a PromptDispatch after writeback. This inhibition does not mutate ExecutionProjection. See ADR-0008.
