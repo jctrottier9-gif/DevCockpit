@@ -201,61 +201,73 @@ def evaluate_project_parallel_dev_executions(
             now=now,
         )
 
+        remaining_starts = projection.available_capacity
         for item in projection.items:
             work_item = item.execution.work_item
-            if work_item is None or item.inhibition_reason is not None:
+            if work_item is None:
                 continue
-            if item.slot_state is DevExecutionSlotState.SELECTED:
-                _, conflict = uow.resource_locks.acquire_many(
-                    project_id=project.project_id,
-                    work_item_id=work_item.key,
-                    agent_session=item.agent_session,
-                    lease_owner_id=lease_owner_id,
-                    requirements=item.required_locks,
-                    now=now,
-                    lease_seconds=resource_lock_lease_seconds,
-                )
-                if conflict is not None:
-                    continue
-                initial_key = _initial_idempotency_key(project, work_item)
-                existing_initial = uow.prompt_dispatches.get_by_idempotency_key(initial_key)
-                if existing_initial is None:
+
+            if item.active:
+                if (
+                    item.execution.next_action is NextAction.FIX_CI
+                    and not uow.handoffs.covers(
+                        project.project_id,
+                        work_item.key,
+                        _ci_red_idempotency_key(project, item.execution),
+                    )
+                ):
                     dispatches.append(
                         create_prompt_dispatch_in_uow(
                             CreatePromptDispatchCommand(
                                 project_id=project.project_id,
                                 work_item_id=work_item.key,
                                 role=PromptDispatchRole.DEV,
-                                prompt_text=build_initial_dev_prompt(project, work_item),
-                                idempotency_key=initial_key,
+                                prompt_text=build_ci_red_follow_up(project, item.execution),
+                                idempotency_key=_ci_red_idempotency_key(project, item.execution),
                             ),
                             uow=uow,
                         )
                     )
-                    # PromptDispatchRepository also runs with autoflush=False.
-                    # Make the dispatch visible to the post-acquisition projection.
-                    uow.flush()
-            elif (
-                item.active
-                and item.execution.next_action is NextAction.FIX_CI
-                and not uow.handoffs.covers(
-                    project.project_id,
-                    work_item.key,
-                    _ci_red_idempotency_key(project, item.execution),
-                )
+                continue
+
+            if (
+                item.inhibition_reason is not None
+                or item.execution.state is ExecutionState.BLOCKED
+                or remaining_starts <= 0
             ):
+                continue
+
+            _, conflict = uow.resource_locks.acquire_many(
+                project_id=project.project_id,
+                work_item_id=work_item.key,
+                agent_session=item.agent_session,
+                lease_owner_id=lease_owner_id,
+                requirements=item.required_locks,
+                now=now,
+                lease_seconds=resource_lock_lease_seconds,
+            )
+            if conflict is not None:
+                continue
+
+            initial_key = _initial_idempotency_key(project, work_item)
+            existing_initial = uow.prompt_dispatches.get_by_idempotency_key(initial_key)
+            if existing_initial is None:
                 dispatches.append(
                     create_prompt_dispatch_in_uow(
                         CreatePromptDispatchCommand(
                             project_id=project.project_id,
                             work_item_id=work_item.key,
                             role=PromptDispatchRole.DEV,
-                            prompt_text=build_ci_red_follow_up(project, item.execution),
-                            idempotency_key=_ci_red_idempotency_key(project, item.execution),
+                            prompt_text=build_initial_dev_prompt(project, work_item),
+                            idempotency_key=initial_key,
                         ),
                         uow=uow,
                     )
                 )
+                # PromptDispatchRepository also runs with autoflush=False.
+                # Make the dispatch visible to the next candidate and final projection.
+                uow.flush()
+            remaining_starts -= 1
         uow.commit()
         projection = _project_parallel_state(
             project,
