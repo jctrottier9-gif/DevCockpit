@@ -18,14 +18,20 @@ from app.application.handoffs import (
     transfer_handoff_to_po,
 )
 from app.application.roadmap_changes import (
+    ApplyRoadmapChangeProposal,
     CancelRoadmapChangeProposal,
+    ConfirmRoadmapChangeProposal,
     CreateRoadmapChangeProposal,
     CreateRoadmapChangeProposalRevision,
+    ReconcileRoadmapChangeApplication,
+    apply_roadmap_change_proposal,
     cancel_roadmap_change_proposal,
+    confirm_roadmap_change_proposal,
     create_roadmap_change_proposal,
     create_roadmap_change_proposal_revision,
     preview_roadmap_change_proposal_revision,
     read_roadmap_change_proposal,
+    reconcile_roadmap_change_application,
 )
 from app.domain.handoff import (
     DecisionEffect,
@@ -68,6 +74,7 @@ class AcceptBody(CommandBody):
     effect: DecisionEffect
     accepted_by: str = Field(min_length=1)
     decision_type: DecisionType = DecisionType.ARCHITECTURE_GUIDANCE
+    accepts_residual_writeback_risk: bool = False
 
 
 class CancelBody(CommandBody):
@@ -97,7 +104,35 @@ class CancelProposalBody(CommandBody):
     cancelled_by: str = Field(min_length=1)
 
 
-def build_orchestration_router(*, project_catalog, roadmap_reader, evidence_reader, uow_factory):
+class ConfirmProposalBody(CommandBody):
+    revision: int = Field(ge=1)
+    preview_digest: str = Field(min_length=1)
+    expected_proposal_version: int = Field(ge=1)
+    confirmation_command_id: UUID
+    confirmed_by: str = Field(min_length=1)
+
+
+class ApplyProposalBody(CommandBody):
+    application_command_id: UUID
+    expected_proposal_version: int = Field(ge=1)
+    requested_by: str = Field(min_length=1)
+
+
+class ReconcileApplicationBody(CommandBody):
+    reconciliation_command_id: UUID
+    expected_application_version: int = Field(ge=1)
+    reconciled_by: str = Field(min_length=1)
+
+
+def build_orchestration_router(
+    *,
+    project_catalog,
+    roadmap_reader,
+    roadmap_writer,
+    issue_mapping_reader,
+    evidence_reader,
+    uow_factory,
+):
     router = APIRouter(tags=["orchestration"])
 
     def project(identity):
@@ -217,6 +252,38 @@ def build_orchestration_router(*, project_catalog, roadmap_reader, evidence_read
             cancel_roadmap_change_proposal,
             proposal_id,
             CancelRoadmapChangeProposal(**body.model_dump()),
+        )
+
+    @router.post("/api/roadmap-change-proposals/{proposal_id}/confirm")
+    def confirm_proposal(proposal_id: UUID, body: ConfirmProposalBody):
+        return execute(
+            confirm_roadmap_change_proposal,
+            proposal_id,
+            ConfirmRoadmapChangeProposal(**body.model_dump()),
+            project_catalog=project_catalog,
+            roadmap_reader=roadmap_reader,
+        )
+
+    @router.post("/api/roadmap-change-proposals/{proposal_id}/apply")
+    def apply_proposal(proposal_id: UUID, body: ApplyProposalBody):
+        return execute(
+            apply_roadmap_change_proposal,
+            proposal_id,
+            ApplyRoadmapChangeProposal(**body.model_dump()),
+            project_catalog=project_catalog,
+            roadmap_reader=roadmap_reader,
+            roadmap_writer=roadmap_writer,
+            issue_mapping_reader=issue_mapping_reader,
+        )
+
+    @router.post("/api/roadmap-change-applications/{application_id}/reconcile")
+    def reconcile_application(application_id: UUID, body: ReconcileApplicationBody):
+        return execute(
+            reconcile_roadmap_change_application,
+            application_id,
+            ReconcileRoadmapChangeApplication(**body.model_dump()),
+            project_catalog=project_catalog,
+            roadmap_reader=roadmap_reader,
         )
 
     return router

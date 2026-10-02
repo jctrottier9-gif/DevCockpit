@@ -28,7 +28,28 @@ _ISSUE_ROW = re.compile(r"^\|\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*\|\s*#([1-9][0-9]
 
 class ProposalStatus(StrEnum):
     DRAFT = "DRAFT"
+    CONFIRMED = "CONFIRMED"
+    APPLIED = "APPLIED"
     CANCELLED = "CANCELLED"
+
+
+class ApplicationStatus(StrEnum):
+    PREPARED = "PREPARED"
+    APPLYING = "APPLYING"
+    APPLIED = "APPLIED"
+    NOT_APPLIED = "NOT_APPLIED"
+    CONFLICT = "CONFLICT"
+    RECONCILIATION_REQUIRED = "RECONCILIATION_REQUIRED"
+
+
+class ApplicationAttemptOutcome(StrEnum):
+    PREPARED = "PREPARED"
+    APPLYING = "APPLYING"
+    NOT_EMITTED = "NOT_EMITTED"
+    WRITE_RETURNED = "WRITE_RETURNED"
+    APPLIED = "APPLIED"
+    CONFLICT = "CONFLICT"
+    RECONCILIATION_REQUIRED = "RECONCILIATION_REQUIRED"
 
 
 @dataclass(frozen=True)
@@ -47,6 +68,14 @@ class RoadmapChangeProposal:
     cancelled_by: str | None = None
     cancelled_at: datetime | None = None
     cancellation_command_id: UUID | None = None
+    confirmed_revision: int | None = None
+    confirmed_preview_digest: str | None = None
+    confirmation_command_id: UUID | None = None
+    confirmation_expected_proposal_version: int | None = None
+    confirmed_by: str | None = None
+    confirmed_at: datetime | None = None
+    writeback_authorization_decision_id: UUID | None = None
+    applied_at: datetime | None = None
 
     def __post_init__(self):
         ProposalStatus(self.status)
@@ -64,6 +93,36 @@ class RoadmapChangeProposal:
                 raise ValueError("Invalid proposal cancellation timestamp")
         elif any(value is not None for value in cancellation):
             raise ValueError("Cancellation fields require CANCELLED status")
+
+        confirmation = (
+            self.confirmed_revision,
+            self.confirmed_preview_digest,
+            self.confirmation_command_id,
+            self.confirmation_expected_proposal_version,
+            self.confirmed_by,
+            self.confirmed_at,
+            self.writeback_authorization_decision_id,
+        )
+        if self.status in {ProposalStatus.CONFIRMED, ProposalStatus.APPLIED}:
+            if not all(value is not None for value in confirmation):
+                raise ValueError("Confirmed proposal requires exact revision confirmation metadata")
+            if (
+                self.confirmed_revision < 1
+                or self.confirmed_revision > self.current_revision
+                or self.confirmation_expected_proposal_version < 1
+                or not self.confirmed_preview_digest.strip()
+                or not self.confirmed_by.strip()
+                or self.confirmed_at.tzinfo is None
+            ):
+                raise ValueError("Invalid proposal confirmation metadata")
+        elif any(value is not None for value in confirmation):
+            raise ValueError("Confirmation fields require CONFIRMED or APPLIED status")
+
+        if self.status is ProposalStatus.APPLIED:
+            if self.applied_at is None or self.applied_at.tzinfo is None:
+                raise ValueError("Applied proposal requires applied_at")
+        elif self.applied_at is not None:
+            raise ValueError("applied_at requires APPLIED status")
 
 
 @dataclass(frozen=True)
@@ -96,6 +155,81 @@ class RoadmapChangeProposalRevision:
     @property
     def operations(self) -> tuple[dict[str, Any], ...]:
         return canonical_operations(json.loads(self.operations_json))
+
+
+@dataclass(frozen=True)
+class RoadmapChangeApplication:
+    application_id: UUID
+    proposal_id: UUID
+    revision: int
+    project_id: str
+    repository_full_name: str
+    roadmap_issue_number: int
+    base_body: str
+    base_body_hash: str
+    expected_body: str
+    expected_body_hash: str
+    application_command_id: UUID
+    expected_proposal_version: int
+    requested_by: str
+    status: ApplicationStatus
+    version: int
+    created_at: datetime
+    updated_at: datetime
+    last_remote_body_hash: str | None = None
+
+    def __post_init__(self):
+        ApplicationStatus(self.status)
+        if (
+            self.revision < 1
+            or self.roadmap_issue_number < 1
+            or self.version < 1
+            or self.expected_proposal_version < 1
+        ):
+            raise ValueError("Invalid roadmap application identity")
+        if (
+            not self.project_id.strip()
+            or not self.repository_full_name.strip()
+            or not self.requested_by.strip()
+        ):
+            raise ValueError("Roadmap application target and attribution must not be blank")
+        if body_hash(self.base_body) != self.base_body_hash:
+            raise ValueError("Application base body hash does not match body")
+        if body_hash(self.expected_body) != self.expected_body_hash:
+            raise ValueError("Application expected body hash does not match body")
+        if self.created_at.tzinfo is None or self.updated_at.tzinfo is None:
+            raise ValueError("Application timestamps must be timezone-aware")
+        if self.updated_at < self.created_at:
+            raise ValueError("Application updated_at cannot precede created_at")
+        if self.last_remote_body_hash is not None and len(self.last_remote_body_hash) != 64:
+            raise ValueError("Invalid last remote body hash")
+
+
+@dataclass(frozen=True)
+class RoadmapChangeApplicationAttempt:
+    attempt_id: UUID
+    application_id: UUID
+    attempt_number: int
+    command_id: UUID
+    outcome: ApplicationAttemptOutcome
+    patch_may_have_been_emitted: bool
+    started_at: datetime
+    expected_application_version: int | None = None
+    requested_by: str | None = None
+    completed_at: datetime | None = None
+    detail: str | None = None
+
+    def __post_init__(self):
+        ApplicationAttemptOutcome(self.outcome)
+        if self.attempt_number < 1 or self.started_at.tzinfo is None:
+            raise ValueError("Invalid application attempt")
+        if self.expected_application_version is not None and self.expected_application_version < 1:
+            raise ValueError("Invalid expected application version")
+        if self.requested_by is not None and not self.requested_by.strip():
+            raise ValueError("Attempt attribution must not be blank")
+        if self.completed_at is not None:
+            if self.completed_at.tzinfo is None or self.completed_at < self.started_at:
+                raise ValueError("Invalid application attempt completion timestamp")
 
 
 @dataclass(frozen=True)

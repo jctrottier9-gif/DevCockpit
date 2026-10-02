@@ -113,6 +113,16 @@ def evaluate_project_execution(
     evidence_reader: ExecutionEvidenceReader,
     uow_factory: UnitOfWorkFactory,
 ) -> ExecutionEvaluation:
+    # Snapshot the target generation before reading remote evidence. A roadmap
+    # application increments this generation when it claims the target. The
+    # second check below is atomic with PromptDispatch creation under the same
+    # SQLite BEGIN IMMEDIATE writer boundary.
+    with uow_factory() as uow:
+        initial_fence = uow.roadmap_target_fences.snapshot(
+            project.repository_full_name,
+            project.roadmap_issue_number,
+        )
+
     projection = read_project_execution(
         project,
         roadmap_reader=roadmap_reader,
@@ -123,8 +133,19 @@ def evaluate_project_execution(
     work_item = projection.work_item
     if work_item is None:
         return ExecutionEvaluation(projection=projection, dispatch=None)
+    if initial_fence.active_application_id is not None:
+        return ExecutionEvaluation(projection=projection, dispatch=None)
 
     with uow_factory() as uow:
+        current_fence = uow.roadmap_target_fences.snapshot(
+            project.repository_full_name,
+            project.roadmap_issue_number,
+        )
+        if (
+            current_fence.active_application_id is not None
+            or current_fence.generation != initial_fence.generation
+        ):
+            return ExecutionEvaluation(projection=projection, dispatch=None)
         if uow.handoffs.active(project.project_id, work_item.key):
             return ExecutionEvaluation(projection=projection, dispatch=None)
         if (projection.next_action is NextAction.FIX_CI and

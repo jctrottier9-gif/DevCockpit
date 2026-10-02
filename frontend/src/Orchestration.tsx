@@ -9,11 +9,21 @@ type Dispatch = {
   delivery: null | { acknowledged: boolean }
 }
 type Source = Dispatch & { responses: Response[] }
+type RoadmapApplicationSummary = {
+  application_id: string
+  status: string
+  version: number
+  revision: number
+  last_remote_body_hash: string | null
+}
 type ProposalSummary = {
   proposal_id: string
   status: string
   version: number
   current_revision: number
+  confirmed_revision: number | null
+  confirmed_preview_digest: string | null
+  applications: RoadmapApplicationSummary[]
 }
 type Handoff = {
   handoff_id: string
@@ -38,6 +48,7 @@ type Handoff = {
     effect: string
     decision_type: string
     accepted_by: string
+    accepts_residual_writeback_risk: boolean
   }
   proposals: ProposalSummary[]
   actions: {
@@ -275,6 +286,7 @@ function Consultation({
   const [responseId, setResponseId] = useState('')
   const [summary, setSummary] = useState('')
   const [effect, setEffect] = useState('')
+  const [acceptWritebackRisk, setAcceptWritebackRisk] = useState(false)
   const [reason, setReason] = useState('')
   const [transferOpen, setTransferOpen] = useState(false)
   const [transferResponseId, setTransferResponseId] = useState('')
@@ -322,6 +334,7 @@ function Consultation({
         decision_type: decisionType,
         effect,
         accepted_by: actor,
+        accepts_residual_writeback_risk: acceptWritebackRisk,
       })
     }}>
       <label>
@@ -342,6 +355,14 @@ function Consultation({
           <option value="HOLD_FOR_AUTHORIZATION">Attendre une autorisation</option>
         </select>
       </label>
+      {h.target_role === 'PO' && h.purpose === 'ROADMAP_REVIEW' && <label>
+        <input
+          type="checkbox"
+          checked={acceptWritebackRisk}
+          onChange={event => setAcceptWritebackRisk(event.target.checked)}
+        />
+        J’accepte explicitement pour MVP-3 la fenêtre de concurrence résiduelle entre le dernier GET GitHub et le PATCH du body.
+      </label>}
       <p>Rôle repris si autorisé : <strong>{h.resume_role}</strong></p>
       <button disabled={busy || !actor.trim() || !responseId}>
         Accepter la conclusion
@@ -387,6 +408,7 @@ function Consultation({
     {h.decision && <section>
       <h4>Decision acceptée</h4>
       <p>{h.decision.decision_type} · {h.decision.effect} · {h.decision.accepted_by}</p>
+      <p>Risque writeback direct : <strong>{h.decision.accepts_residual_writeback_risk ? 'accepté explicitement' : 'non accepté'}</strong></p>
       <pre>{h.decision.summary}</pre>
       {h.resume_dispatch
         ? <Prompt value={h.resume_dispatch} label={`Reprise ${h.resume_role} préparée`} />
@@ -428,6 +450,7 @@ function Consultation({
           proposal={proposal}
           actor={actor}
           busy={busy}
+          writebackAuthorized={h.decision?.accepts_residual_writeback_risk ?? false}
           command={command}
         />)}
     </section>}
@@ -454,11 +477,13 @@ function ProposalEditor({
   proposal,
   actor,
   busy,
+  writebackAuthorized,
   command,
 }: {
   proposal: ProposalSummary
   actor: string
   busy: boolean
+  writebackAuthorized: boolean
   command: (
     url: string,
     identityField: string,
@@ -526,6 +551,79 @@ function ProposalEditor({
       <details><summary>Avant</summary><pre>{preview.base_body}</pre></details>
       <details><summary>Après</summary><pre>{preview.proposed_body}</pre></details>
     </div>}
-    <p><strong>Aucune écriture GitHub dans DC-041A.</strong> Application GitHub disponible dans DC-041B.</p>
+
+    {proposal.status === 'DRAFT' && !writebackAuthorized &&
+      <p>Confirmation GitHub bloquée : la Decision PO n’a pas accepté explicitement le risque résiduel GET→PATCH.</p>}
+
+    {proposal.status === 'DRAFT' && writebackAuthorized && preview && preview.revision === proposal.current_revision &&
+      <button
+        disabled={busy || !actor.trim() || preview.blocking_diagnostics.length > 0}
+        onClick={() => void command(
+          `/api/roadmap-change-proposals/${proposal.proposal_id}/confirm`,
+          'confirmation_command_id',
+          {
+            revision: preview.revision,
+            preview_digest: preview.preview_digest,
+            expected_proposal_version: proposal.version,
+            confirmed_by: actor,
+          },
+        )}
+      >
+        Confirmer cette révision exacte
+      </button>}
+
+    {proposal.status === 'DRAFT' &&
+      <button
+        disabled={busy || !actor.trim()}
+        onClick={() => void command(
+          `/api/roadmap-change-proposals/${proposal.proposal_id}/cancel`,
+          'cancellation_command_id',
+          { expected_version: proposal.version, cancelled_by: actor },
+        )}
+      >
+        Annuler la proposal
+      </button>}
+
+    {proposal.status === 'CONFIRMED' && <>
+      <p>Révision confirmée : {proposal.confirmed_revision} · digest <code>{proposal.confirmed_preview_digest}</code></p>
+      <button
+        disabled={busy || !actor.trim()}
+        onClick={() => void command(
+          `/api/roadmap-change-proposals/${proposal.proposal_id}/apply`,
+          'application_command_id',
+          { expected_proposal_version: proposal.version, requested_by: actor },
+        )}
+      >
+        Appliquer au roadmap GitHub
+      </button>
+    </>}
+
+    {proposal.applications.length > 0 && <div>
+      <h5>Applications GitHub</h5>
+      {proposal.applications.map(application => <div key={application.application_id}>
+        <p>
+          {application.application_id} · revision {application.revision} ·
+          <strong> {application.status}</strong>
+        </p>
+        {application.status === 'CONFLICT' &&
+          <p>Conflit distant détecté. Aucune réécriture automatique n’est autorisée.</p>}
+        {application.status === 'RECONCILIATION_REQUIRED' && <>
+          <p>Résultat GitHub incertain : une relecture explicite est requise, sans nouveau PATCH.</p>
+          <button
+            disabled={busy || !actor.trim()}
+            onClick={() => void command(
+              `/api/roadmap-change-applications/${application.application_id}/reconcile`,
+              'reconciliation_command_id',
+              {
+                expected_application_version: application.version,
+                reconciled_by: actor,
+              },
+            )}
+          >
+            Réconcilier l’état distant
+          </button>
+        </>}
+      </div>)}
+    </div>}
   </section>
 }

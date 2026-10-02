@@ -15,6 +15,7 @@ from app.domain.handoff import (
     HandoffPurpose,
     HandoffStatus,
     OrchestrationConflict,
+    WritebackRiskAuthorization,
     utc_now,
     validate_decision_kind,
     validate_handoff_kind,
@@ -55,6 +56,7 @@ class AcceptDecision:
     effect: DecisionEffect
     accepted_by: str
     decision_type: str = "ARCHITECTURE_GUIDANCE"
+    accepts_residual_writeback_risk: bool = False
 
 
 @dataclass(frozen=True)
@@ -534,6 +536,9 @@ def accept_decision(
     with uow_factory() as uow:
         previous = uow.decisions.by_command(command.acceptance_command_id)
         if previous:
+            authorization = uow.roadmap_writeback_authorizations.for_decision(
+                previous.decision_id
+            )
             if (
                 previous.source_handoff_id != handoff_id
                 or previous.source_response_id != command.source_response_id
@@ -541,6 +546,7 @@ def accept_decision(
                 or previous.effect != DecisionEffect(command.effect)
                 or previous.accepted_by != command.accepted_by
                 or previous.decision_type != command.decision_type
+                or (authorization is not None) != command.accepts_residual_writeback_risk
             ):
                 raise OrchestrationConflict("Acceptance command already used with different content")
             return _require_handoff(uow, handoff_id)
@@ -551,6 +557,14 @@ def accept_decision(
             handoff.purpose,
             command.decision_type,
         )
+        if command.accepts_residual_writeback_risk and not (
+            handoff.target_role == PromptDispatchRole.PO.value
+            and handoff.purpose == HandoffPurpose.ROADMAP_REVIEW.value
+            and target_type is DecisionType.SCOPE_DECISION
+        ):
+            raise OrchestrationConflict(
+                "Residual GitHub writeback risk can only be accepted by a PO ROADMAP_REVIEW SCOPE_DECISION"
+            )
         decided = handoff.transition(HandoffStatus.DECIDED, command.expected_version)
         request = uow.prompt_dispatches.get(handoff.request_dispatch_id)
         _validate_dispatch(request, handoff.project_id, handoff.work_item_id, handoff.role)
@@ -568,6 +582,17 @@ def accept_decision(
         )
         uow.decisions.add(decision)
         uow.flush()
+        if command.accepts_residual_writeback_risk:
+            uow.roadmap_writeback_authorizations.add(
+                WritebackRiskAuthorization(
+                    decision_id=decision.decision_id,
+                    project_id=handoff.project_id,
+                    accepted_by=command.accepted_by,
+                    accepted_at=decision.accepted_at,
+                    acceptance_command_id=command.acceptance_command_id,
+                )
+            )
+            uow.flush()
 
         held_reason = "HOLD_FOR_AUTHORIZATION"
         if decision.effect is DecisionEffect.CONTINUE_IN_SCOPE:
@@ -735,19 +760,43 @@ def read_orchestration(project, work_item_id, *, roadmap_reader, evidence_reader
                 and decision.decision_type == DecisionType.SCOPE_DECISION.value
                 and decision.effect is DecisionEffect.HOLD_FOR_AUTHORIZATION
             )
+            authorization = (
+                uow.roadmap_writeback_authorizations.for_decision(decision.decision_id)
+                if decision else None
+            )
             consultations.append({
                 **asdict(handoff),
                 "responses": responses,
                 "indication": (
                     "Réponse à examiner" if responses else "En attente de réponse"
                 ) if handoff.status is HandoffStatus.OPEN else handoff.status,
-                "decision": asdict(decision) if decision else None,
+                "decision": (
+                    {
+                        **asdict(decision),
+                        "accepts_residual_writeback_risk": authorization is not None,
+                    }
+                    if decision else None
+                ),
                 "proposals": [
                     {
                         "proposal_id": proposal.proposal_id,
                         "status": proposal.status,
                         "version": proposal.version,
                         "current_revision": proposal.current_revision,
+                        "confirmed_revision": proposal.confirmed_revision,
+                        "confirmed_preview_digest": proposal.confirmed_preview_digest,
+                        "applications": [
+                            {
+                                "application_id": application.application_id,
+                                "status": application.status,
+                                "version": application.version,
+                                "revision": application.revision,
+                                "last_remote_body_hash": application.last_remote_body_hash,
+                            }
+                            for application in uow.roadmap_change_applications.list_for_proposal(
+                                proposal.proposal_id
+                            )
+                        ],
                     }
                     for proposal in proposals
                 ],

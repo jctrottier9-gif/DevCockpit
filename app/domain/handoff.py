@@ -201,5 +201,20 @@ class Decision:
             raise ValueError("Invalid decision timestamp")
 
 
+@dataclass(frozen=True)
+class WritebackRiskAuthorization:
+    decision_id: UUID
+    project_id: str
+    accepted_by: str
+    accepted_at: datetime
+    acceptance_command_id: UUID
+
+    def __post_init__(self):
+        required(self.project_id, "project_id")
+        required(self.accepted_by, "accepted_by")
+        if self.accepted_at.tzinfo is None:
+            raise ValueError("Invalid writeback risk authorization timestamp")
+
+
 def utc_now():
     return datetime.now(timezone.utc)
