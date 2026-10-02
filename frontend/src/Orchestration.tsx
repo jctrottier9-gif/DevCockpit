@@ -548,6 +548,75 @@ function ProposalEditor({
       <details><summary>Avant</summary><pre>{preview.base_body}</pre></details>
       <details><summary>Après</summary><pre>{preview.proposed_body}</pre></details>
     </div>}
-    <p><strong>Aucune écriture GitHub dans DC-041A.</strong> Application GitHub disponible dans DC-041B.</p>
+
+    {proposal.status === 'DRAFT' && preview && preview.revision === proposal.current_revision && <>
+      <button
+        disabled={busy || !actor.trim() || preview.blocking_diagnostics.length > 0}
+        onClick={() => void command(
+          `/api/roadmap-change-proposals/${proposal.proposal_id}/confirm`,
+          'confirmation_command_id',
+          {
+            revision: preview.revision,
+            preview_digest: preview.preview_digest,
+            expected_proposal_version: proposal.version,
+            confirmed_by: actor,
+          },
+        )}
+      >
+        Confirmer cette révision exacte
+      </button>
+      <button
+        disabled={busy || !actor.trim()}
+        onClick={() => void command(
+          `/api/roadmap-change-proposals/${proposal.proposal_id}/cancel`,
+          'cancellation_command_id',
+          { expected_version: proposal.version, cancelled_by: actor },
+        )}
+      >
+        Annuler la proposal
+      </button>
+    </>}
+
+    {proposal.status === 'CONFIRMED' && <>
+      <p>Révision confirmée : {proposal.confirmed_revision} · digest <code>{proposal.confirmed_preview_digest}</code></p>
+      <button
+        disabled={busy || !actor.trim()}
+        onClick={() => void command(
+          `/api/roadmap-change-proposals/${proposal.proposal_id}/apply`,
+          'application_command_id',
+          { expected_proposal_version: proposal.version, requested_by: actor },
+        )}
+      >
+        Appliquer au roadmap GitHub
+      </button>
+    </>}
+
+    {proposal.applications.length > 0 && <div>
+      <h5>Applications GitHub</h5>
+      {proposal.applications.map(application => <div key={application.application_id}>
+        <p>
+          {application.application_id} · revision {application.revision} ·
+          <strong> {application.status}</strong>
+        </p>
+        {application.status === 'CONFLICT' &&
+          <p>Conflit distant détecté. Aucune réécriture automatique n’est autorisée.</p>}
+        {application.status === 'RECONCILIATION_REQUIRED' && <>
+          <p>Résultat GitHub incertain : une relecture explicite est requise, sans nouveau PATCH.</p>
+          <button
+            disabled={busy || !actor.trim()}
+            onClick={() => void command(
+              `/api/roadmap-change-applications/${application.application_id}/reconcile`,
+              'reconciliation_command_id',
+              {
+                expected_application_version: application.version,
+                reconciled_by: actor,
+              },
+            )}
+          >
+            Réconcilier l’état distant
+          </button>
+        </>}
+      </div>)}
+    </div>}
   </section>
 }
