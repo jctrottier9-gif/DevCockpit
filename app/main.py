@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
 from app.api.attention import build_attention_router
+from app.api.flow_analytics import build_flow_analytics_router
 from app.api.orchestration import build_orchestration_router
 from app.application.chatgpt_responses import (
     ChatGptResponseImportError,
@@ -24,6 +25,7 @@ from app.application.executions import (
     evaluate_project_execution,
     read_project_execution,
 )
+from app.application.flow_analytics import FlowAnalyticsEvidenceReader
 from app.application.parallel_executions import (
     DevExecutionItem,
     ParallelDevExecutionProjection,
@@ -50,6 +52,7 @@ from app.domain.prompt_dispatch import PromptDispatchStatus
 from app.domain.roadmap import PipelineDiagnostic, PipelineParseResult, WorkItem
 from app.infrastructure.database import build_engine, build_session_factory
 from app.infrastructure.github_execution import GitHubExecutionReader
+from app.infrastructure.github_flow_analytics import GitHubFlowAnalyticsReader
 from app.infrastructure.github_roadmaps import GitHubRoadmapReader
 from app.infrastructure.github_roadmap_writer import (
     GitHubIssueMappingReader,
@@ -353,6 +356,7 @@ def create_app(
     project_catalog: ProjectCatalog | None = None,
     roadmap_reader: RoadmapIssueReader | None = None,
     execution_reader: ExecutionEvidenceReader | None = None,
+    flow_analytics_reader: FlowAnalyticsEvidenceReader | None = None,
     roadmap_writer=None,
     issue_mapping_reader=None,
 ) -> FastAPI:
@@ -374,6 +378,10 @@ def create_app(
         timeout_seconds=active_settings.github_timeout_seconds,
     )
     active_execution_reader = execution_reader or GitHubExecutionReader(
+        token=token,
+        timeout_seconds=active_settings.github_timeout_seconds,
+    )
+    active_flow_analytics_reader = flow_analytics_reader or GitHubFlowAnalyticsReader(
         token=token,
         timeout_seconds=active_settings.github_timeout_seconds,
     )
@@ -440,6 +448,7 @@ def create_app(
     application.state.project_catalog = active_project_catalog
     application.state.roadmap_reader = active_roadmap_reader
     application.state.execution_reader = active_execution_reader
+    application.state.flow_analytics_reader = active_flow_analytics_reader
     application.state.roadmap_writer = active_roadmap_writer
     application.state.issue_mapping_reader = active_issue_mapping_reader
 
@@ -459,6 +468,12 @@ def create_app(
         uow_factory=uow_factory,
         max_parallel_dev_executions=active_settings.max_parallel_dev_executions,
         companion_connections=connection_manager,
+    ))
+
+    application.include_router(build_flow_analytics_router(
+        project_catalog=active_project_catalog,
+        roadmap_reader=active_roadmap_reader,
+        analytics_reader=active_flow_analytics_reader,
     ))
 
     @application.get("/api/health", tags=["system"])
