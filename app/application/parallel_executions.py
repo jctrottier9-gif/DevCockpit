@@ -388,14 +388,23 @@ def _project_parallel_state(
     ] = []
     for snapshot in snapshots:
         work_item = snapshot.scheduler.work_item
+        requirements = project.resource_lock_requirements_for(work_item.key)
+        owner_records = tuple(records_by_owner.get(work_item.key, ()))
         has_initial_dispatch = (
             uow.prompt_dispatches.get_by_idempotency_key(
                 _initial_idempotency_key(project, work_item)
             )
             is not None
         )
+        dispatch_proves_active = has_initial_dispatch and (
+            not requirements
+            or _holds_required_locks(
+                requirements,
+                owner_records=owner_records,
+            )
+        )
         active = (
-            has_initial_dispatch
+            dispatch_proves_active
             or snapshot.execution.state
             not in {ExecutionState.READY, ExecutionState.BLOCKED}
         )
@@ -406,8 +415,6 @@ def _project_parallel_state(
         ):
             inhibition_reason = "HANDOFF_ACTIVE"
 
-        requirements = project.resource_lock_requirements_for(work_item.key)
-        owner_records = tuple(records_by_owner.get(work_item.key, ()))
         conflict = _find_resource_lock_conflict(
             work_item.key,
             requirements=requirements,
@@ -488,6 +495,23 @@ def _project_parallel_state(
         max_parallel_dev_executions=max_parallel_dev_executions,
         active_count=active_count,
         items=tuple(items),
+    )
+
+
+def _holds_required_locks(
+    requirements: tuple[ResourceLockRequirement, ...],
+    *,
+    owner_records: tuple[ResourceLock, ...],
+) -> bool:
+    active_by_surface = {
+        lock.surface.key: lock
+        for lock in owner_records
+        if lock.state is ResourceLockState.ACTIVE
+    }
+    return all(
+        requirement.surface.key in active_by_surface
+        and active_by_surface[requirement.surface.key].mode is requirement.mode
+        for requirement in requirements
     )
 
 
