@@ -211,21 +211,24 @@ def evaluate_project_parallel_dev_executions(
                 )
                 if conflict is not None:
                     continue
-                dispatches.append(
-                    create_prompt_dispatch_in_uow(
-                        CreatePromptDispatchCommand(
-                            project_id=project.project_id,
-                            work_item_id=work_item.key,
-                            role=PromptDispatchRole.DEV,
-                            prompt_text=build_initial_dev_prompt(project, work_item),
-                            idempotency_key=_initial_idempotency_key(project, work_item),
-                        ),
-                        uow=uow,
+                initial_key = _initial_idempotency_key(project, work_item)
+                existing_initial = uow.prompt_dispatches.get_by_idempotency_key(initial_key)
+                if existing_initial is None:
+                    dispatches.append(
+                        create_prompt_dispatch_in_uow(
+                            CreatePromptDispatchCommand(
+                                project_id=project.project_id,
+                                work_item_id=work_item.key,
+                                role=PromptDispatchRole.DEV,
+                                prompt_text=build_initial_dev_prompt(project, work_item),
+                                idempotency_key=initial_key,
+                            ),
+                            uow=uow,
+                        )
                     )
-                )
-                # PromptDispatchRepository also runs with autoflush=False.
-                # Make the dispatch visible to the post-acquisition projection.
-                uow.flush()
+                    # PromptDispatchRepository also runs with autoflush=False.
+                    # Make the dispatch visible to the post-acquisition projection.
+                    uow.flush()
             elif (
                 item.active
                 and item.execution.next_action is NextAction.FIX_CI
