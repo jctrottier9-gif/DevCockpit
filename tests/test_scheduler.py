@@ -114,3 +114,12 @@ def test_invalid_cycle_is_fail_closed_and_has_no_candidates():
     assert projection.executable_candidates == ()
     assert projection.selected_candidate is None
     assert "DEPENDENCY_CYCLE" in {d.code for d in projection.diagnostics}
+
+
+def test_multiple_executable_candidates_are_exposed_in_canonical_order_without_ai_selection():
+    projection = project(
+        "A | WORK | READY | #1 | MAIN | A | - | -",
+        "B | WORK | READY | #1 | AUX | B | - | -",
+    )
+    assert projection.executable_candidates == ("A", "B")
+    assert projection.selected_candidate is None
