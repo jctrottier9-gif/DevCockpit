@@ -354,3 +354,34 @@ def test_read_projection_reports_existing_capacity_without_mutating_dispatches()
     assert by_key["A"].active
     assert by_key["B"].slot_state is DevExecutionSlotState.SELECTED
     assert len(dispatches.by_key) == 1
+
+
+
+def test_active_roadmap_application_fence_inhibits_all_new_dispatches():
+    fences = Fences()
+    fences.generation = 3
+    fences.active_application_id = "application-1"
+    dispatches, uow_factory = factory(fences=fences)
+
+    result = evaluate_project_parallel_dev_executions(
+        PROJECT,
+        roadmap_reader=RoadmapReader(
+            v3(
+                "A | WORK | READY | #1 | MAIN | A | - | -",
+                "B | WORK | READY | #1 | AUX | B | - | -",
+            )
+        ),
+        evidence_reader=EvidenceReader(),
+        uow_factory=uow_factory,
+        max_parallel_dev_executions=2,
+    )
+
+    assert result.dispatches == ()
+    assert dispatches.by_key == {}
+    assert [item.slot_state for item in result.projection.items] == [
+        DevExecutionSlotState.INHIBITED,
+        DevExecutionSlotState.INHIBITED,
+    ]
+    assert {
+        item.inhibition_reason for item in result.projection.items
+    } == {"ROADMAP_APPLICATION_FENCE"}
