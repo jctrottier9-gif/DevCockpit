@@ -105,6 +105,7 @@ Keep the following concepts distinct:
 - `PromptDispatch`: a prompt prepared for delivery to the Firefox extension.
 - `ExternalEvent`: an observable GitHub/CI event.
 - `Decision`: an explicit imported product/architecture decision.
+- `RoadmapChangeProposal`: a local, revisioned proposal for an exact roadmap mutation; it is never canonical merely because it exists or is previewed.
 - `ResourceLock`: optional protection against unsafe parallel work.
 
 Do not collapse canonical roadmap state, derived execution state and ChatGPT conversation state into a single field.
@@ -403,9 +404,9 @@ After a merged issue/sub-tranche:
 - promote only the true next MAIN item to `READY`;
 - keep later MAIN items `BLOCKED` unless explicitly parallelized.
 
-### COCKPIT_PIPELINE_V1 contract
+### Canonical pipeline contract
 
-When the roadmap contains `COCKPIT_PIPELINE_V1`, it is the machine-readable work-order contract.
+The current roadmap remains `COCKPIT_PIPELINE_V1`, and when it contains that block it is the machine-readable work-order contract. ASTRA-041 accepts a future `COCKPIT_PIPELINE_V2` with `SUPERSEDED` and `REPLACES`, but V2 must not become canonical until DC-041A has delivered explicit V1/V2 parsing and validation. Unknown versions, multiple canonical blocks, or simultaneous V1+V2 fail closed.
 
 Any change to work order or completion state must:
 
@@ -419,6 +420,8 @@ Any change to work order or completion state must:
 Do not store the active/next roadmap item in this file. `AGENTS.md` contains durable rules; the roadmap issue contains current product state.
 
 Parallel lanes may be introduced explicitly later. Parallel work must never be inferred merely because two items exist.
+
+A `RoadmapChangeProposal` is local orchestration state, not the canonical roadmap. Proposal preview/confirmation does not change GitHub. Roadmap writeback must be an explicit, exact-revision action protected against stale state and reconciled against the remote body. A future `SUPERSEDED` status means replaced-but-not-delivered and must never be substituted with `DONE`.
 
 ---
 

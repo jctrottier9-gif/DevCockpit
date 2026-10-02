@@ -13,7 +13,7 @@ Without explicit authority boundaries, the system could become fragile: a ChatGP
 
 Authority is separated as follows:
 
-1. **Canonical roadmap state** is owned by the roadmap GitHub issue and its `COCKPIT_PIPELINE_V1` block.
+1. **Canonical roadmap state** is owned by the configured roadmap GitHub issue and its single valid canonical pipeline block. The current canonical format is `COCKPIT_PIPELINE_V1`; ASTRA-041 accepts V2 only as a future format to be implemented by DC-041A.
 2. **Delivery evidence** is owned by observable GitHub artifacts: issues, branches, commits, pull requests, workflow runs and merge state.
 3. **DevCockpit persistence** owns local orchestration records that are not canonical roadmap facts, such as prompt dispatch attempts, configured projects and explicit imported decisions.
 4. **ChatGPT conversations** are work surfaces. Their prose is not authoritative evidence of delivery.
@@ -38,3 +38,12 @@ Rejected because browser-local state is difficult to reconcile and should remain
 
 ### Fully local roadmap database
 Rejected for the initial product because it would duplicate the GitHub roadmap and create two competing authorities.
+
+
+## ASTRA-041 amendment — proposals are not authority
+
+A Decision and a RoadmapChangeProposal are local orchestration records. Neither becomes canonical roadmap state by existing, being accepted, or being previewed.
+
+The accepted future V2 format may represent replaced work with SUPERSEDED and REPLACES, but V2 is not delivered or canonical until DC-041A implements its parser and validation and the roadmap is explicitly reconciled.
+
+Any future GitHub roadmap writeback is an explicit exact-revision command through a targeted writer, protected by remote rereads, full-body comparison and post-write reconciliation. The read adapter remains read-only. See ADR-0008.

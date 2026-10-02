@@ -473,7 +473,7 @@ The canonical roadmap lives in GitHub issue #1 and contains a machine-readable C
 
 ## Architecture decisions
 
-Durable decisions live under docs/architecture/, including authority boundaries, orchestration identity, the manual ChatGPT companion/WebSocket protocol, and explicit Alembic schema migrations.
+Durable decisions live under docs/architecture/, including authority boundaries, orchestration identity, the manual ChatGPT companion/WebSocket protocol, explicit Alembic schema migrations, explicit Handoff/Decision semantics, and ADR-0008 for revisioned roadmap proposals plus explicit GitHub writeback.
 
 ## Development workflow
 
@@ -563,3 +563,19 @@ existing trusted-local-network deployment boundary still applies.
 Apply additive migration `0004_handoffs_decisions` with `alembic upgrade head`.
 It adds only `handoffs` and `decisions`, with RESTRICT historical references and no
 Project, WorkItem, Execution or AgentSession tables. Existing DC-030 data is preserved.
+
+
+## Product Owner roadmap-change direction (ASTRA-041)
+
+ASTRA-041 accepts the Product Owner implementation as two future delivery slices:
+
+~~~text
+DC-041A — PO handoffs, revisioned RoadmapChangeProposal, deterministic preview, V1/V2 reader
+DC-041B — exact-revision confirmation, targeted GitHub issue-body writeback, reconciliation
+~~~
+
+The current application and canonical roadmap still use COCKPIT_PIPELINE_V1. DC-041A must first deliver explicit V1/V2 support before issue #1 can be converted to the accepted V2 format with SUPERSEDED and REPLACES.
+
+A PO Decision is not a roadmap mutation. A RoadmapChangeProposal remains local and non-canonical until an exact revision is explicitly confirmed, applied through the future targeted writer, and reconciled. Direct GitHub PATCH in DC-041B also remains gated by an explicit product decision accepting the residual race between the final GitHub reread and PATCH; proposal/preview can exist even if direct writeback remains disabled.
+
+See docs/architecture/ADR-0008-explicit-roadmap-change-proposals-and-github-writeback.md.
