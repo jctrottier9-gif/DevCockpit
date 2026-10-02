@@ -16,6 +16,11 @@ from app.infrastructure.roadmap_changes import (
     SqlAlchemyRoadmapChangeProposalRepository,
     SqlAlchemyRoadmapChangeProposalRevisionRepository,
 )
+from app.infrastructure.roadmap_applications import (
+    SqlAlchemyRoadmapChangeApplicationAttemptRepository,
+    SqlAlchemyRoadmapChangeApplicationRepository,
+    SqlAlchemyRoadmapTargetFenceRepository,
+)
 
 
 class PromptDispatchRecord(Base):
@@ -106,6 +111,9 @@ class SqlAlchemyUnitOfWork:
         self.decisions: SqlAlchemyDecisionRepository
         self.roadmap_change_proposals: SqlAlchemyRoadmapChangeProposalRepository
         self.roadmap_change_proposal_revisions: SqlAlchemyRoadmapChangeProposalRevisionRepository
+        self.roadmap_change_applications: SqlAlchemyRoadmapChangeApplicationRepository
+        self.roadmap_change_application_attempts: SqlAlchemyRoadmapChangeApplicationAttemptRepository
+        self.roadmap_target_fences: SqlAlchemyRoadmapTargetFenceRepository
 
     def __enter__(self) -> SqlAlchemyUnitOfWork:
         self._session = self._session_factory()
@@ -123,6 +131,9 @@ class SqlAlchemyUnitOfWork:
         self.decisions = SqlAlchemyDecisionRepository(self._session)
         self.roadmap_change_proposals = SqlAlchemyRoadmapChangeProposalRepository(self._session)
         self.roadmap_change_proposal_revisions = SqlAlchemyRoadmapChangeProposalRevisionRepository(self._session)
+        self.roadmap_change_applications = SqlAlchemyRoadmapChangeApplicationRepository(self._session)
+        self.roadmap_change_application_attempts = SqlAlchemyRoadmapChangeApplicationAttemptRepository(self._session)
+        self.roadmap_target_fences = SqlAlchemyRoadmapTargetFenceRepository(self._session)
         self.prompt_dispatches = SqlAlchemyPromptDispatchRepository(self._session)
         self.prompt_deliveries = SqlAlchemyPromptDeliveryRepository(self._session)
         self.chatgpt_responses = SqlAlchemyImportedChatGptResponseRepository(self._session)
