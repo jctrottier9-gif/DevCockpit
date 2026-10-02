@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import AttentionCenter from './AttentionCenter'
 import Orchestration from './Orchestration'
 
 type LoadState = 'loading' | 'ready' | 'error'
@@ -253,6 +254,15 @@ function App() {
       <section className="panel">
         <p className="eyebrow">DEVCOCKPIT</p>
         <h1>Execution projection</h1>
+        {roadmap && <AttentionCenter
+          projectId={roadmap.project.project_id}
+          onOpenWorkItem={(workItemId) => {
+            setOrchestrationKey(workItemId)
+            window.requestAnimationFrame(() => {
+              document.getElementById('orchestration')?.scrollIntoView({ behavior: 'smooth' })
+            })
+          }}
+        />}
         {roadmap ? (
           <div className="roadmap-summary">
             <div><span>Projet</span><strong>{roadmap.project.project_id}</strong></div>
@@ -352,9 +362,9 @@ function App() {
             <option value="">Choisir un WorkItem</option>
             {pipeline.work_items.map(w => <option key={w.key} value={w.key}>{w.key} · {w.title}</option>)}
           </select></label>
-          {(orchestrationKey || displayedWorkItem?.key) && <Orchestration
+          {(orchestrationKey || displayedWorkItem?.key) && <div id="orchestration"><Orchestration
             key={roadmap.project.project_id + (orchestrationKey || displayedWorkItem?.key)}
-            projectId={roadmap.project.project_id} workItem={orchestrationKey || displayedWorkItem!.key} />}
+            projectId={roadmap.project.project_id} workItem={orchestrationKey || displayedWorkItem!.key} /></div>}
         </>}
         <section className="responses">
           <h2>Réponses ChatGPT importées</h2>
