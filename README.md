@@ -205,6 +205,47 @@ The GET is read-only. The explicit evaluation use case, also called by the bound
 
 A merged PR with sufficiently green delivery CI while the roadmap still says `READY` is projected as `ROADMAP_UPDATE_REQUIRED`. DC-021 does not write the roadmap, merge the PR, rerun CI or start the next WorkItem implicitly.
 
+## Parallel DEV ResourceLocks
+
+DC-052 adds a deterministic conflict gate after the scheduler and DEV-capacity checks. ResourceLocks do not replace `DEPENDS_ON` or `DEVCOCKPIT_MAX_PARALLEL_DEV_EXECUTIONS`.
+
+Conflict surfaces are declared explicitly per WorkItem in the Project configuration. For example:
+
+~~~json
+{
+  "projects": [
+    {
+      "project_id": "DevCockpit",
+      "repository_full_name": "jctrottier9-gif/DevCockpit",
+      "roadmap_issue_number": 1,
+      "resource_locks": {
+        "DC-052": [
+          {"surface": "migration:alembic", "mode": "EXCLUSIVE"},
+          {"surface": "api:contracts", "mode": "SHARED"}
+        ]
+      }
+    }
+  ]
+}
+~~~
+
+Surface names are stable policy keys; common conventions include `migration:...`, `adr:...`, `roadmap:...`, `api:...`, `domain:...` and `file:...`. DevCockpit does not infer authoritative locks from AI analysis.
+
+The compatibility policy is intentionally small: SHARED is compatible only with SHARED; any EXCLUSIVE participant conflicts. Acquisition of every required lock and creation of the initial DEV PromptDispatch happen in the same SQLite `BEGIN IMMEDIATE` UnitOfWork. A failed lock acquisition creates no initial prompt and does not consume a DEV slot.
+
+Persisted locks use ACTIVE / RELEASED / STALE state, optimistic versions and renewable leases. `DEVCOCKPIT_RESOURCE_LOCK_LEASE_SECONDS` defaults to 900 seconds. A restart preserves active locks. GitHub-active executions can transfer lease ownership to the new process; uncertain GitHub evidence keeps an expired lock conservative; determinate stale work can be recovered without duplicating its initial PromptDispatch.
+
+The parallel execution API projects required/held surfaces, conflict owner/session, requested and held modes, lock state and recovery state:
+
+~~~text
+GET  /api/projects/{project_id}/executions
+POST /api/projects/{project_id}/executions/evaluate
+~~~
+
+React is projection-only. Compatibility, acquisition, release and recovery remain backend rules. The legacy single-execution mutation endpoint delegates to the same ResourceLock-aware gate.
+
+See `docs/architecture/ADR-0010-resource-locks-and-conflict-surfaces.md`.
+
 ## WebSocket companion transport
 
 DC-011 exposes the local companion endpoint:
@@ -391,6 +432,9 @@ DEVCOCKPIT_DATABASE_URL
 DEVCOCKPIT_PROJECTS_CONFIG_PATH
 DEVCOCKPIT_GITHUB_TOKEN (optional)
 DEVCOCKPIT_GITHUB_TIMEOUT_SECONDS
+DEVCOCKPIT_EXECUTION_POLL_SECONDS
+DEVCOCKPIT_MAX_PARALLEL_DEV_EXECUTIONS
+DEVCOCKPIT_RESOURCE_LOCK_LEASE_SECONDS
 ~~~
 
 ## PromptDispatch and PromptDelivery
