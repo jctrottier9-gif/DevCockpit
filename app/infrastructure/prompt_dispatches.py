@@ -10,8 +10,12 @@ from sqlalchemy.orm import Mapped, Session, mapped_column
 from app.domain.prompt_dispatch import PromptDispatch
 from app.infrastructure.chatgpt_responses import SqlAlchemyImportedChatGptResponseRepository
 from app.infrastructure.database import Base
-from app.infrastructure.handoffs import SqlAlchemyHandoffRepository, SqlAlchemyDecisionRepository
+from app.infrastructure.handoffs import SqlAlchemyDecisionRepository, SqlAlchemyHandoffRepository
 from app.infrastructure.prompt_deliveries import SqlAlchemyPromptDeliveryRepository
+from app.infrastructure.roadmap_changes import (
+    SqlAlchemyRoadmapChangeProposalRepository,
+    SqlAlchemyRoadmapChangeProposalRevisionRepository,
+)
 
 
 class PromptDispatchRecord(Base):
@@ -72,10 +76,14 @@ class SqlAlchemyPromptDispatchRepository:
         return _domain_from_record(record) if record is not None else None
 
     def list_for_work_item(self, project_id, work_item_id):
-        records = self._session.scalars(select(PromptDispatchRecord).where(
-            PromptDispatchRecord.project_id == project_id,
-            PromptDispatchRecord.work_item_id == work_item_id,
-        ).order_by(PromptDispatchRecord.created_at, PromptDispatchRecord.dispatch_id))
+        records = self._session.scalars(
+            select(PromptDispatchRecord)
+            .where(
+                PromptDispatchRecord.project_id == project_id,
+                PromptDispatchRecord.work_item_id == work_item_id,
+            )
+            .order_by(PromptDispatchRecord.created_at, PromptDispatchRecord.dispatch_id)
+        )
         return [_domain_from_record(record) for record in records]
 
     def list_prepared(self) -> list[PromptDispatch]:
@@ -94,20 +102,27 @@ class SqlAlchemyUnitOfWork:
         self.prompt_dispatches: SqlAlchemyPromptDispatchRepository
         self.prompt_deliveries: SqlAlchemyPromptDeliveryRepository
         self.chatgpt_responses: SqlAlchemyImportedChatGptResponseRepository
+        self.handoffs: SqlAlchemyHandoffRepository
+        self.decisions: SqlAlchemyDecisionRepository
+        self.roadmap_change_proposals: SqlAlchemyRoadmapChangeProposalRepository
+        self.roadmap_change_proposal_revisions: SqlAlchemyRoadmapChangeProposalRevisionRepository
 
     def __enter__(self) -> SqlAlchemyUnitOfWork:
         self._session = self._session_factory()
-        # Reserve SQLite's writer before reading policy: poller, handoff and
-        # delivery mutations serialize across processes, not just Python threads.
-        if self._session.get_bind().dialect.name == 'sqlite':
+        # Reserve SQLite's writer before reading policy. Handoff transfer,
+        # proposal revision and the execution poller therefore share one writer
+        # boundary and cannot expose an "unblocked" gap.
+        if self._session.get_bind().dialect.name == "sqlite":
             try:
-                self._session.execute(text('BEGIN IMMEDIATE'))
+                self._session.execute(text("BEGIN IMMEDIATE"))
             except Exception:
                 self._session.close()
                 self._session = None
                 raise
         self.handoffs = SqlAlchemyHandoffRepository(self._session)
         self.decisions = SqlAlchemyDecisionRepository(self._session)
+        self.roadmap_change_proposals = SqlAlchemyRoadmapChangeProposalRepository(self._session)
+        self.roadmap_change_proposal_revisions = SqlAlchemyRoadmapChangeProposalRevisionRepository(self._session)
         self.prompt_dispatches = SqlAlchemyPromptDispatchRepository(self._session)
         self.prompt_deliveries = SqlAlchemyPromptDeliveryRepository(self._session)
         self.chatgpt_responses = SqlAlchemyImportedChatGptResponseRepository(self._session)
