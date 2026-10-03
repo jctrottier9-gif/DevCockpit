@@ -6,6 +6,8 @@ from enum import StrEnum
 from typing import AbstractSet, Callable, Protocol, Self
 from uuid import UUID
 
+from app.application.conversation_bindings import ConversationRoutingSnapshot
+from app.domain.conversation_binding import ConversationBinding, ConversationBindingState
 from app.domain.prompt_delivery import PromptDelivery
 from app.domain.prompt_dispatch import PromptDispatch, PromptDispatchStatus
 
@@ -24,9 +26,14 @@ class PromptDeliveryRepository(Protocol):
     def save(self, delivery: PromptDelivery) -> None: ...
 
 
+class ConversationBindingReadRepository(Protocol):
+    def get_by_agent_session(self, agent_session: str) -> ConversationBinding | None: ...
+
+
 class PromptDeliveryUnitOfWork(Protocol):
     prompt_dispatches: PromptDispatchReadRepository
     prompt_deliveries: PromptDeliveryRepository
+    conversation_bindings: ConversationBindingReadRepository
 
     def __enter__(self) -> Self: ...
 
@@ -47,6 +54,7 @@ class OutboundPromptDelivery:
     session: str
     text: str
     attempt_count: int
+    routing: ConversationRoutingSnapshot | None
 
 
 class AcknowledgementResult(StrEnum):
@@ -75,6 +83,22 @@ class PromptRedeliveryRequiresAcknowledgement(PromptRedeliveryError):
     code = "PROMPT_DELIVERY_NOT_ACKNOWLEDGED"
 
 
+class PromptRedeliveryBindingInvalidated(PromptRedeliveryError):
+    code = "CONVERSATION_BINDING_INVALIDATED"
+
+
+def _routing_snapshot(binding: ConversationBinding | None) -> ConversationRoutingSnapshot | None:
+    if binding is None:
+        return None
+    if binding.state is ConversationBindingState.INVALIDATED:
+        return None
+    return ConversationRoutingSnapshot(
+        binding_version=binding.version,
+        conversation_id=binding.conversation_id,
+        canonical_url=binding.canonical_url,
+    )
+
+
 def prepare_prompt_deliveries_for_send(
     *,
     uow_factory: UnitOfWorkFactory,
@@ -86,6 +110,10 @@ def prepare_prompt_deliveries_for_send(
     outbound: list[OutboundPromptDelivery] = []
     with uow_factory() as uow:
         for dispatch in uow.prompt_dispatches.list_prepared():
+            binding = uow.conversation_bindings.get_by_agent_session(dispatch.agent_session)
+            if binding is not None and binding.state is ConversationBindingState.INVALIDATED:
+                continue
+
             delivery = uow.prompt_deliveries.get_by_dispatch_id(dispatch.dispatch_id)
             if delivery is None:
                 delivery = PromptDelivery.create(dispatch_id=dispatch.dispatch_id, now=now)
@@ -102,6 +130,7 @@ def prepare_prompt_deliveries_for_send(
                     session=dispatch.agent_session,
                     text=dispatch.prompt_text,
                     attempt_count=delivery.attempt_count,
+                    routing=_routing_snapshot(binding),
                 )
             )
 
@@ -124,6 +153,10 @@ def prepare_acknowledged_prompt_redelivery(
         if dispatch.status is not PromptDispatchStatus.PREPARED:
             raise PromptRedeliveryDispatchNotPrepared(str(dispatch_id))
 
+        binding = uow.conversation_bindings.get_by_agent_session(dispatch.agent_session)
+        if binding is not None and binding.state is ConversationBindingState.INVALIDATED:
+            raise PromptRedeliveryBindingInvalidated(dispatch.agent_session)
+
         delivery = uow.prompt_deliveries.get_by_dispatch_id(dispatch.dispatch_id)
         if delivery is None:
             raise PromptRedeliveryDeliveryNotFound(str(dispatch_id))
@@ -140,6 +173,7 @@ def prepare_acknowledged_prompt_redelivery(
             session=dispatch.agent_session,
             text=dispatch.prompt_text,
             attempt_count=delivery.attempt_count,
+            routing=_routing_snapshot(binding),
         )
 
 
