@@ -736,6 +736,20 @@ def create_app(
                         dispatch = delivery_uow.prompt_dispatches.get(delivery.dispatch_id)
                         if dispatch is None or dispatch.status != PromptDispatchStatus.PREPARED:
                             continue
+                        binding = delivery_uow.conversation_bindings.get_by_agent_session(
+                            delivery.session
+                        )
+                        if binding is not None and binding.state.value == "INVALIDATED":
+                            continue
+                        if binding is None and delivery.routing is not None:
+                            continue
+                        if binding is not None and (
+                            delivery.routing is None
+                            or binding.version != delivery.routing.binding_version
+                            or binding.conversation_id != delivery.routing.conversation_id
+                            or binding.canonical_url != delivery.routing.canonical_url
+                        ):
+                            continue
                         if not await connection_manager.send_json(build_prompt_message(delivery)):
                             raise RuntimeError("companion disconnected during prompt send")
                         sent_on_connection.add(delivery.delivery_id)
