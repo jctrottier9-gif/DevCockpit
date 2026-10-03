@@ -202,6 +202,8 @@ Before marking development complete, use observable evidence appropriate to the 
 
 CI failures normally route back to the same logical DEV session. Do not create a new session merely because CI failed.
 
+A DEVELOPING work item may also be reactivated by the stale-DEV watchdog when an initial DEV prompt was already acknowledged by Firefox and the associated GitHub branch has shown no new commit activity for the configured inactivity window. The watchdog must reuse the same logical DEV session, must be idempotent for the same stagnant branch SHA/activity evidence, and must not infer completion or start another WorkItem.
+
 A normal implementation DEV turn ends after the PR is complete and auto-merge is armed when permitted. DevCockpit, not the DEV agent, observes CI/merge from that point. It reactivates the same DEV session automatically for actionable CI failures and, after a merged green delivery, for deterministic roadmap reconciliation.
 
 ---
@@ -325,6 +327,7 @@ Rules:
 - a GitHub API outage must not corrupt local state;
 - webhook/event replay must be idempotent;
 - polling may be used initially when simpler, provided state derivation remains deterministic;
+- stale-DEV detection must use GitHub branch activity evidence plus persisted prompt-delivery timing, never ChatGPT UI claims;
 - structural roadmap writeback must be explicit and protected against stale updates;
 - deterministic post-merge delivery reconciliation is a distinct DEV-mediated path: after rereading current GitHub state, the same DEV session may directly update the roadmap statuses and next READY item without human confirmation; it must fail closed instead of overwriting concurrent or structurally incompatible roadmap changes.
 
