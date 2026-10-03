@@ -116,7 +116,7 @@ def test_prompt_echo_is_rejected_before_persistence(tmp_path: Path) -> None:
     try:
         echoed_values = (
             dispatch.prompt_text,
-            "  " + dispatch.prompt_text.replace(" ", "\\n") + "  ",
+            "  " + dispatch.prompt_text.replace(" ", "\n") + "  ",
             "**Implement** response return",
         )
         for echoed in echoed_values:
