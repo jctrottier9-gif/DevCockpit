@@ -9,6 +9,7 @@ from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.domain.prompt_dispatch import PromptDispatch
 from app.infrastructure.chatgpt_responses import SqlAlchemyImportedChatGptResponseRepository
+from app.infrastructure.conversation_bindings import SqlAlchemyConversationBindingRepository
 from app.infrastructure.database import Base
 from app.infrastructure.handoffs import SqlAlchemyDecisionRepository, SqlAlchemyHandoffRepository
 from app.infrastructure.prompt_deliveries import SqlAlchemyPromptDeliveryRepository
@@ -109,6 +110,7 @@ class SqlAlchemyUnitOfWork:
         self.prompt_dispatches: SqlAlchemyPromptDispatchRepository
         self.prompt_deliveries: SqlAlchemyPromptDeliveryRepository
         self.chatgpt_responses: SqlAlchemyImportedChatGptResponseRepository
+        self.conversation_bindings: SqlAlchemyConversationBindingRepository
         self.handoffs: SqlAlchemyHandoffRepository
         self.decisions: SqlAlchemyDecisionRepository
         self.resource_locks: SqlAlchemyResourceLockRepository
@@ -143,6 +145,7 @@ class SqlAlchemyUnitOfWork:
         self.prompt_dispatches = SqlAlchemyPromptDispatchRepository(self._session)
         self.prompt_deliveries = SqlAlchemyPromptDeliveryRepository(self._session)
         self.chatgpt_responses = SqlAlchemyImportedChatGptResponseRepository(self._session)
+        self.conversation_bindings = SqlAlchemyConversationBindingRepository(self._session)
         return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
