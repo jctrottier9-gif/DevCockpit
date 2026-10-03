@@ -28,6 +28,14 @@
     }
   }
 
+  function isNewChatUrl(rawUrl) {
+    if (!isSupportedChatGptUrl(rawUrl)) {
+      return false;
+    }
+    const url = new URL(rawUrl);
+    return url.pathname === "/" || url.pathname === "";
+  }
+
   function conversationIdentity(rawUrl) {
     if (!isSupportedChatGptUrl(rawUrl)) {
       return null;
@@ -185,7 +193,7 @@
       const tabs = await this._tabs();
       if (cached?.kind === ROUTING_KIND.PROVISIONAL && Number.isInteger(cached.tab_id)) {
         const existing = tabs.find(
-          (tab) => tab.id === cached.tab_id && isSupportedChatGptUrl(tab.url),
+          (tab) => tab.id === cached.tab_id && isNewChatUrl(tab.url),
         );
         if (existing) {
           return {
@@ -201,7 +209,7 @@
       if (!Number.isInteger(created?.id)) {
         throw new RoutingError("tab_create_failed");
       }
-      if (created.url && !isSupportedChatGptUrl(created.url)) {
+      if (created.url && !isNewChatUrl(created.url)) {
         throw new RoutingError("created_tab_target_mismatch");
       }
       await this.routingStore.setProvisional(session, created.id);
@@ -225,7 +233,7 @@
         if (
           cached?.kind !== ROUTING_KIND.PROVISIONAL ||
           cached.tab_id !== tabId ||
-          !isSupportedChatGptUrl(tab.url)
+          !isNewChatUrl(tab.url)
         ) {
           throw new RoutingError("provisional_target_changed");
         }
@@ -249,6 +257,7 @@
     NEW_CHAT_URL,
     RoutingError,
     isSupportedChatGptUrl,
+    isNewChatUrl,
     conversationIdentity,
     ConversationRouter,
   };
