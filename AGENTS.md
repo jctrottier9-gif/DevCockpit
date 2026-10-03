@@ -32,7 +32,7 @@ Durable product rules:
 
 - GitHub and the canonical roadmap are authoritative for delivery state.
 - ChatGPT conversations are work surfaces, never the source of truth.
-- DevCockpit may prepare DEV prompts automatically when deterministic rules authorize them, but the user explicitly chooses when to send them.
+- DevCockpit may prepare DEV prompts automatically when deterministic rules authorize them. In the currently delivered companion, the user explicitly chooses when to send them; ADR-0014 accepts automatic routing/send of an already-authorized PromptDispatch after DC-063B.
 - A READY architecture gate is never sufficient authority to create its ARCH PromptDispatch; explicit human authorization in DevCockpit is required first.
 - The Firefox extension is a thin transport/UI adapter, not a product-state authority.
 - CI, PR and merge evidence come from GitHub, not from statements made in ChatGPT.
@@ -41,7 +41,7 @@ Durable product rules:
 - No background scraping or continuous monitoring of ChatGPT conversations is part of the canonical design.
 - Importing a ChatGPT response back into DevCockpit must be an explicit user action.
 
-Do not introduce autonomous ChatGPT sending or hidden conversation monitoring without an explicit roadmap and architecture decision.
+Do not introduce ChatGPT sending beyond the explicit ADR-0014/DC-063A/DC-063B boundaries, and do not introduce hidden conversation monitoring.
 
 ---
 
@@ -104,6 +104,8 @@ Keep the following concepts distinct:
 - `Execution`: one attempt/run of a WorkItem by a role.
 - `AgentSession`: logical ChatGPT conversation identity, e.g. `RessourcePlanner:DEV:502A`.
 - `PromptDispatch`: a prompt prepared for delivery to the Firefox extension.
+- `ConversationBinding`: target durable mapping from one AgentSession to one opaque/canonical ChatGPT conversation identity; accepted by ADR-0014 and implemented only when DC-063A lands.
+- `ChatGptPromptSend`: target browser-to-ChatGPT send state/projection, separate from PromptDelivery; accepted by ADR-0014 and implemented only when DC-063B lands.
 - `ExternalEvent`: an observable GitHub/CI event.
 - `Decision`: an explicit imported product/architecture decision.
 - `RoadmapChangeProposal`: a local, revisioned proposal for an exact roadmap mutation; it is never canonical merely because it exists or is previewed.
@@ -135,7 +137,7 @@ DevCockpit may persist richer metadata internally, including:
 - delivery status;
 - timestamps.
 
-Do not add transport fields to the canonical outbound payload unless the extension contract is deliberately versioned.
+Do not add transport fields to the canonical outbound payload unless the extension contract is deliberately versioned. ADR-0014 accepts a protocol-v2 envelope for DC-063A/DC-063B that may add a routing snapshot while keeping the functional `session` + `text` payload unchanged; protocol v1 remains the delivered contract until that implementation exists.
 
 Recommended logical session convention:
 
@@ -162,9 +164,10 @@ The Firefox extension should remain deliberately small:
 - maintain the WebSocket connection;
 - receive prompt payloads;
 - show a queue;
-- let the user choose a prompt;
-- insert/send the chosen prompt in ChatGPT only on explicit user action;
-- later, allow the user to explicitly return the selected ChatGPT response to DevCockpit.
+- let the user choose a prompt under the currently delivered manual companion;
+- until DC-063B, insert/send the chosen prompt in ChatGPT only on explicit user action;
+- after DC-063B, route and send only already-authorized PromptDispatch records automatically, using exact ConversationBinding identity, per-session serialization and fail-stop send idempotence from ADR-0014;
+- allow the user to explicitly return the selected ChatGPT response to DevCockpit; response return remains manual even after automatic send.
 
 Do not:
 
@@ -202,7 +205,7 @@ Before marking development complete, use observable evidence appropriate to the 
 
 CI failures normally route back to the same logical DEV session. Do not create a new session merely because CI failed.
 
-A DEVELOPING work item may also be reactivated by the stale-DEV watchdog when an initial DEV prompt was already acknowledged by Firefox and the associated GitHub branch has shown no new commit activity for the configured inactivity window. The watchdog must reuse the same logical DEV session, must be idempotent for the same stagnant branch SHA/activity evidence, and must not infer completion or start another WorkItem.
+A DEVELOPING work item may also be reactivated by the stale-DEV watchdog when the initial prompt has crossed the strongest implemented send boundary and the associated GitHub branch has shown no new commit activity for the configured inactivity window. Until DC-063B that boundary is Firefox PromptDelivery.ACKNOWLEDGED; after DC-063B it must be initial ChatGptPromptSend.SENT_CONFIRMED with confirmed_at as the relevant lower bound. The watchdog must reuse the same logical DEV session, must be idempotent for the same stagnant branch SHA/activity evidence, and must not infer completion or start another WorkItem.
 
 A normal implementation DEV turn ends after the PR is complete and auto-merge is armed when permitted. DevCockpit, not the DEV agent, observes CI/merge from that point. It reactivates the same DEV session automatically for actionable CI failures and, after a merged green delivery, for deterministic roadmap reconciliation.
 
@@ -327,7 +330,7 @@ Rules:
 - a GitHub API outage must not corrupt local state;
 - webhook/event replay must be idempotent;
 - polling may be used initially when simpler, provided state derivation remains deterministic;
-- stale-DEV detection must use GitHub branch activity evidence plus persisted prompt-delivery timing, never ChatGPT UI claims;
+- stale-DEV detection must use GitHub branch activity evidence plus the strongest persisted send timing available: PromptDelivery acknowledgement before DC-063B, then ChatGptPromptSend.SENT_CONFIRMED/confirmed_at after DC-063B; never infer progress from ChatGPT prose;
 - structural roadmap writeback must be explicit and protected against stale updates;
 - deterministic post-merge delivery reconciliation is a distinct DEV-mediated path: after rereading current GitHub state, the same DEV session may directly update the roadmap statuses and next READY item without human confirmation; it must fail closed instead of overwriting concurrent or structurally incompatible roadmap changes.
 
@@ -357,8 +360,8 @@ Extension validation should include:
 - manifest validity;
 - build/lint/typecheck if introduced;
 - WebSocket receive/queue behavior;
-- explicit user-triggered send behavior;
-- reconnect/idempotency behavior.
+- current explicit user-triggered send behavior and, once DC-063B is implemented, ADR-0014 automatic-send state/barrier/confirmation behavior;
+- reconnect/idempotency behavior, including no automatic resend after ambiguous SEND_ARMED outcomes.
 
 Run the smallest relevant tests first, then the broader validation required by the change.
 

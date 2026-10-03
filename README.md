@@ -2,13 +2,13 @@
 
 DevCockpit is a local development-orchestration cockpit designed to reduce the manual coordination needed between a Product Owner, an Architect, one or more Developers, GitHub and ChatGPT.
 
-The first goal is not full autonomy. DevCockpit prepares the right next prompt, routes it to a Firefox extension, observes GitHub/CI evidence, and proposes the next action while the user remains the explicit gate for sending prompts to ChatGPT.
+The first goal is not full autonomy. DevCockpit prepares the right next prompt, routes it to a Firefox extension, observes GitHub/CI evidence, and proposes the next action. The delivered companion still requires an explicit user Send gesture; ADR-0014 accepts automatic routing/send after the prompt has already crossed DevCockpit's authorization gates, to be implemented by DC-063A/DC-063B.
 
 ## Product principles
 
 - GitHub and the canonical roadmap are the source of truth for delivery state.
 - ChatGPT is a work surface, not the source of truth.
-- Prompt sending is user-triggered.
+- Prompt authorization remains DevCockpit-owned; the delivered companion is still user-triggered for Send, while ADR-0014 accepts automatic Send only for already-authorized PromptDispatch records after DC-063B.
 - The Firefox extension is a thin companion, not an orchestration engine.
 - CI/PR/merge evidence is derived from GitHub.
 - Orchestration is deterministic whenever possible.
@@ -33,6 +33,8 @@ extension/                 Firefox queue / explicit send + selected response ret
 ~~~
 
 PromptDispatch remains transport-independent. PromptDelivery is separate persisted transport truth and never means that a prompt was sent to ChatGPT.
+
+ASTRA-063 has accepted the next architecture step, documented by ADR-0014: durable `ConversationBinding`, exact conversation routing, a separate `ChatGptPromptSend` state machine and fail-stop automatic send. These are target contracts only. DC-063A/DC-063B are not yet delivered, so the operational companion remains manual.
 
 ## Prerequisites
 
@@ -348,7 +350,7 @@ The functional prompt payload remains exactly:
 }
 ~~~
 
-For reliable ACK/replay it is carried inside protocol version 1:
+For reliable ACK/replay it is carried inside the currently delivered protocol version 1:
 
 ~~~json
 {
@@ -379,6 +381,8 @@ If a connection drops before ACK, the same logical delivery and the same deliver
 A PromptDispatch CANCELLED is not sent as new work and is not replayed. No remote-revocation protocol is invented for a message that may already have reached the extension.
 
 Control messages are typed. Version 1 supports ack, ping and chatgpt_response inbound, with pong, chatgpt_response_ack and explicit error responses. A returned response is correlated by delivery_id to its source PromptDelivery/PromptDispatch and the received session must exactly match the source AgentSession.
+
+ADR-0014 accepts a deliberately versioned protocol v2 for DC-063A/DC-063B. It may add an exact routing snapshot for a durable ConversationBinding and durable `chatgpt_send_status` events while preserving the functional `session` + `text` payload. A v1 extension must never be silently treated as auto-send-v2 compatible.
 
 The transport bounds inbound messages to 512 KiB. Oversize responses fail explicitly and are never silently truncated. Full prompt/response bodies and credentials are not logged.
 
@@ -454,13 +458,15 @@ POST /api/prompt-dispatches/{dispatch_id}/redeliver
 
 The command fails explicitly when no companion is connected, when the dispatch is no longer PREPARED, or when the delivery has never been acknowledged.
 
-### Explicit send to ChatGPT
+### Current explicit send to ChatGPT
 
-Nothing is injected or sent when a prompt arrives. The user must open the intended ChatGPT conversation and click **Envoyer** on the chosen queue entry. The companion then targets only the active `chatgpt.com` or `chat.openai.com` tab.
+Until DC-063B is delivered, nothing is injected or sent when a prompt arrives. The user must open the intended ChatGPT conversation and click **Envoyer** on the chosen queue entry. The companion then targets only the active `chatgpt.com` or `chat.openai.com` tab.
 
 All ChatGPT DOM knowledge is isolated in `extension/src/chatgpt-page-adapter.js`. The adapter uses narrowly scoped composer/send selectors and fails closed when the composer or send button is missing, disabled or ambiguous. It never falls back to the first textarea or first button. When injection/send fails, the prompt remains available for retry. When the page reports a successful send, the entry is removed from the active queue; if local cleanup then fails, `SEND_REQUESTED` remains visible so the user can verify the conversation before retrying rather than blindly duplicating a send.
 
 The ChatGPT UI is an external dependency and its DOM can change. A DOM change may require updating the isolated adapter selectors. DC-030 adds no continuous scraping or generation monitoring: after a successful explicit send, the companion retains a SentPromptContext containing the delivery_id/session. The user later clicks **Retourner une réponse**, the adapter performs one one-shot scan of assistant-role elements, the user explicitly chooses one candidate and confirms it, and a PendingResponse is persisted before WebSocket transmission. The same response_id is replayed after reconnect until chatgpt_response_ack is received.
+
+ADR-0014 changes only the future outbound Send gesture. DC-063A will establish durable ConversationBinding/routing without auto-send; DC-063B will add per-session FIFO, readiness checks, a durable SEND_ARMED barrier, targeted send confirmation, bounded safe retry and AMBIGUOUS fail-stop recovery. Explicit response return remains unchanged.
 
 ### Manual smoke procedure
 
@@ -625,7 +631,7 @@ PromptDelivery + WebSocket
         ↓
 Firefox extension
         ↓
-user clicks Send
+user clicks Send (current; automatic after DC-063B for already-authorized dispatches)
         ↓
 ChatGPT role session
         ↓
@@ -662,7 +668,7 @@ The canonical roadmap lives in GitHub issue #1 and contains a machine-readable C
 
 ## Architecture decisions
 
-Durable decisions live under docs/architecture/, including authority boundaries, orchestration identity, the manual ChatGPT companion/WebSocket protocol, explicit Alembic schema migrations, explicit Handoff/Decision semantics, and ADR-0008 for revisioned roadmap proposals plus explicit GitHub writeback.
+Durable decisions live under docs/architecture/, including authority boundaries, orchestration identity, the currently manual ChatGPT companion/WebSocket protocol, explicit Alembic schema migrations, explicit Handoff/Decision semantics, human architecture-gate authorization, stale-DEV recovery, and ADR-0014 for the accepted automatic-routing/ConversationBinding/fail-stop-send target.
 
 ## Development workflow
 
@@ -819,7 +825,7 @@ Structural roadmap changes still use the proposal/decision path. A newly READY a
 
 ## Stale DEV watchdog
 
-DevCockpit can prepare a same-session recovery prompt when a DEV WorkItem is still `DEVELOPING`, its initial prompt has already been acknowledged by Firefox, and the strongly associated GitHub branch has not advanced for the configured inactivity window.
+DevCockpit can prepare a same-session recovery prompt when a DEV WorkItem is still `DEVELOPING`, its initial prompt has crossed the strongest currently implemented send boundary, and the strongly associated GitHub branch has not advanced for the configured inactivity window. Today that lower bound is Firefox acknowledgement; ADR-0014 moves it to `ChatGptPromptSend.SENT_CONFIRMED` / `confirmed_at` when DC-063B is delivered.
 
 The default is 60 minutes:
 

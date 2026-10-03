@@ -52,7 +52,7 @@ The only supported creation path is an explicit human authorization command from
 - creates the ARCH prompt idempotently;
 - records authorization durably through the resulting PromptDispatch identity.
 
-Sending that prepared prompt into ChatGPT remains a separate explicit user action at the Firefox companion boundary.
+Under the currently delivered companion, sending that prepared prompt into ChatGPT remains a separate explicit user action at the Firefox companion boundary. ADR-0014 accepts automatic routing/send of an already-authorized PromptDispatch after DC-063B; that later transport automation does not change this authorization boundary.
 
 ## Consequences
 
@@ -76,3 +76,20 @@ Rejected because READY expresses canonical ordering/eligibility, not human autho
 ### Treat Firefox send confirmation as architecture authorization
 
 Rejected because the authorization boundary belongs to DevCockpit before the ARCH PromptDispatch exists; the companion remains a thin transport/UI adapter.
+
+
+## ASTRA-063 amendment — authorization and sending are separate gates
+
+ADR-0014 makes the distinction explicit:
+
+~~~text
+architecture gate authorization
+= always human before PromptDispatch
+
+sending an already-authorized PromptDispatch
+= automatic only after DC-063B
+~~~
+
+A READY architecture gate therefore remains only eligible. Polling, dependency satisfaction, scheduler state, CI/merge evidence, browser state and ChatGPT state cannot create its ARCH PromptDispatch.
+
+Once the human authorization command has created that PromptDispatch, DC-063B may automate the transport gesture without asking for a second Send confirmation. The browser still cannot infer, create or broaden ARCH authorization.

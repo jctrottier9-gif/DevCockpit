@@ -14,6 +14,10 @@ Current decisions:
 - [ADR-0008 — Explicit roadmap change proposals and GitHub writeback](ADR-0008-explicit-roadmap-change-proposals-and-github-writeback.md)
 - [ADR-0009 — Canonical dependencies and deterministic scheduler](ADR-0009-canonical-dependencies-and-deterministic-scheduler.md)
 - [ADR-0010 — ResourceLocks and deterministic conflict surfaces](ADR-0010-resource-locks-and-conflict-surfaces.md)
+- [ADR-0011 — DEV GitHub handoff and explicit human authorization of architecture gates](ADR-0011-dev-handoff-and-human-architecture-gates.md)
+- [ADR-0012 — Automatic DEV roadmap reconciliation](ADR-0012-automatic-dev-roadmap-reconciliation.md)
+- [ADR-0013 — Stale DEV watchdog and bounded ChatGPT retry](ADR-0013-stale-dev-watchdog-and-bounded-retry.md)
+- [ADR-0014 — Automatic ChatGPT routing, durable ConversationBinding, and fail-stop send idempotence](ADR-0014-automatic-chatgpt-routing-and-send-idempotence.md)
 
 ## Rule
 

@@ -19,8 +19,8 @@ DevCockpit derives branch activity from strongly associated GitHub branch eviden
 - a single strongly associated branch is ahead of `main`;
 - GitHub exposes the last commit activity timestamp for that branch;
 - the initial DEV PromptDispatch already exists;
-- its PromptDelivery has been ACKNOWLEDGED by Firefox;
-- the newest of branch activity, initial prompt creation and Firefox acknowledgement is older than `DEVCOCKPIT_DEV_STALE_AFTER_SECONDS`.
+- until DC-063B, its PromptDelivery has been ACKNOWLEDGED by Firefox;
+- until DC-063B, the newest of branch activity, initial prompt creation and Firefox acknowledgement is older than `DEVCOCKPIT_DEV_STALE_AFTER_SECONDS`.
 
 The default inactivity threshold is 3600 seconds.
 
@@ -39,3 +39,20 @@ A retry is allowed only when the current tracked turn contains an explicit failu
 ## Consequences
 
 Interrupted DEV work can recover without waiting many hours for manual branch inspection. Stale branch age alone cannot immediately trigger a watchdog right after a fresh prompt delivery. Each stagnant GitHub head produces at most one logical watchdog follow-up. Explicit ChatGPT transport failures can self-recover without duplicate prompts. GitHub remains authoritative for software-delivery progress.
+
+
+## ASTRA-063 amendment — stale timer moves to confirmed ChatGPT send
+
+ADR-0014 accepts a stronger browser-to-ChatGPT send state. Once DC-063B is delivered, PromptDelivery.ACKNOWLEDGED is no longer the lower bound for stale-DEV timing because it proves only that Firefox persisted the prompt.
+
+The post-DC-063B rule is:
+
+~~~text
+initial ChatGptPromptSend == SENT_CONFIRMED
+and
+reference time includes ChatGptPromptSend.confirmed_at
+~~~
+
+ROUTING, WAITING_READY, RETRYABLE_FAILURE or a merely ACKNOWLEDGED PromptDelivery must not start the DEV inactivity window. This prevents the watchdog from declaring a DEV stagnant while the prompt is still blocked before ChatGPT actually receives it.
+
+Until DC-063B implements ChatGptPromptSend, the existing ACK-based watchdog remains the delivered behavior. The migration to confirmed_at belongs to DC-063B and must preserve the existing same-session/idempotency guarantees.

@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026-10-01
 - Amended: 2026-10-01 by DC-011 protocol framing; 2026-10-01 by DC-012 local acceptance boundary; 2026-10-01 by DC-030 explicit response return
+- Superseded in part: 2026-10-03 by ADR-0014 for the explicit user Send gesture
 
 ## Context
 
@@ -147,3 +148,23 @@ The DC-011 endpoint is intentionally unauthenticated only for the current truste
 The MVP can provide reliable prompt delivery without OpenAI API billing or automated multi-agent execution.
 
 DC-012 can implement the Firefox queue against a stable versioned protocol without redesigning delivery identity. DC-030 can later add explicit response return as a separate typed message and domain behavior.
+
+
+## ASTRA-063 amendment — partially superseded by ADR-0014
+
+ADR-0014 accepts automatic routing and automatic sending for a PromptDispatch that DevCockpit has already authorized and created. This supersedes only the requirement in this ADR that the user explicitly chooses/clicks Send for every prompt.
+
+The currently delivered product remains manual until DC-063B is implemented. Nothing in ADR-0014 retroactively changes the behavior of the existing protocol-v1 companion.
+
+The following decisions from this ADR remain in force:
+
+- PromptDispatch and PromptDelivery are distinct state machines.
+- PromptDelivery.ACKNOWLEDGED means durable Firefox acceptance, not “sent to ChatGPT”.
+- delivery_id is stable across reconnect/replay.
+- the Firefox queue is persisted before ACK.
+- the companion is not authoritative for roadmap, WorkItem, CI, PR, ResourceLock or product decisions.
+- ChatGPT response return remains an explicit user action.
+- no continuous response scraping/monitoring is introduced.
+- DOM validation remains narrow and fail-closed.
+
+ADR-0014 adds a separate ChatGptPromptSend state machine, durable ConversationBinding, protocol-v2 routing context and fail-stop send idempotence. Those target semantics become operational only through DC-063A/DC-063B.
