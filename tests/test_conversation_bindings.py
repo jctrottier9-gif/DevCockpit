@@ -3,6 +3,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from alembic import command
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import IntegrityError
 
@@ -21,7 +22,7 @@ from app.domain.conversation_binding import (
     ConversationBindingState,
     normalize_chatgpt_conversation_url,
 )
-from app.infrastructure.database import build_engine, build_session_factory, upgrade_database
+from app.infrastructure.database import build_alembic_config, build_engine, build_session_factory, upgrade_database
 from app.infrastructure.prompt_dispatches import SqlAlchemyUnitOfWork
 
 
@@ -107,6 +108,19 @@ def test_migration_0008_preserves_existing_data_and_is_reversible(tmp_path: Path
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0008_conversation_binding"
         assert connection.execute(text("PRAGMA foreign_key_check")).all() == []
     engine.dispose()
+
+    command.downgrade(build_alembic_config(settings), "0007_resource_locks")
+    downgraded_engine = build_engine(settings)
+    assert "conversation_bindings" not in inspect(downgraded_engine).get_table_names()
+    with downgraded_engine.connect() as connection:
+        assert connection.execute(
+            text("SELECT prompt_text FROM prompt_dispatches WHERE dispatch_id=:id"),
+            {"id": dispatch_id},
+        ).scalar_one() == "historical"
+        assert connection.execute(
+            text("SELECT version_num FROM alembic_version")
+        ).scalar_one() == "0007_resource_locks"
+    downgraded_engine.dispose()
 
 
 def test_binding_persists_reconstructs_and_routes_after_restart(tmp_path: Path) -> None:
