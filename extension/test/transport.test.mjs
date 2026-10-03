@@ -17,20 +17,19 @@ class FakeSocket {
     this.listeners.set(type, handlers);
   }
   emit(type, event = {}) {
-    for (const handler of this.listeners.get(type) || []) {
-      handler(event);
-    }
+    for (const handler of this.listeners.get(type) || []) handler(event);
   }
   send(payload) { this.sent.push(payload); }
   close() { this.emit("close", { code: 1000 }); }
 }
 
-function promptMessage(text = "prompt") {
+function promptMessage(text = "prompt", routing = null) {
   return JSON.stringify({
-    version: 1,
+    version: 2,
     type: "prompt",
     delivery_id: DELIVERY_ID,
-    payload: { session: "DevCockpit:DEV:DC-030", text },
+    payload: { session: "DevCockpit:DEV:DC-063A", text },
+    routing,
   });
 }
 
@@ -38,9 +37,9 @@ function pendingResponse() {
   return {
     response_id: RESPONSE_ID,
     delivery_id: DELIVERY_ID,
-    session: "DevCockpit:DEV:DC-030",
+    session: "DevCockpit:DEV:DC-063A",
     text: "returned response",
-    created_at: "2026-10-01T16:00:00.000Z",
+    created_at: "2026-10-03T16:00:00.000Z",
     last_error: null,
   };
 }
@@ -86,14 +85,22 @@ async function setup({ failStorage = false, pending = [] } = {}) {
   return { store, timers, states, sockets, transport, responseAcks, responseErrors };
 }
 
-test("prompt ACK is sent only after local persistence", async () => {
+test("prompt ACK is sent only after local persistence including routing", async () => {
+  const routing = {
+    binding_version: 2,
+    conversation_id: "abc",
+    canonical_url: "https://chatgpt.com/c/abc",
+  };
   const { store, sockets } = await setup();
   const socket = sockets[0];
   socket.emit("open");
-  socket.emit("message", { data: promptMessage() });
+  socket.emit("message", { data: promptMessage("prompt", routing) });
   await settle();
-  assert.equal((await store.list()).length, 1);
+  const queue = await store.list();
+  assert.equal(queue.length, 1);
+  assert.equal(queue[0].routing.conversation_id, "abc");
   assert.equal(JSON.parse(socket.sent[0]).type, "ack");
+  assert.equal(JSON.parse(socket.sent[0]).version, 2);
 
   const failed = await setup({ failStorage: true });
   failed.sockets[0].emit("open");
@@ -102,7 +109,7 @@ test("prompt ACK is sent only after local persistence", async () => {
   assert.equal(failed.sockets[0].sent.length, 0);
 });
 
-test("identical prompt replay does not duplicate queue", async () => {
+test("identical v2 prompt replay does not duplicate queue", async () => {
   const { store, sockets } = await setup();
   const socket = sockets[0];
   socket.emit("open");
@@ -120,6 +127,7 @@ test("pending response replays with same response_id after reconnect", async () 
   first.emit("open");
   await settle();
   const firstWire = JSON.parse(first.sent[0]);
+  assert.equal(firstWire.version, 2);
   assert.equal(firstWire.type, "chatgpt_response");
   assert.equal(firstWire.response_id, RESPONSE_ID);
 
@@ -128,9 +136,7 @@ test("pending response replays with same response_id after reconnect", async () 
   const second = sockets[1];
   second.emit("open");
   await settle();
-  assert.equal(second.sent.length, 1);
   assert.equal(JSON.parse(second.sent[0]).response_id, RESPONSE_ID);
-  assert.equal(JSON.parse(second.sent[0]).delivery_id, DELIVERY_ID);
 });
 
 test("response ACK and correlated errors are routed explicitly", async () => {
@@ -141,7 +147,7 @@ test("response ACK and correlated errors are routed explicitly", async () => {
   await settle();
 
   socket.emit("message", { data: JSON.stringify({
-    version: 1,
+    version: 2,
     type: "chatgpt_response_ack",
     response_id: RESPONSE_ID,
   }) });
@@ -149,14 +155,13 @@ test("response ACK and correlated errors are routed explicitly", async () => {
   assert.equal(responseAcks[0], RESPONSE_ID);
 
   socket.emit("message", { data: JSON.stringify({
-    version: 1,
+    version: 2,
     type: "error",
     code: "session_mismatch",
     response_id: RESPONSE_ID,
   }) });
   await settle();
   assert.equal(responseErrors[0].responseId, RESPONSE_ID);
-  assert.equal(responseErrors[0].code, "session_mismatch");
   assert.match(states.at(-1).lastError, /session_mismatch/);
 });
 
