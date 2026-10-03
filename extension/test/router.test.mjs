@@ -138,3 +138,21 @@ test("invalidated local route fails closed", async () => {
     (error) => error?.code === "binding_invalidated",
   );
 });
+
+test("provisional revalidation fails closed after navigation into an existing conversation", async () => {
+  const value = await setup();
+  const target = await value.router.route({
+    session: "DevCockpit:DEV:PROVISIONAL",
+    routing: null,
+  });
+  const tab = value.tabs.find((candidate) => candidate.id === target.tabId);
+  tab.url = "https://chatgpt.com/c/unrelated";
+  await assert.rejects(
+    () => value.router.revalidateTarget({
+      session: "DevCockpit:DEV:PROVISIONAL",
+      routing: null,
+      tabId: target.tabId,
+    }),
+    (error) => error?.code === "provisional_target_changed",
+  );
+});
