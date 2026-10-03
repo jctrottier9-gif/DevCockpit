@@ -417,6 +417,7 @@ def create_app(
                         uow_factory=uow_factory,
                         max_parallel_dev_executions=active_settings.max_parallel_dev_executions,
                         resource_lock_lease_seconds=active_settings.resource_lock_lease_seconds,
+                        dev_stale_after_seconds=active_settings.dev_stale_after_seconds,
                         lease_owner_id=resource_lock_lease_owner_id,
                     )
                 except asyncio.CancelledError:
@@ -571,6 +572,7 @@ def create_app(
             uow_factory=uow_factory,
             max_parallel_dev_executions=active_settings.max_parallel_dev_executions,
             resource_lock_lease_seconds=active_settings.resource_lock_lease_seconds,
+            dev_stale_after_seconds=active_settings.dev_stale_after_seconds,
             lease_owner_id=resource_lock_lease_owner_id,
         )
         payload = _parallel_executions_payload(evaluation.projection)
@@ -622,6 +624,7 @@ def create_app(
             uow_factory=uow_factory,
             max_parallel_dev_executions=1,
             resource_lock_lease_seconds=active_settings.resource_lock_lease_seconds,
+            dev_stale_after_seconds=active_settings.dev_stale_after_seconds,
             lease_owner_id=resource_lock_lease_owner_id,
         )
         primary = evaluation.projection.items[0] if evaluation.projection.items else None

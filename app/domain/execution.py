@@ -56,6 +56,7 @@ class BranchEvidence:
     name: str
     sha: str
     ahead_by: int
+    last_activity_at: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

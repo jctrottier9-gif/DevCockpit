@@ -11,9 +11,11 @@ from app.application.executions import (
     _ci_red_idempotency_key,
     _initial_idempotency_key,
     _roadmap_reconcile_idempotency_key,
+    _stale_dev_idempotency_key,
     build_ci_red_follow_up,
     build_initial_dev_prompt,
     build_roadmap_reconciliation_follow_up,
+    build_stale_dev_follow_up,
 )
 from app.application.prompt_dispatches import (
     CreatePromptDispatchCommand,
@@ -143,6 +145,7 @@ def evaluate_project_parallel_dev_executions(
     uow_factory: UnitOfWorkFactory,
     max_parallel_dev_executions: int,
     resource_lock_lease_seconds: float = 900.0,
+    dev_stale_after_seconds: float = 3600.0,
     lease_owner_id: str = "devcockpit-process",
     clock: Callable[[], datetime] | None = None,
 ) -> ParallelDevExecutionEvaluation:
@@ -270,6 +273,34 @@ def evaluate_project_parallel_dev_executions(
                             uow=uow,
                         )
                     )
+                elif _stale_dev_due(
+                    project,
+                    item.execution,
+                    uow=uow,
+                    now=now,
+                    stale_after_seconds=dev_stale_after_seconds,
+                ):
+                    stale_key = _stale_dev_idempotency_key(
+                        project,
+                        item.execution,
+                    )
+                    if uow.prompt_dispatches.get_by_idempotency_key(stale_key) is None:
+                        dispatches.append(
+                            create_prompt_dispatch_in_uow(
+                                CreatePromptDispatchCommand(
+                                    project_id=project.project_id,
+                                    work_item_id=work_item.key,
+                                    role=PromptDispatchRole.DEV,
+                                    prompt_text=build_stale_dev_follow_up(
+                                        project,
+                                        item.execution,
+                                        inactivity_seconds=dev_stale_after_seconds,
+                                    ),
+                                    idempotency_key=stale_key,
+                                ),
+                                uow=uow,
+                            )
+                        )
                 continue
 
             if (
@@ -362,6 +393,55 @@ def _read_candidate_snapshots(
         snapshots.append(_CandidateSnapshot(scheduler_item, execution))
 
     return roadmap.issue, scheduler, tuple(snapshots)
+
+
+def _stale_dev_due(
+    project: Project,
+    execution: ExecutionProjection,
+    *,
+    uow,
+    now: datetime,
+    stale_after_seconds: float,
+) -> bool:
+    if (
+        stale_after_seconds <= 0
+        or execution.state is not ExecutionState.DEVELOPING
+        or execution.work_item is None
+        or execution.branch is None
+        or execution.branch.last_activity_at is None
+    ):
+        return False
+
+    initial = uow.prompt_dispatches.get_by_idempotency_key(
+        _initial_idempotency_key(project, execution.work_item)
+    )
+    if initial is None:
+        return False
+
+    delivery = uow.prompt_deliveries.get_by_dispatch_id(initial.dispatch_id)
+    if delivery is None or not delivery.is_acknowledged or delivery.acknowledged_at is None:
+        return False
+
+    branch_activity = _parse_github_timestamp(execution.branch.last_activity_at)
+    if branch_activity is None:
+        return False
+
+    reference = max(
+        branch_activity,
+        _as_utc(initial.created_at),
+        _as_utc(delivery.acknowledged_at),
+    )
+    return (now - reference).total_seconds() >= stale_after_seconds
+
+
+def _parse_github_timestamp(value: str) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return _as_utc(parsed)
 
 
 def _reconcile_resource_locks(

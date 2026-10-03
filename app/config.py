@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     github_token: SecretStr | None = None
     github_timeout_seconds: float = Field(default=5.0, gt=0.0, le=30.0)
     execution_poll_seconds: float = Field(default=30.0, ge=0.0, le=3600.0)
+    dev_stale_after_seconds: float = Field(default=3600.0, ge=300.0, le=86400.0)
     max_parallel_dev_executions: int = Field(default=2, ge=1, le=32)
     resource_lock_lease_seconds: float = Field(default=900.0, ge=30.0, le=86400.0)
 

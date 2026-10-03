@@ -5,12 +5,15 @@ from app.application.parallel_executions import (
 )
 from app.application.roadmaps import RoadmapIssue
 from app.domain.execution import (
+    BranchEvidence,
     ExecutionEvidence,
     ExecutionState,
     PullRequestEvidence,
     WorkflowRunEvidence,
 )
 from app.domain.project import Project
+from app.domain.prompt_delivery import PromptDelivery
+from app.domain.prompt_dispatch import PromptDispatch, PromptDispatchRole
 from app.domain.resource_lock import (
     ResourceLock,
     ResourceLockConflict,
@@ -188,9 +191,21 @@ class ResourceLocks:
         return tuple(acquired), None
 
 
+class Deliveries:
+    def __init__(self) -> None:
+        self.by_dispatch = {}
+
+    def get_by_dispatch_id(self, dispatch_id):
+        return self.by_dispatch.get(dispatch_id)
+
+    def save(self, delivery):
+        self.by_dispatch[delivery.dispatch_id] = delivery
+
+
 class Uow:
-    def __init__(self, dispatches, handoffs, fences, resource_locks) -> None:
+    def __init__(self, dispatches, handoffs, fences, resource_locks, deliveries) -> None:
         self.prompt_dispatches = dispatches
+        self.prompt_deliveries = deliveries
         self.handoffs = handoffs
         self.roadmap_target_fences = fences
         self.resource_locks = resource_locks
@@ -211,11 +226,19 @@ class Uow:
         return None
 
 
-def factory(dispatches=None, *, handoffs=None, fences=None, resource_locks=None):
+def factory(
+    dispatches=None,
+    *,
+    handoffs=None,
+    fences=None,
+    resource_locks=None,
+    deliveries=None,
+):
     shared_dispatches = dispatches or DispatchRepository()
     shared_handoffs = handoffs or Handoffs()
     shared_fences = fences or Fences()
     shared_resource_locks = resource_locks or ResourceLocks()
+    shared_deliveries = deliveries or Deliveries()
     return (
         shared_dispatches,
         lambda: Uow(
@@ -223,6 +246,7 @@ def factory(dispatches=None, *, handoffs=None, fences=None, resource_locks=None)
             shared_handoffs,
             shared_fences,
             shared_resource_locks,
+            shared_deliveries,
         ),
     )
 
@@ -423,6 +447,133 @@ def test_merged_green_prepares_automatic_roadmap_reconciliation_in_same_dev_sess
     assert "sans confirmation humaine supplémentaire" in dispatch.prompt_text
     assert "Ne lance pas l'analyse ARCH" in dispatch.prompt_text
     assert "ROADMAP_RECONCILE" in dispatch.idempotency_key
+    assert len(dispatches.by_key) == 1
+
+
+def test_stale_developing_branch_prepares_one_same_session_watchdog_follow_up():
+    started = datetime(2026, 10, 3, 8, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 10, 3, 10, 0, tzinfo=timezone.utc)
+    dispatches = DispatchRepository()
+    deliveries = Deliveries()
+
+    initial = PromptDispatch.prepare(
+        project_id=PROJECT.project_id,
+        work_item_id="A",
+        role=PromptDispatchRole.DEV,
+        prompt_text="Initial A",
+        idempotency_key="execution:DevCockpit:A:DEV:INITIAL:v1",
+        now=started,
+    )
+    dispatches.add(initial)
+    delivery = PromptDelivery.create(
+        dispatch_id=initial.dispatch_id,
+        now=started,
+    )
+    delivery.record_attempt(now=started + timedelta(minutes=1))
+    delivery.acknowledge(now=started + timedelta(minutes=2))
+    deliveries.save(delivery)
+
+    _, uow_factory = factory(
+        dispatches,
+        deliveries=deliveries,
+    )
+    evidence = EvidenceReader(
+        {
+            "A": ExecutionEvidence(
+                default_branch="main",
+                branches=(
+                    BranchEvidence(
+                        name="work/a-load-intervals",
+                        sha="stagnant-sha",
+                        ahead_by=2,
+                        last_activity_at="2026-10-03T07:00:00Z",
+                    ),
+                ),
+            ),
+        }
+    )
+    roadmap = RoadmapReader(v3("A | WORK | READY | #1 | MAIN | A | - | -"))
+
+    first = evaluate_project_parallel_dev_executions(
+        PROJECT,
+        roadmap_reader=roadmap,
+        evidence_reader=evidence,
+        uow_factory=uow_factory,
+        max_parallel_dev_executions=1,
+        dev_stale_after_seconds=3600,
+        clock=lambda: now,
+    )
+    second = evaluate_project_parallel_dev_executions(
+        PROJECT,
+        roadmap_reader=roadmap,
+        evidence_reader=evidence,
+        uow_factory=uow_factory,
+        max_parallel_dev_executions=1,
+        dev_stale_after_seconds=3600,
+        clock=lambda: now + timedelta(minutes=5),
+    )
+
+    assert first.projection.items[0].execution.state is ExecutionState.DEVELOPING
+    assert len(first.dispatches) == 1
+    watchdog = first.dispatches[0]
+    assert watchdog.agent_session == "DevCockpit:DEV:A"
+    assert "session DEV de A semble interrompue ou inactive" in watchdog.prompt_text
+    assert "work/a-load-intervals" in watchdog.prompt_text
+    assert "stagnant-sha" in watchdog.prompt_text
+    assert ":DEV:STALE:" in watchdog.idempotency_key
+    assert second.dispatches == ()
+    assert len(dispatches.by_key) == 2
+
+
+def test_stale_watchdog_waits_one_hour_after_firefox_ack_even_for_old_branch():
+    started = datetime(2026, 10, 3, 9, 40, tzinfo=timezone.utc)
+    now = datetime(2026, 10, 3, 10, 0, tzinfo=timezone.utc)
+    dispatches = DispatchRepository()
+    deliveries = Deliveries()
+
+    initial = PromptDispatch.prepare(
+        project_id=PROJECT.project_id,
+        work_item_id="A",
+        role=PromptDispatchRole.DEV,
+        prompt_text="Initial A",
+        idempotency_key="execution:DevCockpit:A:DEV:INITIAL:v1",
+        now=started,
+    )
+    dispatches.add(initial)
+    delivery = PromptDelivery.create(dispatch_id=initial.dispatch_id, now=started)
+    delivery.record_attempt(now=started + timedelta(minutes=1))
+    delivery.acknowledge(now=started + timedelta(minutes=2))
+    deliveries.save(delivery)
+
+    _, uow_factory = factory(dispatches, deliveries=deliveries)
+    result = evaluate_project_parallel_dev_executions(
+        PROJECT,
+        roadmap_reader=RoadmapReader(
+            v3("A | WORK | READY | #1 | MAIN | A | - | -")
+        ),
+        evidence_reader=EvidenceReader(
+            {
+                "A": ExecutionEvidence(
+                    default_branch="main",
+                    branches=(
+                        BranchEvidence(
+                            name="work/a-load-intervals",
+                            sha="old-sha",
+                            ahead_by=2,
+                            last_activity_at="2026-10-03T01:00:00Z",
+                        ),
+                    ),
+                ),
+            }
+        ),
+        uow_factory=uow_factory,
+        max_parallel_dev_executions=1,
+        dev_stale_after_seconds=3600,
+        clock=lambda: now,
+    )
+
+    assert result.projection.items[0].execution.state is ExecutionState.DEVELOPING
+    assert result.dispatches == ()
     assert len(dispatches.by_key) == 1
 
 
