@@ -311,6 +311,40 @@ def test_chatgpt_response_is_persisted_and_identical_replay_gets_same_ack(
         assert responses[0].text == "Returned response\n\n- complete text"
 
 
+def test_chatgpt_response_matching_prompt_is_rejected_without_ack_or_persistence(
+    tmp_path: Path,
+) -> None:
+    application = _application(tmp_path)
+    response_id = str(uuid4())
+
+    with TestClient(application) as client:
+        _create_dispatch(application, work_item="DC-030-ECHO")
+        with client.websocket_connect("/api/companion/ws") as websocket:
+            prompt = websocket.receive_json()
+            echoed = {
+                "version": 1,
+                "type": "chatgpt_response",
+                "response_id": response_id,
+                "delivery_id": prompt["delivery_id"],
+                "payload": {
+                    "session": "DevCockpit:DEV:DC-030-ECHO",
+                    "text": "**Prompt** for DC-030-ECHO",
+                },
+            }
+            websocket.send_json(echoed)
+            error = websocket.receive_json()
+
+            assert error == {
+                "version": 1,
+                "type": "error",
+                "code": "response_echoes_prompt",
+                "response_id": response_id,
+            }
+
+    with SqlAlchemyUnitOfWork(application.state.session_factory) as uow:
+        assert uow.chatgpt_responses.list_all() == []
+
+
 def test_chatgpt_response_collision_unknown_delivery_and_session_mismatch_are_explicit(
     tmp_path: Path,
 ) -> None:
