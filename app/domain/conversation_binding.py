@@ -62,7 +62,7 @@ def normalize_chatgpt_conversation_url(
         port = parsed.port
     except ValueError as exc:
         raise ConversationBindingError("canonical_url is invalid") from exc
-    if parsed.scheme.lower() != "https:"[:-1]:
+    if parsed.scheme.lower() != "https":
         raise ConversationBindingError("canonical_url must use https")
     hostname = (parsed.hostname or "").lower()
     if hostname not in {"chatgpt.com", "chat.openai.com"} or port not in {None, 443}:
