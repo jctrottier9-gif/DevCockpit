@@ -242,7 +242,6 @@
 
       const normalized = normalizeRouting(routing);
       if (!tabIdentityMatches(tab, normalized)) {
-        await this.routingStore.markInvalidated(session, "target_navigation_changed");
         throw new RoutingError("bound_target_changed");
       }
       return tab;
