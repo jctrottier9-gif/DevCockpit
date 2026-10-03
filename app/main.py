@@ -37,6 +37,7 @@ from app.application.parallel_executions import (
 from app.application.projects import ProjectCatalog
 from app.application.prompt_deliveries import (
     AcknowledgementResult,
+    PromptRedeliveryBindingInvalidated,
     PromptRedeliveryDeliveryNotFound,
     PromptRedeliveryDispatchNotFound,
     PromptRedeliveryDispatchNotPrepared,
@@ -683,13 +684,15 @@ def create_app(
             PromptRedeliveryDispatchNotPrepared,
             PromptRedeliveryDeliveryNotFound,
             PromptRedeliveryRequiresAcknowledgement,
+            PromptRedeliveryBindingInvalidated,
         ) as exc:
             raise HTTPException(
                 status_code=409,
                 detail={
                     "code": exc.code,
                     "message": (
-                        "Only an acknowledged PREPARED prompt can be manually redelivered."
+                        "Only an acknowledged PREPARED prompt with a safe conversation target "
+                        "can be manually redelivered."
                     ),
                 },
             ) from exc
