@@ -192,6 +192,17 @@ def evaluate_project_execution(
                 ),
                 uow=uow,
             )
+        elif projection.next_action is NextAction.RECONCILE_ROADMAP:
+            dispatch = create_prompt_dispatch_in_uow(
+                CreatePromptDispatchCommand(
+                    project_id=project.project_id,
+                    work_item_id=work_item.key,
+                    role=PromptDispatchRole.DEV,
+                    prompt_text=build_roadmap_reconciliation_follow_up(project, projection),
+                    idempotency_key=_roadmap_reconcile_idempotency_key(project, projection),
+                ),
+                uow=uow,
+            )
         uow.commit()
 
     return ExecutionEvaluation(projection=projection, dispatch=dispatch)
@@ -256,6 +267,80 @@ Analyse les échecs actuels sur GitHub, corrige uniquement ce qui relève de {wo
 
 Reste strictement dans le scope du WorkItem {work_item.key}. Après avoir poussé la correction, vérifie que l'auto-merge demeure armé lorsque permis, rapporte le nouveau head SHA, puis ARRÊTE ton tour DEV. Ne reste pas à poller la CI : DevCockpit reprend l'observation GitHub. Ne commence pas la tranche suivante.
 """
+
+
+def build_roadmap_reconciliation_follow_up(
+    project: Project,
+    projection: ExecutionProjection,
+) -> str:
+    work_item = projection.work_item
+    pull_request = projection.pull_request
+    ci = projection.ci
+    if (
+        work_item is None
+        or pull_request is None
+        or ci is None
+        or projection.state is not ExecutionState.ROADMAP_UPDATE_REQUIRED
+    ):
+        raise ValueError(
+            "ROADMAP_UPDATE_REQUIRED follow-up requires WorkItem, merged PR and green CI evidence"
+        )
+
+    github_url = pull_request.url or "non disponible"
+    merged_at = pull_request.merged_at or "non disponible"
+
+    return f"""La livraison GitHub de {work_item.key} est fusionnée et les validations requises sont vertes. Le roadmap canonique doit maintenant être réconcilié.
+
+Repository : {project.repository_full_name}
+WorkItem : {work_item.key} — {work_item.title}
+PR : #{pull_request.number}
+GitHub : {github_url}
+Head SHA livré : {pull_request.head_sha}
+Merged at : {merged_at}
+Roadmap maître : #{project.roadmap_issue_number}
+État observé : ROADMAP_UPDATE_REQUIRED
+
+Reprends la même session DEV pour effectuer uniquement la réconciliation post-merge du roadmap.
+
+1. Synchronise-toi avec le vrai main actuel.
+2. Relis AGENTS.md et le roadmap maître #{project.roadmap_issue_number}, y compris son bloc canonique présent.
+3. Vérifie sur GitHub que la PR #{pull_request.number} est réellement fusionnée et que les validations requises du head livré sont vertes.
+4. Relis immédiatement la version courante du roadmap avant de l'éditer afin de ne pas écraser une modification concurrente.
+5. Mets directement à jour le roadmap GitHub, sans confirmation humaine supplémentaire, pour refléter la livraison réelle :
+   - marque {work_item.key} DONE;
+   - promeus uniquement le vrai prochain WorkItem autorisé à READY selon l'ordre, les dépendances et les gates déjà définis;
+   - garde les étapes ultérieures BLOCKED lorsqu'elles ne sont pas encore autorisées;
+   - garde le texte humain/checklists cohérent avec le bloc canonique lorsque le contrat du dépôt l'exige.
+6. Ne change pas le scope, l'ordre, les dépendances, REPLACES, le découpage ou l'identité des WorkItems pendant cette réconciliation déterministe. Si une telle modification structurelle est nécessaire, n'improvise pas : rapporte le blocage.
+7. Si le prochain WorkItem est une ARCHITECTURE_GATE, tu peux uniquement le rendre READY dans le roadmap. Ne lance pas l'analyse ARCH et ne crée pas son prompt : DevCockpit exige une autorisation humaine distincte pour démarrer une gate architecturale.
+8. Après l'édition, relis le roadmap GitHub et vérifie que le bloc canonique expose exactement l'état attendu.
+
+Cette réconciliation post-merge remplace le comportement historique où le DEV mettait lui-même le roadmap à jour après le merge. Elle est autorisée sans preview/confirmation humaine supplémentaire parce qu'elle ne fait que réconcilier une livraison déjà prouvée par GitHub.
+
+Ne commence pas le WorkItem suivant. Rapporte l'état final du roadmap puis ARRÊTE ton tour DEV.
+"""
+
+
+def _roadmap_reconcile_idempotency_key(
+    project: Project,
+    projection: ExecutionProjection,
+) -> str:
+    work_item = projection.work_item
+    pull_request = projection.pull_request
+    if (
+        work_item is None
+        or pull_request is None
+        or projection.state is not ExecutionState.ROADMAP_UPDATE_REQUIRED
+    ):
+        raise ValueError(
+            "ROADMAP_UPDATE_REQUIRED idempotency requires immutable merged PR evidence"
+        )
+    merged_identity = pull_request.merged_at or pull_request.updated_at or "merged"
+    return _bounded_idempotency_key(
+        "execution:"
+        f"{project.project_id}:{work_item.key}:DEV:ROADMAP_RECONCILE:"
+        f"pr{pull_request.number}:{pull_request.head_sha}:{merged_identity}:v1"
+    )
 
 
 def _initial_idempotency_key(project: Project, work_item: WorkItem) -> str:

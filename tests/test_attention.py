@@ -371,6 +371,35 @@ def test_roadmap_update_required_is_explicit_and_links_pr_evidence(tmp_path):
     assert item.pr_url == "https://github.example/pr/41"
 
 
+def test_automatic_roadmap_reconciliation_prompt_replaces_plain_attention_action(tmp_path):
+    app = application(tmp_path, evidence=MergedGreenEvidence())
+
+    evaluation = evaluate_project_parallel_dev_executions(
+        PROJECT,
+        roadmap_reader=app.state.roadmap_reader,
+        evidence_reader=app.state.execution_reader,
+        uow_factory=app.state.uow_factory,
+        max_parallel_dev_executions=2,
+    )
+    assert len(evaluation.dispatches) == 1
+
+    result = projection(app, companion_connected=True)
+
+    assert len(result.items) == 1
+    item = result.items[0]
+    assert item.stable_key == "DevCockpit:DEV:DC-060:RECONCILE_ROADMAP"
+    assert item.kind is AttentionKind.ROADMAP_UPDATE_REQUIRED
+    assert item.title == "DEV · DC-060 · réconciliation roadmap prête"
+    assert item.primary_action.kind == "RECONCILE_ROADMAP"
+    assert item.primary_action.dispatch_id == str(
+        evaluation.dispatches[0].dispatch_id
+    )
+    assert item.pr_number == 41
+    assert item.context["dispatch_id"] == str(
+        evaluation.dispatches[0].dispatch_id
+    )
+
+
 def test_imported_response_naturally_removes_prompt_attention_without_dismiss(tmp_path):
     app = application(tmp_path)
     dispatch = prepared_prompt(app)
