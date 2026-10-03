@@ -808,3 +808,10 @@ DC-041A reste entièrement read-only envers GitHub : le backend peut lire le roa
 ## Orchestration handoff and architecture gates
 
 Normal DEV turns stop after PR + auto-merge handoff. DevCockpit observes GitHub and reactivates DEV only when required. READY architecture gates require explicit human authorization before the ARCH PromptDispatch is created. See `docs/architecture/ADR-0011-dev-handoff-and-human-architecture-gates.md`.
+
+
+## Automatic post-merge roadmap reconciliation
+
+When GitHub proves a WORK delivery is merged and green but the canonical roadmap is still stale, DevCockpit automatically prepares an idempotent `ROADMAP_RECONCILE` follow-up in the same DEV session. The DEV is authorized to reread GitHub and update the canonical roadmap directly without another human confirmation, limited to deterministic delivery-state reconciliation (delivered item `DONE`, true next existing item `READY`, later items preserved/blocked as required).
+
+Structural roadmap changes still use the proposal/decision path. A newly READY architecture gate is not auto-launched: explicit human authorization is still required before an ARCH PromptDispatch may be created.

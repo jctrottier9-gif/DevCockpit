@@ -10,8 +10,10 @@ from app.application.executions import (
     ExecutionSourceError,
     _ci_red_idempotency_key,
     _initial_idempotency_key,
+    _roadmap_reconcile_idempotency_key,
     build_ci_red_follow_up,
     build_initial_dev_prompt,
+    build_roadmap_reconciliation_follow_up,
 )
 from app.application.prompt_dispatches import (
     CreatePromptDispatchCommand,
@@ -245,6 +247,25 @@ def evaluate_project_parallel_dev_executions(
                                 role=PromptDispatchRole.DEV,
                                 prompt_text=build_ci_red_follow_up(project, item.execution),
                                 idempotency_key=_ci_red_idempotency_key(project, item.execution),
+                            ),
+                            uow=uow,
+                        )
+                    )
+                elif item.execution.next_action is NextAction.RECONCILE_ROADMAP:
+                    dispatches.append(
+                        create_prompt_dispatch_in_uow(
+                            CreatePromptDispatchCommand(
+                                project_id=project.project_id,
+                                work_item_id=work_item.key,
+                                role=PromptDispatchRole.DEV,
+                                prompt_text=build_roadmap_reconciliation_follow_up(
+                                    project,
+                                    item.execution,
+                                ),
+                                idempotency_key=_roadmap_reconcile_idempotency_key(
+                                    project,
+                                    item.execution,
+                                ),
                             ),
                             uow=uow,
                         )

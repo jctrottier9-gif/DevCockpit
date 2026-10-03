@@ -122,12 +122,16 @@ def _merge_item(existing: AttentionItem, incoming: AttentionItem) -> AttentionIt
         if key not in context or context[key] in (None, "", [], {}):
             context[key] = value
     transport_blocks = incoming.kind is AttentionKind.TRANSPORT_BLOCKED
+    prompt_override = incoming.primary_action.dispatch_id is not None
+    actionable_override = transport_blocks or prompt_override
     return replace(
         existing,
         level=level,
-        kind=incoming.kind if transport_blocks else existing.kind,
-        title=incoming.title if transport_blocks else existing.title,
-        primary_action=incoming.primary_action if transport_blocks else existing.primary_action,
+        kind=incoming.kind if actionable_override else existing.kind,
+        title=incoming.title if actionable_override else existing.title,
+        primary_action=(
+            incoming.primary_action if actionable_override else existing.primary_action
+        ),
         reason=" · ".join(reasons),
         evidence=tuple(
             evidence[key]
@@ -426,7 +430,19 @@ def _prompt_items(
             and execution_item is not None
             and execution_item.execution.state is ExecutionState.CI_RED
         )
-        action_kind = "FIX_CI" if is_ci_red else "SEND_PROMPT"
+        is_roadmap_reconcile = (
+            role == "DEV"
+            and execution_item is not None
+            and execution_item.execution.state
+            is ExecutionState.ROADMAP_UPDATE_REQUIRED
+        )
+        action_kind = (
+            "FIX_CI"
+            if is_ci_red
+            else "RECONCILE_ROADMAP"
+            if is_roadmap_reconcile
+            else "SEND_PROMPT"
+        )
         blocked_by_transport = (
             not companion_connected
             and (delivery is None or not delivery.is_acknowledged)
@@ -450,6 +466,8 @@ def _prompt_items(
                 label=(
                     "Ouvrir la PR et envoyer le prompt correctif"
                     if is_ci_red
+                    else "Ouvrir l'orchestration et envoyer la réconciliation"
+                    if is_roadmap_reconcile
                     else f"Ouvrir l'orchestration et envoyer le prompt {role}"
                 ),
                 target=(
@@ -467,20 +485,31 @@ def _prompt_items(
                 ),
                 dispatch_id=str(dispatch.dispatch_id),
             )
-            kind = AttentionKind.CI_RED if is_ci_red else AttentionKind.PROMPT_READY
+            kind = (
+                AttentionKind.CI_RED
+                if is_ci_red
+                else AttentionKind.ROADMAP_UPDATE_REQUIRED
+                if is_roadmap_reconcile
+                else AttentionKind.PROMPT_READY
+            )
             reason = (
                 "Le follow-up DEV de correction est déjà préparé pour la CI rouge."
                 if is_ci_red
                 else (
-                    "Le prompt est déjà accepté dans la file Firefox et attend l'envoi explicite."
-                    if delivery is not None and delivery.is_acknowledged
-                    else "Le PromptDispatch est préparé et peut être livré puis envoyé explicitement."
+                    "Le follow-up DEV de réconciliation post-merge est préparé; "
+                    "il mettra directement le roadmap GitHub à jour sans confirmation humaine."
+                    if is_roadmap_reconcile
+                    else (
+                        "Le prompt est déjà accepté dans la file Firefox et attend l'envoi explicite."
+                        if delivery is not None and delivery.is_acknowledged
+                        else "Le PromptDispatch est préparé et peut être livré puis envoyé explicitement."
+                    )
                 )
             )
 
         pull_request = (
             execution_item.execution.pull_request
-            if is_ci_red and execution_item is not None
+            if (is_ci_red or is_roadmap_reconcile) and execution_item is not None
             else None
         )
         _add(
@@ -497,6 +526,8 @@ def _prompt_items(
                 title=(
                     f"DEV · {dispatch.work_item_id} · CI rouge"
                     if is_ci_red
+                    else f"DEV · {dispatch.work_item_id} · réconciliation roadmap prête"
+                    if is_roadmap_reconcile
                     else f"{role} · {dispatch.work_item_id} · prompt prêt"
                 ),
                 reason=reason,

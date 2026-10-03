@@ -370,6 +370,62 @@ def test_ci_red_follow_up_is_isolated_from_running_peer():
     assert all(dispatch.work_item_id != "B" for dispatch in dispatches.by_key.values())
 
 
+def test_merged_green_prepares_automatic_roadmap_reconciliation_in_same_dev_session():
+    evidence = EvidenceReader(
+        {
+            "A": ExecutionEvidence(
+                default_branch="main",
+                pull_requests=(
+                    PullRequestEvidence(
+                        number=589,
+                        title="A — implementation",
+                        body="",
+                        branch="a-implementation",
+                        head_sha="delivered-sha",
+                        state="closed",
+                        merged=True,
+                        mergeable=True,
+                        url="https://github.example/pr/589",
+                        merged_at="2026-10-02T22:00:00Z",
+                    ),
+                ),
+                workflow_runs=(
+                    WorkflowRunEvidence(
+                        run_id=1314,
+                        name="CI",
+                        status="completed",
+                        conclusion="success",
+                        attempt=1,
+                        head_sha="delivered-sha",
+                    ),
+                ),
+            ),
+        }
+    )
+    dispatches, uow_factory = factory()
+
+    result = evaluate_project_parallel_dev_executions(
+        PROJECT,
+        roadmap_reader=RoadmapReader(
+            v3("A | WORK | READY | #1 | MAIN | A | - | -")
+        ),
+        evidence_reader=evidence,
+        uow_factory=uow_factory,
+        max_parallel_dev_executions=1,
+    )
+
+    assert result.projection.items[0].execution.state is ExecutionState.ROADMAP_UPDATE_REQUIRED
+    assert len(result.dispatches) == 1
+    dispatch = result.dispatches[0]
+    assert dispatch.work_item_id == "A"
+    assert dispatch.agent_session == "DevCockpit:DEV:A"
+    assert "Mets directement à jour le roadmap GitHub" in dispatch.prompt_text
+    assert "sans confirmation humaine supplémentaire" in dispatch.prompt_text
+    assert "Ne lance pas l'analyse ARCH" in dispatch.prompt_text
+    assert "ROADMAP_RECONCILE" in dispatch.idempotency_key
+    assert len(dispatches.by_key) == 1
+
+
 def test_repoll_and_restart_reconstruct_active_slots_without_duplicate_initial_prompts():
     dispatches, first_factory = factory()
     roadmap = RoadmapReader(

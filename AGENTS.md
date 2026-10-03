@@ -202,7 +202,7 @@ Before marking development complete, use observable evidence appropriate to the 
 
 CI failures normally route back to the same logical DEV session. Do not create a new session merely because CI failed.
 
-A normal DEV turn ends after the PR is complete and auto-merge is armed when permitted. DevCockpit, not the DEV agent, observes CI/merge from that point and reactivates the same DEV session only when intervention is required.
+A normal implementation DEV turn ends after the PR is complete and auto-merge is armed when permitted. DevCockpit, not the DEV agent, observes CI/merge from that point. It reactivates the same DEV session automatically for actionable CI failures and, after a merged green delivery, for deterministic roadmap reconciliation.
 
 ---
 
@@ -272,7 +272,7 @@ After that handoff, DevCockpit observes GitHub PR/CI/merge evidence. The DEV age
 
 If current-head CI becomes red, DevCockpit may automatically prepare a corrective prompt for the same logical DEV session. The DEV fixes only the observed failure within scope, pushes the correction, ensures auto-merge remains armed when permitted, reports the new head SHA, and stops again.
 
-If CI becomes green and GitHub auto-merges, DevCockpit observes the merge and surfaces the required roadmap reconciliation. A DEV agent does not autonomously start the next WorkItem.
+If CI becomes green and GitHub auto-merges, DevCockpit observes the merge and automatically prepares a ROADMAP_RECONCILE follow-up in the same DEV session. That follow-up is authorized to update the canonical GitHub roadmap directly, without an additional human confirmation, but only for deterministic delivery-state reconciliation: mark the proven delivered WorkItem DONE, promote the true next already-defined item to READY, keep later items blocked, and keep canonical/human roadmap text coherent. It must not change scope, ordering, dependencies, replacements or WorkItem identity. A DEV agent does not start the next WorkItem during reconciliation.
 
 Architecture gates are different: DevCockpit may detect a READY `ARCHITECTURE_GATE`, but it must not create its ARCH PromptDispatch until a human explicitly authorizes that gate in the cockpit.
 
@@ -325,7 +325,8 @@ Rules:
 - a GitHub API outage must not corrupt local state;
 - webhook/event replay must be idempotent;
 - polling may be used initially when simpler, provided state derivation remains deterministic;
-- writeback to roadmap/issues must be explicit and protected against stale updates.
+- structural roadmap writeback must be explicit and protected against stale updates;
+- deterministic post-merge delivery reconciliation is a distinct DEV-mediated path: after rereading current GitHub state, the same DEV session may directly update the roadmap statuses and next READY item without human confirmation; it must fail closed instead of overwriting concurrent or structurally incompatible roadmap changes.
 
 Do not use incidental PR-body mentions as strong work-item identity when a stricter branch/title/structured reference is available.
 
@@ -429,7 +430,11 @@ Do not store the active/next roadmap item in this file. `AGENTS.md` contains dur
 
 Parallel lanes may be introduced explicitly later. Parallel work must never be inferred merely because two items exist.
 
-A `RoadmapChangeProposal` is local orchestration state, not the canonical roadmap. Proposal preview/confirmation does not change GitHub. Roadmap writeback must be an explicit, exact-revision action protected against stale state and reconciled against the remote body. A future `SUPERSEDED` status means replaced-but-not-delivered and must never be substituted with `DONE`.
+A `RoadmapChangeProposal` is local orchestration state for structural/product roadmap changes, not the canonical roadmap. Proposal preview/confirmation does not change GitHub. Structural roadmap writeback must remain an explicit, exact-revision action protected against stale state and reconciled against the remote body.
+
+A deterministic post-merge delivery reconciliation is intentionally separate: when GitHub proves a WORK item merged with green required CI while the canonical roadmap still shows it READY, DevCockpit prepares an idempotent follow-up in the same DEV session. That DEV may reread and directly edit the roadmap to mark only the delivered item DONE and promote only the true next already-defined item to READY, with no additional human confirmation. It must not alter scope, ordering, dependencies, REPLACES or WorkItem identity. If the next item is an ARCHITECTURE_GATE it may become READY, but its ARCH prompt still requires explicit human authorization.
+
+A future `SUPERSEDED` status means replaced-but-not-delivered and must never be substituted with `DONE`.
 
 ---
 
