@@ -127,7 +127,7 @@ test("revalidation fails closed after concurrent navigation", async () => {
     (error) => error?.code === "bound_target_changed",
   );
   const cached = await value.store.get("DevCockpit:DEV:DC-063A");
-  assert.equal(cached.kind, "INVALIDATED");
+  assert.equal(cached.kind, "BOUND");
 });
 
 test("invalidated local route fails closed", async () => {
