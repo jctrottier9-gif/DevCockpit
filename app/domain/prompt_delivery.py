@@ -66,8 +66,8 @@ class PromptDelivery:
             raise PromptDeliveryError("updated_at must not precede created_at")
         if last_attempt is not None and last_attempt < created:
             raise PromptDeliveryError("last_attempt_at must not precede created_at")
-        if acknowledged is not None and last_attempt is not None and acknowledged < last_attempt:
-            raise PromptDeliveryError("acknowledged_at must not precede last_attempt_at")
+        if acknowledged is not None and acknowledged < created:
+            raise PromptDeliveryError("acknowledged_at must not precede created_at")
         if status is PromptDeliveryStatus.PENDING and acknowledged is not None:
             raise PromptDeliveryError("PENDING delivery must not have acknowledged_at")
         if status is PromptDeliveryStatus.ACKNOWLEDGED:
@@ -179,6 +179,20 @@ class PromptDelivery:
         timestamp = _as_utc(now or _utc_now(), field_name="now")
         if timestamp < self._updated_at:
             raise PromptDeliveryError("attempt timestamp must not move backwards")
+        self._attempt_count += 1
+        self._last_attempt_at = timestamp
+        self._updated_at = timestamp
+
+    def record_redelivery_attempt(self, *, now: datetime | None = None) -> None:
+        """Record an explicit resend while preserving the historical ACK fact."""
+
+        if not self.is_acknowledged:
+            raise InvalidPromptDeliveryTransition(
+                "Manual redelivery requires an acknowledged delivery"
+            )
+        timestamp = _as_utc(now or _utc_now(), field_name="now")
+        if timestamp < self._updated_at:
+            raise PromptDeliveryError("redelivery timestamp must not move backwards")
         self._attempt_count += 1
         self._last_attempt_at = timestamp
         self._updated_at = timestamp

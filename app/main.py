@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager, suppress
 import logging
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
@@ -35,7 +35,12 @@ from app.application.parallel_executions import (
 from app.application.projects import ProjectCatalog
 from app.application.prompt_deliveries import (
     AcknowledgementResult,
+    PromptRedeliveryDeliveryNotFound,
+    PromptRedeliveryDispatchNotFound,
+    PromptRedeliveryDispatchNotPrepared,
+    PromptRedeliveryRequiresAcknowledgement,
     acknowledge_prompt_delivery,
+    prepare_acknowledged_prompt_redelivery,
     prepare_prompt_deliveries_for_send,
 )
 from app.application.roadmaps import (
@@ -642,6 +647,59 @@ def create_app(
         )
         return payload
 
+    @application.post("/api/prompt-dispatches/{dispatch_id}/redeliver", tags=["companion"])
+    async def redeliver_prompt(dispatch_id: UUID) -> dict[str, object]:
+        if not connection_manager.has_active_connection:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "COMPANION_NOT_CONNECTED",
+                    "message": "No Firefox companion is currently connected.",
+                },
+            )
+
+        try:
+            delivery = prepare_acknowledged_prompt_redelivery(
+                dispatch_id,
+                uow_factory=uow_factory,
+            )
+        except PromptRedeliveryDispatchNotFound as exc:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": exc.code, "message": "PromptDispatch not found."},
+            ) from exc
+        except (
+            PromptRedeliveryDispatchNotPrepared,
+            PromptRedeliveryDeliveryNotFound,
+            PromptRedeliveryRequiresAcknowledgement,
+        ) as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": exc.code,
+                    "message": (
+                        "Only an acknowledged PREPARED prompt can be manually redelivered."
+                    ),
+                },
+            ) from exc
+
+        if not await connection_manager.send_json(build_prompt_message(delivery)):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "COMPANION_NOT_CONNECTED",
+                    "message": "The Firefox companion disconnected before redelivery.",
+                },
+            )
+
+        return {
+            "status": "RESENT",
+            "dispatch_id": str(delivery.dispatch_id),
+            "delivery_id": str(delivery.delivery_id),
+            "session": delivery.session,
+            "attempt_count": delivery.attempt_count,
+        }
+
     @application.websocket("/api/companion/ws")
     async def companion_websocket(websocket: WebSocket) -> None:
         if not await connection_manager.connect(websocket):
@@ -664,7 +722,8 @@ def create_app(
                         dispatch = delivery_uow.prompt_dispatches.get(delivery.dispatch_id)
                         if dispatch is None or dispatch.status != PromptDispatchStatus.PREPARED:
                             continue
-                        await websocket.send_json(build_prompt_message(delivery))
+                        if not await connection_manager.send_json(build_prompt_message(delivery)):
+                            raise RuntimeError("companion disconnected during prompt send")
                         sent_on_connection.add(delivery.delivery_id)
 
                 done, _ = await asyncio.wait(
@@ -684,7 +743,7 @@ def create_app(
                 try:
                     message = parse_inbound_message(raw_message)
                 except ProtocolMessageError as exc:
-                    await websocket.send_json(build_error_message(exc.code))
+                    await connection_manager.send_json(build_error_message(exc.code))
                     continue
 
                 if isinstance(message, ChatGptResponseMessage):
@@ -699,35 +758,35 @@ def create_app(
                             uow_factory=uow_factory,
                         )
                     except UnknownPromptDeliveryError:
-                        await websocket.send_json(
+                        await connection_manager.send_json(
                             build_error_message(
                                 "unknown_delivery",
                                 response_id=message.response_id,
                             )
                         )
                     except ResponseSessionMismatchError:
-                        await websocket.send_json(
+                        await connection_manager.send_json(
                             build_error_message(
                                 "session_mismatch",
                                 response_id=message.response_id,
                             )
                         )
                     except ResponseIdConflictError:
-                        await websocket.send_json(
+                        await connection_manager.send_json(
                             build_error_message(
                                 "response_id_conflict",
                                 response_id=message.response_id,
                             )
                         )
                     except ChatGptResponseImportError:
-                        await websocket.send_json(
+                        await connection_manager.send_json(
                             build_error_message(
                                 "invalid_chatgpt_response",
                                 response_id=message.response_id,
                             )
                         )
                     else:
-                        await websocket.send_json(
+                        await connection_manager.send_json(
                             build_chatgpt_response_ack(message.response_id)
                         )
                     continue
@@ -738,11 +797,11 @@ def create_app(
                         uow_factory=uow_factory,
                     )
                     if result is AcknowledgementResult.UNKNOWN:
-                        await websocket.send_json(build_error_message("unknown_delivery_ack"))
+                        await connection_manager.send_json(build_error_message("unknown_delivery_ack"))
                     continue
 
                 if isinstance(message, PingMessage):
-                    await websocket.send_json(build_pong_message())
+                    await connection_manager.send_json(build_pong_message())
         except (WebSocketDisconnect, RuntimeError):
             pass
         finally:

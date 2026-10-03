@@ -161,6 +161,7 @@ class CompanionConnectionManager:
     def __init__(self) -> None:
         self._active: WebSocket | None = None
         self._lock = asyncio.Lock()
+        self._send_lock = asyncio.Lock()
 
     @property
     def has_active_connection(self) -> bool:
@@ -176,6 +177,20 @@ class CompanionConnectionManager:
                 )
                 return False
             self._active = websocket
+            return True
+
+    async def send_json(self, payload: dict[str, object]) -> bool:
+        """Send through the active companion while serializing concurrent writers."""
+
+        async with self._send_lock:
+            async with self._lock:
+                websocket = self._active
+            if websocket is None:
+                return False
+            try:
+                await websocket.send_json(payload)
+            except RuntimeError:
+                return False
             return True
 
     async def disconnect(self, websocket: WebSocket) -> None:

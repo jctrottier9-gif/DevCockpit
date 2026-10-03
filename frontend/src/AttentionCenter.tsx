@@ -47,6 +47,8 @@ export default function AttentionCenter({
   const [projection, setProjection] = useState<AttentionResponse | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
+  const [redelivering, setRedelivering] = useState<string | null>(null)
+  const [notice, setNotice] = useState('')
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
     setLoading(true)
@@ -73,6 +75,37 @@ export default function AttentionCenter({
     }
   }, [projectId])
 
+  async function redeliver(dispatchId: string) {
+    setRedelivering(dispatchId)
+    setError('')
+    setNotice('')
+    try {
+      const response = await fetch(
+        '/api/prompt-dispatches/' + encodeURIComponent(dispatchId) + '/redeliver',
+        { method: 'POST' },
+      )
+      const payload = await response.json() as {
+        status?: string
+        delivery_id?: string
+        detail?: string | { code?: string; message?: string }
+      }
+      if (!response.ok) {
+        const detail = payload.detail
+        throw new Error(
+          typeof detail === 'string'
+            ? detail
+            : detail?.message ?? detail?.code ?? 'Renvoi au companion impossible',
+        )
+      }
+      setNotice('Prompt renvoyé au companion Firefox.')
+      await refresh()
+    } catch (caught: unknown) {
+      setError(caught instanceof Error ? caught.message : 'Renvoi au companion impossible')
+    } finally {
+      setRedelivering(null)
+    }
+  }
+
   useEffect(() => {
     const controller = new AbortController()
     void refresh(controller.signal)
@@ -96,6 +129,7 @@ export default function AttentionCenter({
     </div>
 
     {error && <p role="alert" className="diagnostics">{error}</p>}
+    {notice && <p role="status" className="attention-clear">{notice}</p>}
 
     {!loading && !error && projection?.state === 'CLEAR' &&
       <p className="attention-clear">Aucune action ni surveillance requise maintenant.</p>}
@@ -124,6 +158,16 @@ export default function AttentionCenter({
                   {item.primary_action.label}
                 </button>
               : <strong>{item.primary_action.label}</strong>}
+          {item.primary_action.dispatch_id && item.context?.delivery_acknowledged === true &&
+            <button
+              type="button"
+              disabled={redelivering === item.primary_action.dispatch_id}
+              onClick={() => void redeliver(item.primary_action.dispatch_id!)}
+            >
+              {redelivering === item.primary_action.dispatch_id
+                ? 'Renvoi…'
+                : 'Renvoyer au companion'}
+            </button>}
           {item.pr_number && !item.primary_action.href && item.pr_url &&
             <a href={item.pr_url} target="_blank" rel="noreferrer">PR #{item.pr_number}</a>}
         </div>

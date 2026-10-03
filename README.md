@@ -442,6 +442,18 @@ An ACK therefore means only that the Firefox companion has durably accepted resp
 
 The queue stores only local transport/UI fields such as `delivery_id`, `session`, `text`, `received_at`, `local_status` and an optional local error. Its `QUEUED` / `SEND_REQUESTED` states are not roadmap or WorkItem statuses.
 
+### Manual targeted redelivery
+
+An already acknowledged prompt can be explicitly resent to the currently connected companion without creating a new `PromptDispatch` or a new logical delivery. The original ACK remains historical truth, the same `delivery_id` is reused, and the transport attempt counter increments.
+
+The Attention Center exposes **Renvoyer au companion** only for prompts whose delivery was already acknowledged. The corresponding backend command is:
+
+~~~text
+POST /api/prompt-dispatches/{dispatch_id}/redeliver
+~~~
+
+The command fails explicitly when no companion is connected, when the dispatch is no longer PREPARED, or when the delivery has never been acknowledged.
+
 ### Explicit send to ChatGPT
 
 Nothing is injected or sent when a prompt arrives. The user must open the intended ChatGPT conversation and click **Envoyer** on the chosen queue entry. The companion then targets only the active `chatgpt.com` or `chat.openai.com` tab.
