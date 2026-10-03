@@ -7,10 +7,12 @@ from typing import AbstractSet, Callable, Protocol, Self
 from uuid import UUID
 
 from app.domain.prompt_delivery import PromptDelivery
-from app.domain.prompt_dispatch import PromptDispatch
+from app.domain.prompt_dispatch import PromptDispatch, PromptDispatchStatus
 
 
 class PromptDispatchReadRepository(Protocol):
+    def get(self, dispatch_id: object) -> PromptDispatch | None: ...
+
     def list_prepared(self) -> list[PromptDispatch]: ...
 
 
@@ -53,6 +55,26 @@ class AcknowledgementResult(StrEnum):
     UNKNOWN = "UNKNOWN"
 
 
+class PromptRedeliveryError(ValueError):
+    code = "PROMPT_REDELIVERY_FAILED"
+
+
+class PromptRedeliveryDispatchNotFound(PromptRedeliveryError):
+    code = "PROMPT_DISPATCH_NOT_FOUND"
+
+
+class PromptRedeliveryDispatchNotPrepared(PromptRedeliveryError):
+    code = "PROMPT_DISPATCH_NOT_PREPARED"
+
+
+class PromptRedeliveryDeliveryNotFound(PromptRedeliveryError):
+    code = "PROMPT_DELIVERY_NOT_FOUND"
+
+
+class PromptRedeliveryRequiresAcknowledgement(PromptRedeliveryError):
+    code = "PROMPT_DELIVERY_NOT_ACKNOWLEDGED"
+
+
 def prepare_prompt_deliveries_for_send(
     *,
     uow_factory: UnitOfWorkFactory,
@@ -85,6 +107,40 @@ def prepare_prompt_deliveries_for_send(
 
         uow.commit()
     return tuple(outbound)
+
+
+def prepare_acknowledged_prompt_redelivery(
+    dispatch_id: UUID,
+    *,
+    uow_factory: UnitOfWorkFactory,
+    now: datetime | None = None,
+) -> OutboundPromptDelivery:
+    """Prepare one explicit resend without erasing the original acknowledgement."""
+
+    with uow_factory() as uow:
+        dispatch = uow.prompt_dispatches.get(dispatch_id)
+        if dispatch is None:
+            raise PromptRedeliveryDispatchNotFound(str(dispatch_id))
+        if dispatch.status is not PromptDispatchStatus.PREPARED:
+            raise PromptRedeliveryDispatchNotPrepared(str(dispatch_id))
+
+        delivery = uow.prompt_deliveries.get_by_dispatch_id(dispatch.dispatch_id)
+        if delivery is None:
+            raise PromptRedeliveryDeliveryNotFound(str(dispatch_id))
+        if not delivery.is_acknowledged:
+            raise PromptRedeliveryRequiresAcknowledgement(str(dispatch_id))
+
+        delivery.record_redelivery_attempt(now=now)
+        uow.prompt_deliveries.save(delivery)
+        uow.commit()
+
+        return OutboundPromptDelivery(
+            delivery_id=delivery.delivery_id,
+            dispatch_id=dispatch.dispatch_id,
+            session=dispatch.agent_session,
+            text=dispatch.prompt_text,
+            attempt_count=delivery.attempt_count,
+        )
 
 
 def acknowledge_prompt_delivery(

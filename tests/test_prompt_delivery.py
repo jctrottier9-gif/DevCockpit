@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from app.application.prompt_deliveries import (
     AcknowledgementResult,
     acknowledge_prompt_delivery,
+    prepare_acknowledged_prompt_redelivery,
     prepare_prompt_deliveries_for_send,
 )
 from app.application.prompt_dispatches import CreatePromptDispatchCommand, create_prompt_dispatch
@@ -149,6 +150,51 @@ def test_ack_is_transport_only_duplicate_safe_and_unknown_is_explicit(tmp_path: 
 
         with SqlAlchemyUnitOfWork(session_factory) as uow:
             assert uow.prompt_deliveries.get(delivery_id).acknowledged_at == acknowledged_at
+    finally:
+        engine.dispose()
+
+
+def test_manual_redelivery_preserves_ack_and_reuses_same_delivery(tmp_path: Path) -> None:
+    _, engine, session_factory = _persistence(tmp_path)
+    factory = lambda: SqlAlchemyUnitOfWork(session_factory)
+    dispatch = create_prompt_dispatch(
+        CreatePromptDispatchCommand(
+            project_id="DevCockpit",
+            work_item_id="DC-011",
+            role="DEV",
+            prompt_text="Manual resend",
+            idempotency_key="dc011:manual-resend",
+        ),
+        uow_factory=factory,
+    )
+    first = prepare_prompt_deliveries_for_send(uow_factory=factory)
+    delivery_id = first[0].delivery_id
+
+    try:
+        assert (
+            acknowledge_prompt_delivery(delivery_id, uow_factory=factory)
+            is AcknowledgementResult.ACKNOWLEDGED
+        )
+        with SqlAlchemyUnitOfWork(session_factory) as uow:
+            original_ack = uow.prompt_deliveries.get(delivery_id).acknowledged_at
+
+        resent = prepare_acknowledged_prompt_redelivery(
+            dispatch.dispatch_id,
+            uow_factory=factory,
+        )
+
+        assert resent.delivery_id == delivery_id
+        assert resent.dispatch_id == dispatch.dispatch_id
+        assert resent.session == "DevCockpit:DEV:DC-011"
+        assert resent.text == "Manual resend"
+        assert resent.attempt_count == 2
+        assert prepare_prompt_deliveries_for_send(uow_factory=factory) == ()
+
+        with SqlAlchemyUnitOfWork(session_factory) as uow:
+            loaded = uow.prompt_deliveries.get(delivery_id)
+            assert loaded.is_acknowledged is True
+            assert loaded.acknowledged_at == original_ack
+            assert loaded.attempt_count == 2
     finally:
         engine.dispose()
 

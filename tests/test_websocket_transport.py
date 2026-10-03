@@ -71,6 +71,80 @@ def test_websocket_sends_versioned_envelope_with_minimal_functional_payload_and_
             assert uow.prompt_dispatches.get(dispatch.dispatch_id).status.value == "PREPARED"
 
 
+def test_acknowledged_prompt_can_be_manually_redelivered_over_active_companion(
+    tmp_path: Path,
+) -> None:
+    application = _application(tmp_path)
+
+    with TestClient(application) as client:
+        dispatch = _create_dispatch(application, work_item="DC-011-REDO")
+
+        with client.websocket_connect("/api/companion/ws") as websocket:
+            original = websocket.receive_json()
+            websocket.send_json(
+                {
+                    "version": 1,
+                    "type": "ack",
+                    "delivery_id": original["delivery_id"],
+                }
+            )
+            websocket.send_json({"version": 1, "type": "ping"})
+            assert websocket.receive_json() == {"version": 1, "type": "pong"}
+
+            response = client.post(
+                f"/api/prompt-dispatches/{dispatch.dispatch_id}/redeliver"
+            )
+            assert response.status_code == 200
+            payload = response.json()
+            assert payload["status"] == "RESENT"
+            assert payload["dispatch_id"] == str(dispatch.dispatch_id)
+            assert payload["delivery_id"] == original["delivery_id"]
+            assert payload["attempt_count"] == 2
+
+            replay = websocket.receive_json()
+            assert replay["delivery_id"] == original["delivery_id"]
+            assert replay["payload"] == original["payload"]
+
+            websocket.send_json(
+                {
+                    "version": 1,
+                    "type": "ack",
+                    "delivery_id": replay["delivery_id"],
+                }
+            )
+            websocket.send_json({"version": 1, "type": "ping"})
+            assert websocket.receive_json() == {"version": 1, "type": "pong"}
+
+        with SqlAlchemyUnitOfWork(application.state.session_factory) as uow:
+            delivery = uow.prompt_deliveries.get_by_dispatch_id(dispatch.dispatch_id)
+            assert delivery.is_acknowledged is True
+            assert delivery.attempt_count == 2
+
+
+def test_manual_redelivery_requires_connected_companion(tmp_path: Path) -> None:
+    application = _application(tmp_path)
+
+    with TestClient(application) as client:
+        dispatch = _create_dispatch(application, work_item="DC-011-OFFLINE")
+        with client.websocket_connect("/api/companion/ws") as websocket:
+            original = websocket.receive_json()
+            websocket.send_json(
+                {
+                    "version": 1,
+                    "type": "ack",
+                    "delivery_id": original["delivery_id"],
+                }
+            )
+            websocket.send_json({"version": 1, "type": "ping"})
+            assert websocket.receive_json() == {"version": 1, "type": "pong"}
+
+        response = client.post(
+            f"/api/prompt-dispatches/{dispatch.dispatch_id}/redeliver"
+        )
+        assert response.status_code == 409
+        assert response.json()["detail"]["code"] == "COMPANION_NOT_CONNECTED"
+
+
 def test_disconnect_before_ack_replays_same_delivery_after_reconnect(tmp_path: Path) -> None:
     application = _application(tmp_path)
 
