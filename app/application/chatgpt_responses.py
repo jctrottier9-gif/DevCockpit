@@ -93,11 +93,11 @@ class ImportedChatGptResponseView:
 
 def _comparison_text(value: str) -> str:
     normalized = unicodedata.normalize("NFKC", value)
-    normalized = re.sub(r"\\[([^\\]]+)\\]\\(([^)]+)\\)", r"\\1 \\2", normalized)
+    normalized = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 \2", normalized)
     normalized = normalized.replace(chr(96), "").replace("*", "").replace("_", "")
-    normalized = re.sub(r"(?m)^\\s{0,3}#{1,6}\\s*", "", normalized)
-    normalized = re.sub(r"(?m)^\\s*[-+*]\\s+", "", normalized)
-    normalized = re.sub(r"\\s+", " ", normalized)
+    normalized = re.sub(r"(?m)^\s{0,3}#{1,6}\s*", "", normalized)
+    normalized = re.sub(r"(?m)^\s*[-+*]\s+", "", normalized)
+    normalized = re.sub(r"\s+", " ", normalized)
     return normalized.strip()
 
 
