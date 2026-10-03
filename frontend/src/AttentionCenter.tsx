@@ -48,6 +48,7 @@ export default function AttentionCenter({
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [redelivering, setRedelivering] = useState<string | null>(null)
+  const [authorizingGate, setAuthorizingGate] = useState<string | null>(null)
   const [notice, setNotice] = useState('')
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
@@ -106,6 +107,49 @@ export default function AttentionCenter({
     }
   }
 
+  async function authorizeArchitectureGate(workItemId: string) {
+    const confirmed = window.confirm(
+      'Autoriser explicitement DevCockpit à préparer le prompt ARCH pour ' + workItemId + ' ?',
+    )
+    if (!confirmed) return
+
+    setAuthorizingGate(workItemId)
+    setError('')
+    setNotice('')
+    try {
+      const response = await fetch(
+        '/api/projects/' + encodeURIComponent(projectId)
+          + '/architecture-gates/' + encodeURIComponent(workItemId) + '/authorize',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ confirm: true }),
+        },
+      )
+      const payload = await response.json() as {
+        status?: string
+        dispatch_id?: string
+        detail?: string | { code?: string; message?: string }
+      }
+      if (!response.ok) {
+        const detail = payload.detail
+        throw new Error(
+          typeof detail === 'string'
+            ? detail
+            : detail?.message ?? detail?.code ?? 'Autorisation de la gate impossible',
+        )
+      }
+      setNotice('Gate architecturale autorisée; le prompt ARCH est maintenant préparé.')
+      await refresh()
+    } catch (caught: unknown) {
+      setError(
+        caught instanceof Error ? caught.message : 'Autorisation de la gate impossible',
+      )
+    } finally {
+      setAuthorizingGate(null)
+    }
+  }
+
   useEffect(() => {
     const controller = new AbortController()
     void refresh(controller.signal)
@@ -153,11 +197,21 @@ export default function AttentionCenter({
             ? <a href={item.primary_action.href} target="_blank" rel="noreferrer">
                 {item.primary_action.label}
               </a>
-            : item.primary_action.work_item_id && item.primary_action.target === 'orchestration'
-              ? <button type="button" onClick={() => onOpenWorkItem(item.primary_action.work_item_id!)}>
-                  {item.primary_action.label}
+            : item.primary_action.work_item_id && item.primary_action.target === 'architecture_gate'
+              ? <button
+                  type="button"
+                  disabled={authorizingGate === item.primary_action.work_item_id}
+                  onClick={() => void authorizeArchitectureGate(item.primary_action.work_item_id!)}
+                >
+                  {authorizingGate === item.primary_action.work_item_id
+                    ? 'Autorisation…'
+                    : item.primary_action.label}
                 </button>
-              : <strong>{item.primary_action.label}</strong>}
+              : item.primary_action.work_item_id && item.primary_action.target === 'orchestration'
+                ? <button type="button" onClick={() => onOpenWorkItem(item.primary_action.work_item_id!)}>
+                    {item.primary_action.label}
+                  </button>
+                : <strong>{item.primary_action.label}</strong>}
           {item.primary_action.dispatch_id && item.context?.delivery_acknowledged === true &&
             <button
               type="button"

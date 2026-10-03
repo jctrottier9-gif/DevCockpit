@@ -32,7 +32,8 @@ Durable product rules:
 
 - GitHub and the canonical roadmap are authoritative for delivery state.
 - ChatGPT conversations are work surfaces, never the source of truth.
-- DevCockpit may prepare prompts automatically, but the user explicitly chooses when to send them.
+- DevCockpit may prepare DEV prompts automatically when deterministic rules authorize them, but the user explicitly chooses when to send them.
+- A READY architecture gate is never sufficient authority to create its ARCH PromptDispatch; explicit human authorization in DevCockpit is required first.
 - The Firefox extension is a thin transport/UI adapter, not a product-state authority.
 - CI, PR and merge evidence come from GitHub, not from statements made in ChatGPT.
 - Orchestration rules should be deterministic whenever practical.
@@ -201,6 +202,8 @@ Before marking development complete, use observable evidence appropriate to the 
 
 CI failures normally route back to the same logical DEV session. Do not create a new session merely because CI failed.
 
+A normal DEV turn ends after the PR is complete and auto-merge is armed when permitted. DevCockpit, not the DEV agent, observes CI/merge from that point and reactivates the same DEV session only when intervention is required.
+
 ---
 
 ## 8. Role boundaries
@@ -223,6 +226,8 @@ May:
 - recommend or author ADR changes when requested.
 
 Architecture gates should precede dependent implementation slices when the roadmap requires them.
+
+A READY architecture gate is an eligibility signal, not execution authority. The ARCH prompt requires an explicit human authorization action in DevCockpit; polling, dependency satisfaction, CI state and roadmap refresh must never substitute for that authorization.
 
 ### Developer
 
@@ -249,7 +254,7 @@ Owns deterministic orchestration:
 
 ## 9. Normal development lifecycle
 
-When asked to implement an approved issue or roadmap tranche, continue autonomously through:
+When asked to implement an approved issue or roadmap tranche, the DEV turn proceeds through:
 
 ```text
 understand scope
@@ -258,17 +263,20 @@ understand scope
 → targeted tests
 → broader relevant validation
 → create/update PR
-→ CI
-→ diagnose/fix normal failures
-→ CI green
-→ merge when permitted
-→ update issue/roadmap
-→ promote the real next READY item
+→ enable auto-merge when permitted
+→ report PR + head SHA
+→ STOP DEV TURN
 ```
 
-Do not stop simply because implementation is complete, a PR exists or CI has started, unless the user explicitly requested that stop point.
+After that handoff, DevCockpit observes GitHub PR/CI/merge evidence. The DEV agent must not stay active merely to poll CI.
 
-If repository rules prevent merge, report the blocker rather than bypassing it.
+If current-head CI becomes red, DevCockpit may automatically prepare a corrective prompt for the same logical DEV session. The DEV fixes only the observed failure within scope, pushes the correction, ensures auto-merge remains armed when permitted, reports the new head SHA, and stops again.
+
+If CI becomes green and GitHub auto-merges, DevCockpit observes the merge and surfaces the required roadmap reconciliation. A DEV agent does not autonomously start the next WorkItem.
+
+Architecture gates are different: DevCockpit may detect a READY `ARCHITECTURE_GATE`, but it must not create its ARCH PromptDispatch until a human explicitly authorizes that gate in the cockpit.
+
+If repository rules prevent auto-merge or a product/architecture decision is unresolved, report the blocker rather than bypassing it.
 
 ---
 
