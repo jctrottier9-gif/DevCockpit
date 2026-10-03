@@ -15,6 +15,7 @@ from app.api.orchestration import build_orchestration_router
 from app.application.chatgpt_responses import (
     ChatGptResponseImportError,
     ImportChatGptResponseCommand,
+    ResponseEchoesPromptError,
     ResponseIdConflictError,
     ResponseSessionMismatchError,
     UnknownPromptDeliveryError,
@@ -782,6 +783,13 @@ def create_app(
                         await connection_manager.send_json(
                             build_error_message(
                                 "response_id_conflict",
+                                response_id=message.response_id,
+                            )
+                        )
+                    except ResponseEchoesPromptError:
+                        await connection_manager.send_json(
+                            build_error_message(
+                                "response_echoes_prompt",
                                 response_id=message.response_id,
                             )
                         )

@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.application.chatgpt_responses import (
     ImportChatGptResponseCommand,
+    ResponseEchoesPromptError,
     ResponseIdConflictError,
     ResponseImportResult,
     ResponseSessionMismatchError,
@@ -108,6 +109,33 @@ def test_import_round_trip_and_identical_replay_are_idempotent(tmp_path: Path) -
     finally:
         engine.dispose()
 
+
+def test_prompt_echo_is_rejected_before_persistence(tmp_path: Path) -> None:
+    _, engine, session_factory = _persistence(tmp_path)
+    factory, dispatch, delivery = _source_delivery(session_factory)
+    try:
+        echoed_values = (
+            dispatch.prompt_text,
+            "  " + dispatch.prompt_text.replace(" ", "\n") + "  ",
+            "**Implement** response return",
+        )
+        for echoed in echoed_values:
+            with pytest.raises(ResponseEchoesPromptError):
+                import_chatgpt_response(
+                    ImportChatGptResponseCommand(
+                        uuid4(),
+                        delivery.delivery_id,
+                        dispatch.agent_session,
+                        echoed,
+                    ),
+                    uow_factory=factory,
+                )
+        with session_factory() as session:
+            assert session.scalar(
+                select(func.count()).select_from(ImportedChatGptResponseRecord)
+            ) == 0
+    finally:
+        engine.dispose()
 
 def test_response_id_collision_is_explicit_and_never_overwrites(tmp_path: Path) -> None:
     _, engine, session_factory = _persistence(tmp_path)
