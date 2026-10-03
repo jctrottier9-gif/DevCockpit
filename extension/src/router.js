@@ -94,14 +94,12 @@
     _serialize(session, task) {
       const previous = this.sessionChains.get(session) || Promise.resolve();
       const current = previous.then(task, task);
-      this.sessionChains.set(
-        session,
-        current.finally(() => {
-          if (this.sessionChains.get(session) === current) {
-            this.sessionChains.delete(session);
-          }
-        }),
-      );
+      const tracked = current.finally(() => {
+        if (this.sessionChains.get(session) === tracked) {
+          this.sessionChains.delete(session);
+        }
+      });
+      this.sessionChains.set(session, tracked);
       return current;
     }
 
