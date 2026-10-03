@@ -43,10 +43,11 @@
         session: prompt.session,
         routing: prompt.routing,
       });
+      await queueStore.setError(prompt.deliveryId, null);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       try {
-        await queueStore.markQueued(prompt.deliveryId, message);
+        await queueStore.setError(prompt.deliveryId, message);
       } catch {
         // The queue remains authoritative for accepted delivery state.
       }
