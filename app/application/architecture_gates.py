@@ -87,7 +87,7 @@ def authorize_architecture_gate(
 
 
 def build_architecture_gate_prompt(project: Project, work_item: WorkItem) -> str:
-    return f"""Tu travailles sur le dépôt GitHub \`{project.repository_full_name}\`.
+    return f"""Tu travailles sur le dépôt GitHub `{project.repository_full_name}`.
 
 Je veux une analyse architecturale approfondie en lecture seule pour la gate :
 
@@ -117,7 +117,7 @@ Important :
 - inspecte le code et les tests existants nécessaires à l'analyse;
 - ne commence pas la tranche d'implémentation dépendante.
 
-Produis les constats architecturaux, les contraintes, les décisions ou options réellement nécessaires et la recommandation permettant au humain de poursuivre la gate.
+Produis les constats architecturaux, les contraintes, les décisions ou options réellement nécessaires et la recommandation permettant à l'humain de poursuivre la gate.
 """
 
 
