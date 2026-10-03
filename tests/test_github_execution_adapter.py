@@ -115,7 +115,22 @@ def test_branch_is_developing_only_when_compare_reports_ahead() -> None:
                 ],
             )
         if path == "/repos/jctrottier9-gif/DevCockpit/compare/main...dc-021-execution-ci":
-            return httpx.Response(200, json={"ahead_by": 2})
+            return httpx.Response(
+                200,
+                json={
+                    "ahead_by": 2,
+                    "commits": [
+                        {
+                            "sha": "abc123",
+                            "commit": {
+                                "committer": {
+                                    "date": "2026-10-03T08:15:00Z"
+                                }
+                            },
+                        }
+                    ],
+                },
+            )
         raise AssertionError(f"unexpected GitHub request: {request.url}")
 
     evidence = reader_for(handler).read(PROJECT, WORK_ITEM)
@@ -124,6 +139,7 @@ def test_branch_is_developing_only_when_compare_reports_ahead() -> None:
     assert projection.state is ExecutionState.DEVELOPING
     assert projection.branch is not None
     assert projection.branch.ahead_by == 2
+    assert projection.branch.last_activity_at == "2026-10-03T08:15:00Z"
 
 
 def test_incidental_body_mention_does_not_trigger_pr_ci_resolution() -> None:
