@@ -159,6 +159,19 @@
       });
     }
 
+    async setError(deliveryId, errorMessage = null) {
+      return this._mutate(async () => {
+        const queue = await this._loadUnsafe();
+        const entry = queue.find((item) => item.delivery_id === deliveryId);
+        if (!entry) {
+          throw new QueueStorageError(`delivery_not_found:${deliveryId}`);
+        }
+        entry.last_error = errorMessage;
+        await this._saveUnsafe(queue);
+        return clone(entry);
+      });
+    }
+
     async markQueued(deliveryId, errorMessage = null) {
       return this._mutate(async () => {
         const queue = await this._loadUnsafe();
