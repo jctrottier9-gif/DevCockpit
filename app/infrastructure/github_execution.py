@@ -212,8 +212,39 @@ class GitHubExecutionReader:
             ahead_by = compare.get("ahead_by")
             if not isinstance(ahead_by, int):
                 raise ExecutionPayloadError("GitHub compare ahead_by must be an integer")
-            branches.append(BranchEvidence(name=name, sha=sha, ahead_by=ahead_by))
+            last_activity_at = self._latest_compare_commit_date(compare)
+            branches.append(
+                BranchEvidence(
+                    name=name,
+                    sha=sha,
+                    ahead_by=ahead_by,
+                    last_activity_at=last_activity_at,
+                )
+            )
         return tuple(branches)
+
+    @staticmethod
+    def _latest_compare_commit_date(compare: dict[str, object]) -> str | None:
+        commits = compare.get("commits")
+        if not isinstance(commits, list):
+            return None
+
+        dates: list[str] = []
+        for item in commits:
+            if not isinstance(item, dict):
+                continue
+            commit = item.get("commit")
+            if not isinstance(commit, dict):
+                continue
+            for identity_key in ("committer", "author"):
+                identity = commit.get(identity_key)
+                if not isinstance(identity, dict):
+                    continue
+                value = identity.get("date")
+                if isinstance(value, str) and value:
+                    dates.append(value)
+                    break
+        return max(dates) if dates else None
 
     def _read_workflow_runs(
         self,
