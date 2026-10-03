@@ -27,6 +27,32 @@
     return JSON.parse(JSON.stringify(value));
   }
 
+  function normalizeRouting(routing) {
+    if (routing === undefined || routing === null) {
+      return null;
+    }
+    if (
+      typeof routing !== "object" ||
+      !Number.isInteger(routing.binding_version) ||
+      routing.binding_version < 1 ||
+      typeof routing.conversation_id !== "string" ||
+      routing.conversation_id === "" ||
+      typeof routing.canonical_url !== "string" ||
+      routing.canonical_url === ""
+    ) {
+      throw new QueueStorageError("stored_routing_invalid");
+    }
+    return {
+      binding_version: routing.binding_version,
+      conversation_id: routing.conversation_id,
+      canonical_url: routing.canonical_url,
+    };
+  }
+
+  function sameRouting(left, right) {
+    return JSON.stringify(normalizeRouting(left)) === JSON.stringify(normalizeRouting(right));
+  }
+
   function validateEntry(entry) {
     if (
       !entry ||
@@ -44,6 +70,7 @@
     ) {
       throw new QueueStorageError("stored_queue_invalid");
     }
+    entry.routing = normalizeRouting(entry.routing);
     return entry;
   }
 
@@ -87,12 +114,17 @@
       return this._loadUnsafe();
     }
 
-    async acceptPrompt({ deliveryId, session, text }) {
+    async acceptPrompt({ deliveryId, session, text, routing = null }) {
+      const normalizedRouting = normalizeRouting(routing);
       return this._mutate(async () => {
         const queue = await this._loadUnsafe();
         const existing = queue.find((entry) => entry.delivery_id === deliveryId);
         if (existing) {
-          if (existing.session !== session || existing.text !== text) {
+          if (
+            existing.session !== session ||
+            existing.text !== text ||
+            !sameRouting(existing.routing, normalizedRouting)
+          ) {
             throw new DeliveryConflictError(deliveryId);
           }
           return { kind: "duplicate", entry: clone(existing) };
@@ -102,6 +134,7 @@
           delivery_id: deliveryId,
           session,
           text,
+          routing: normalizedRouting,
           received_at: this.now().toISOString(),
           local_status: LOCAL_STATUS.QUEUED,
           last_error: null,
