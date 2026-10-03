@@ -815,3 +815,16 @@ Normal DEV turns stop after PR + auto-merge handoff. DevCockpit observes GitHub 
 When GitHub proves a WORK delivery is merged and green but the canonical roadmap is still stale, DevCockpit automatically prepares an idempotent `ROADMAP_RECONCILE` follow-up in the same DEV session. The DEV is authorized to reread GitHub and update the canonical roadmap directly without another human confirmation, limited to deterministic delivery-state reconciliation (delivered item `DONE`, true next existing item `READY`, later items preserved/blocked as required).
 
 Structural roadmap changes still use the proposal/decision path. A newly READY architecture gate is not auto-launched: explicit human authorization is still required before an ARCH PromptDispatch may be created.
+
+
+## Stale DEV watchdog
+
+DevCockpit can prepare a same-session recovery prompt when a DEV WorkItem is still `DEVELOPING`, its initial prompt has already been acknowledged by Firefox, and the strongly associated GitHub branch has not advanced for the configured inactivity window.
+
+The default is 60 minutes:
+
+```text
+DEVCOCKPIT_DEV_STALE_AFTER_SECONDS=3600
+```
+
+The watchdog is idempotent for the same branch name, SHA and last GitHub activity timestamp. A new branch commit changes the evidence identity and resets the inactivity window. The recovery prompt tells the DEV to inspect and resume the existing branch rather than restart the tranche or create concurrent work.
