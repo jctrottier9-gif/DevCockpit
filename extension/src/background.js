@@ -4,8 +4,10 @@
   const namespace = globalThis.DevCockpitCompanion;
   const { QueueStore } = namespace.queue;
   const { SentPromptStore, PendingResponseStore } = namespace.responses;
+  const { ConversationRoutingStore } = namespace.routingStore;
+  const { ConversationRouter, isSupportedChatGptUrl } = namespace.routing;
   const { CompanionTransport, CONNECTION_STATUS } = namespace.transport;
-  const { PromptSendCoordinator, isSupportedChatGptUrl } = namespace.send;
+  const { PromptSendCoordinator } = namespace.send;
   const { buildChatGptResponseMessage, ProtocolError } = namespace.protocol;
 
   const SOCKET_URL = "ws://127.0.0.1:8000/api/companion/ws";
@@ -13,6 +15,15 @@
   const queueStore = new QueueStore(browser.storage.local);
   const sentPromptStore = new SentPromptStore(browser.storage.local);
   const pendingResponseStore = new PendingResponseStore(browser.storage.local);
+  const routingStore = new ConversationRoutingStore(browser.storage.local);
+  const router = new ConversationRouter({
+    routingStore,
+    queryTabs: () =>
+      browser.tabs.query({
+        url: ["https://chatgpt.com/*", "https://chat.openai.com/*"],
+      }),
+    createTab: ({ url, active }) => browser.tabs.create({ url, active }),
+  });
   let connection = {
     status: CONNECTION_STATUS.DISCONNECTED,
     lastError: null,
@@ -26,12 +37,42 @@
     }
   }
 
+  async function routeQueuedPrompt(prompt) {
+    try {
+      await router.route({
+        session: prompt.session,
+        routing: prompt.routing,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      try {
+        await queueStore.markQueued(prompt.deliveryId, message);
+      } catch {
+        // The queue remains authoritative for accepted delivery state.
+      }
+    } finally {
+      await broadcast("devcockpit_queue_changed");
+    }
+  }
+
+  async function routePersistedQueue() {
+    const queue = await queueStore.list();
+    for (const entry of queue) {
+      void routeQueuedPrompt({
+        deliveryId: entry.delivery_id,
+        session: entry.session,
+        routing: entry.routing,
+      });
+    }
+  }
+
   const transport = new CompanionTransport({
     url: SOCKET_URL,
     webSocketFactory: (url) => new WebSocket(url),
     onPrompt: async (prompt) => {
       await queueStore.acceptPrompt(prompt);
       await broadcast("devcockpit_queue_changed");
+      void routeQueuedPrompt(prompt);
     },
     getPendingResponses: () => pendingResponseStore.list(),
     onResponseAck: async (responseId) => {
@@ -54,7 +95,7 @@
   const sendCoordinator = new PromptSendCoordinator({
     queueStore,
     sentPromptStore,
-    getActiveTabs: () => browser.tabs.query({ active: true, currentWindow: true }),
+    router,
     sendToTab: (tabId, message) => browser.tabs.sendMessage(tabId, message),
   });
 
@@ -149,6 +190,7 @@
         queue: await queueStore.list(),
         sentPrompts: await sentPromptStore.list(),
         pendingResponses: await pendingResponseStore.list(),
+        routing: await routingStore.list(),
       };
     }
 
@@ -184,5 +226,6 @@
     return undefined;
   });
 
+  void routePersistedQueue();
   transport.connect();
 })();
