@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
+from app.api.architecture_gates import build_architecture_gate_router
 from app.api.attention import build_attention_router
 from app.api.flow_analytics import build_flow_analytics_router
 from app.api.orchestration import build_orchestration_router
@@ -456,6 +457,12 @@ def create_app(
     application.state.flow_analytics_reader = active_flow_analytics_reader
     application.state.roadmap_writer = active_roadmap_writer
     application.state.issue_mapping_reader = active_issue_mapping_reader
+
+    application.include_router(build_architecture_gate_router(
+        project_catalog=active_project_catalog,
+        roadmap_reader=active_roadmap_reader,
+        uow_factory=uow_factory,
+    ))
 
     application.include_router(build_orchestration_router(
         project_catalog=active_project_catalog,

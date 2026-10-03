@@ -803,3 +803,8 @@ KEY | TYPE | STATUS | PARENT | LANE | TITLE | REPLACES
 V2 ajoute `SUPERSEDED` et `REPLACES`. Les anciens WorkItems restent présents; un WorkItem `SUPERSEDED` doit être remplacé par au moins une nouvelle clé, et le replacement ne constitue pas une dependency. Les blocs V1/V2 ambigus, mixtes, incomplets ou de version inconnue échouent fermés.
 
 DC-041A reste entièrement read-only envers GitHub : le backend peut lire le roadmap nécessaire à une nouvelle révision, mais il n'expose aucun endpoint `confirm`, `apply` ou `reconcile`, et aucun `RoadmapWriter` n'est présent. L'application distante du body et la réconciliation appartiennent exclusivement à DC-041B.
+
+
+## Orchestration handoff and architecture gates
+
+Normal DEV turns stop after PR + auto-merge handoff. DevCockpit observes GitHub and reactivates DEV only when required. READY architecture gates require explicit human authorization before the ARCH PromptDispatch is created. See `docs/architecture/ADR-0011-dev-handoff-and-human-architecture-gates.md`.

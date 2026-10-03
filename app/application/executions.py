@@ -211,7 +211,9 @@ Contexte canonique :
 
 Travaille sur le main actuel et synchronise-toi avec le vrai main avant de commencer. Lis d'abord AGENTS.md, consulte le roadmap maître #{project.roadmap_issue_number} et son bloc canonique COCKPIT_PIPELINE_V1, COCKPIT_PIPELINE_V2 ou COCKPIT_PIPELINE_V3 explicitement présent, puis consulte le WorkItem {work_item.key} et les ADR applicables. Inspecte le code et les tests existants avant de modifier quoi que ce soit.
 
-Implémente uniquement la tranche autorisée, respecte strictement son scope et poursuis jusqu'au cycle de livraison prévu dans AGENTS.md. Ne commence pas la tranche suivante.
+Implémente uniquement la tranche autorisée et respecte strictement son scope.
+
+Quand la PR est complète, active l'auto-merge si les règles du dépôt le permettent, rapporte le numéro de PR et le head SHA courant, puis ARRÊTE ton tour DEV. Ne reste pas à poller ou attendre la CI : DevCockpit observe GitHub et te renverra un prompt dans cette même session uniquement si une intervention DEV est nécessaire. Ne commence pas la tranche suivante.
 """
 
 
@@ -252,7 +254,7 @@ Jobs/checks rouges connus :
 
 Analyse les échecs actuels sur GitHub, corrige uniquement ce qui relève de {work_item.key}, exécute les validations pertinentes, pousse les corrections et poursuis jusqu'au cycle prévu dans AGENTS.md.
 
-Reste strictement dans le scope du WorkItem {work_item.key}. Ne commence pas la tranche suivante.
+Reste strictement dans le scope du WorkItem {work_item.key}. Après avoir poussé la correction, vérifie que l'auto-merge demeure armé lorsque permis, rapporte le nouveau head SHA, puis ARRÊTE ton tour DEV. Ne reste pas à poller la CI : DevCockpit reprend l'observation GitHub. Ne commence pas la tranche suivante.
 """
 
 

@@ -10,6 +10,7 @@ from app.application.parallel_executions import (
     read_project_parallel_dev_executions,
 )
 from app.domain.execution import ExecutionState
+from app.domain.roadmap import WorkItemStatus, WorkItemType
 from app.domain.roadmap_change import ApplicationStatus, ProposalStatus
 
 
@@ -33,6 +34,7 @@ class AttentionKind(StrEnum):
     ROADMAP_PROPOSAL = "ROADMAP_PROPOSAL"
     ROADMAP_APPLICATION = "ROADMAP_APPLICATION"
     RESOURCE_LOCK_CONFLICT = "RESOURCE_LOCK_CONFLICT"
+    ARCHITECTURE_GATE_AUTHORIZATION = "ARCHITECTURE_GATE_AUTHORIZATION"
 
 
 @dataclass(frozen=True, slots=True)
@@ -324,6 +326,78 @@ def _execution_items(
                 ),
             )
     return by_work_item
+
+
+def _architecture_gate_items(
+    *,
+    project_id: str,
+    scheduler,
+    prepared_dispatches,
+    items: dict[str, AttentionItem],
+) -> set[str]:
+    """Surface READY ARCH gates without ever creating their PromptDispatch."""
+
+    authorized: set[str] = set()
+    prepared_arch = {
+        dispatch.work_item_id
+        for dispatch in prepared_dispatches
+        if dispatch.project_id == project_id and dispatch.role.value == "ARCH"
+    }
+
+    for candidate in scheduler.items:
+        work_item = candidate.work_item
+        if (
+            work_item.type is not WorkItemType.ARCHITECTURE_GATE
+            or work_item.status is not WorkItemStatus.READY
+            or not candidate.executable
+            or candidate.expected_role != "ARCH"
+        ):
+            continue
+
+        if work_item.key in prepared_arch:
+            authorized.add(work_item.key)
+            continue
+
+        _add(
+            items,
+            AttentionItem(
+                stable_key=_stable_key(
+                    project_id,
+                    "ARCH",
+                    work_item.key,
+                    "AUTHORIZE_ARCHITECTURE_GATE",
+                ),
+                level=AttentionLevel.ACTION,
+                kind=AttentionKind.ARCHITECTURE_GATE_AUTHORIZATION,
+                title=f"ARCH · {work_item.key} · autorisation requise",
+                reason=(
+                    "La gate architecturale est READY et ses dépendances sont satisfaites, "
+                    "mais DevCockpit ne peut pas lancer une analyse ARCH sans autorisation humaine explicite."
+                ),
+                project_id=project_id,
+                work_item_id=work_item.key,
+                role="ARCH",
+                agent_session=f"{project_id}:ARCH:{work_item.key}",
+                primary_action=AttentionAction(
+                    kind="AUTHORIZE_ARCHITECTURE_GATE",
+                    label="Autoriser l'analyse architecturale",
+                    target="architecture_gate",
+                    work_item_id=work_item.key,
+                ),
+                evidence=(
+                    AttentionEvidence(
+                        "SchedulerProjection",
+                        work_item.key,
+                        "READY_ARCHITECTURE_GATE_REQUIRES_HUMAN_AUTHORIZATION",
+                    ),
+                ),
+                context={
+                    "human_authorization_required": True,
+                    "prompt_dispatch_created": False,
+                },
+            ),
+        )
+    return authorized
 
 
 def _prompt_items(
@@ -696,7 +770,17 @@ def read_project_attention(
         for handoff in handoffs
         if handoff.blocking
     }
-    eligible_work_items = set(execution_by_work_item) | active_handoff_work_items
+    authorized_architecture_gates = _architecture_gate_items(
+        project_id=project.project_id,
+        scheduler=parallel.scheduler,
+        prepared_dispatches=prepared_dispatches,
+        items=items,
+    )
+    eligible_work_items = (
+        set(execution_by_work_item)
+        | active_handoff_work_items
+        | authorized_architecture_gates
+    )
 
     _prompt_items(
         project_id=project.project_id,
