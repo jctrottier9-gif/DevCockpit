@@ -6,8 +6,15 @@ import pytest
 from sqlalchemy import func, inspect, select
 from sqlalchemy.exc import IntegrityError
 
+from app.application.conversation_bindings import (
+    BindConversationCommand,
+    InvalidateConversationBindingCommand,
+    bind_conversation,
+    invalidate_conversation_binding,
+)
 from app.application.prompt_deliveries import (
     AcknowledgementResult,
+    PromptRedeliveryBindingInvalidated,
     acknowledge_prompt_delivery,
     prepare_acknowledged_prompt_redelivery,
     prepare_prompt_deliveries_for_send,
@@ -105,10 +112,88 @@ def test_replay_reuses_same_delivery_and_never_creates_new_dispatch(tmp_path: Pa
         assert second[0].dispatch_id == dispatch.dispatch_id
         assert first[0].attempt_count == 1
         assert second[0].attempt_count == 2
+        assert first[0].routing is None
+        assert second[0].routing is None
 
         with session_factory() as session:
             assert session.scalar(select(func.count()).select_from(PromptDispatchRecord)) == 1
             assert session.scalar(select(func.count()).select_from(PromptDeliveryRecord)) == 1
+    finally:
+        engine.dispose()
+
+
+def test_bound_session_delivery_carries_current_routing_snapshot(tmp_path: Path) -> None:
+    _, engine, session_factory = _persistence(tmp_path)
+    factory = lambda: SqlAlchemyUnitOfWork(session_factory)
+    create_prompt_dispatch(
+        CreatePromptDispatchCommand(
+            project_id="DevCockpit",
+            work_item_id="DC-063A",
+            role="DEV",
+            prompt_text="Route me",
+            idempotency_key="dc063a:routing",
+        ),
+        uow_factory=factory,
+    )
+    binding = bind_conversation(
+        BindConversationCommand(
+            agent_session="DevCockpit:DEV:DC-063A",
+            conversation_id="route-conversation",
+            canonical_url="https://chat.openai.com/c/route-conversation?model=auto",
+        ),
+        uow_factory=factory,
+    )
+
+    try:
+        outbound = prepare_prompt_deliveries_for_send(uow_factory=factory)
+        assert len(outbound) == 1
+        assert outbound[0].routing is not None
+        assert outbound[0].routing.binding_version == binding.version
+        assert outbound[0].routing.conversation_id == "route-conversation"
+        assert outbound[0].routing.canonical_url == "https://chatgpt.com/c/route-conversation"
+    finally:
+        engine.dispose()
+
+
+def test_invalidated_binding_fails_closed_before_delivery_or_redelivery(tmp_path: Path) -> None:
+    _, engine, session_factory = _persistence(tmp_path)
+    factory = lambda: SqlAlchemyUnitOfWork(session_factory)
+    dispatch = create_prompt_dispatch(
+        CreatePromptDispatchCommand(
+            project_id="DevCockpit",
+            work_item_id="DC-063A-INVALID",
+            role="DEV",
+            prompt_text="Do not route",
+            idempotency_key="dc063a:invalidated",
+        ),
+        uow_factory=factory,
+    )
+    bind_conversation(
+        BindConversationCommand(
+            agent_session=dispatch.agent_session,
+            conversation_id="unsafe",
+            canonical_url="https://chatgpt.com/c/unsafe",
+        ),
+        uow_factory=factory,
+    )
+    first = prepare_prompt_deliveries_for_send(uow_factory=factory)
+    assert len(first) == 1
+    acknowledge_prompt_delivery(first[0].delivery_id, uow_factory=factory)
+    invalidate_conversation_binding(
+        InvalidateConversationBindingCommand(
+            agent_session=dispatch.agent_session,
+            reason="target_no_longer_safe",
+        ),
+        uow_factory=factory,
+    )
+
+    try:
+        assert prepare_prompt_deliveries_for_send(uow_factory=factory) == ()
+        with pytest.raises(PromptRedeliveryBindingInvalidated):
+            prepare_acknowledged_prompt_redelivery(
+                dispatch.dispatch_id,
+                uow_factory=factory,
+            )
     finally:
         engine.dispose()
 
