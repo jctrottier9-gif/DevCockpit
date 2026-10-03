@@ -435,7 +435,7 @@ The popup reports `Connecté`, `Reconnexion…`, `Déconnecté`, or an explicit 
 
 ### Queue and ACK semantics
 
-For every protocol-v1 `prompt`, the companion validates the envelope, deduplicates by `delivery_id`, and persists the entry before sending its ACK:
+For every protocol-v2 `prompt`, the companion validates the envelope, deduplicates by `delivery_id`, and persists the entry before sending its ACK:
 
 ~~~text
 receive prompt
@@ -483,9 +483,10 @@ FastAPI local started
 → test PromptDispatch prepared through the application use case
 → prompt appears once in the extension queue
 → PromptDelivery becomes ACKNOWLEDGED only after local queue persistence
-→ intended ChatGPT conversation opened in the active tab
+→ companion routes the AgentSession to its exact bound conversation or dedicated provisional tab
 → user selects the prompt and clicks Envoyer
-→ prompt is sent in that active conversation
+→ target is revalidated immediately before the DOM action
+→ prompt is sent only in that routed conversation
 ~~~
 
 If the real ChatGPT DOM cannot be exercised in the current development environment, record that limitation rather than treating the DOM-fixture tests as proof of a browser smoke.
