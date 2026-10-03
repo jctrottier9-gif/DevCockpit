@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from difflib import SequenceMatcher
 from enum import StrEnum
+import re
+import unicodedata
 from typing import Callable, Protocol, Self
 from uuid import UUID
 
@@ -28,6 +31,10 @@ class ResponseIdConflictError(ChatGptResponseImportError):
 
 
 class ResponseCorrelationError(ChatGptResponseImportError):
+    pass
+
+
+class ResponseEchoesPromptError(ChatGptResponseImportError):
     pass
 
 
@@ -84,6 +91,30 @@ class ImportedChatGptResponseView:
     text: str
 
 
+def _comparison_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value)
+    normalized = re.sub(r"\\[([^\\]]+)\\]\\(([^)]+)\\)", r"\\1 \\2", normalized)
+    normalized = normalized.replace(chr(96), "").replace("*", "").replace("_", "")
+    normalized = re.sub(r"(?m)^\\s{0,3}#{1,6}\\s*", "", normalized)
+    normalized = re.sub(r"(?m)^\\s*[-+*]\\s+", "", normalized)
+    normalized = re.sub(r"\\s+", " ", normalized)
+    return normalized.strip()
+
+
+def _response_echoes_prompt(response_text: str, prompt_text: str) -> bool:
+    response = _comparison_text(response_text)
+    prompt = _comparison_text(prompt_text)
+    if not response or not prompt:
+        return False
+    if response == prompt:
+        return True
+    if min(len(response), len(prompt)) < 80:
+        return False
+    length_ratio = len(response) / len(prompt)
+    if not 0.9 <= length_ratio <= 1.1:
+        return False
+    return SequenceMatcher(None, response, prompt).ratio() >= 0.985
+
 def _resolve_dispatch(
     delivery_id: UUID,
     *,
@@ -112,6 +143,8 @@ def import_chatgpt_response(
         _, dispatch = _resolve_dispatch(command.delivery_id, uow=uow)
         if command.session != dispatch.agent_session:
             raise ResponseSessionMismatchError("session_mismatch")
+        if _response_echoes_prompt(command.text, dispatch.prompt_text):
+            raise ResponseEchoesPromptError("response_echoes_prompt")
 
         existing = uow.chatgpt_responses.get(command.response_id)
         if existing is not None:
