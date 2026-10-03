@@ -44,6 +44,8 @@ const jsFiles = [
   "src/protocol.js",
   "src/queue-store.js",
   "src/response-store.js",
+  "src/routing-store.js",
+  "src/router.js",
   "src/transport.js",
   "src/send-coordinator.js",
   "src/background.js",

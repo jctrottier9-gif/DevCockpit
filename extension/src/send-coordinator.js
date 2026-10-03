@@ -3,30 +3,15 @@
 
   const namespace = (globalThis.DevCockpitCompanion ||= {});
 
-  function isSupportedChatGptUrl(rawUrl) {
-    if (typeof rawUrl !== "string") {
-      return false;
-    }
-    try {
-      const url = new URL(rawUrl);
-      return (
-        url.protocol === "https:" &&
-        (url.hostname === "chatgpt.com" || url.hostname === "chat.openai.com")
-      );
-    } catch {
-      return false;
-    }
-  }
-
   function errorText(error) {
     return error instanceof Error ? error.message : String(error);
   }
 
   class PromptSendCoordinator {
-    constructor({ queueStore, sentPromptStore, getActiveTabs, sendToTab }) {
+    constructor({ queueStore, sentPromptStore, router, sendToTab }) {
       this.queueStore = queueStore;
       this.sentPromptStore = sentPromptStore;
-      this.getActiveTabs = getActiveTabs;
+      this.router = router;
       this.sendToTab = sendToTab;
     }
 
@@ -36,15 +21,15 @@
 
       try {
         entry = await this.queueStore.markSendRequested(deliveryId);
-
-        const tabs = await this.getActiveTabs();
-        if (!Array.isArray(tabs) || tabs.length !== 1) {
-          throw new Error("Aucun onglet actif unique");
-        }
-        const tab = tabs[0];
-        if (!Number.isInteger(tab.id) || !isSupportedChatGptUrl(tab.url)) {
-          throw new Error("Ouvrez la conversation ChatGPT cible dans l'onglet actif");
-        }
+        const target = await this.router.route({
+          session: entry.session,
+          routing: entry.routing,
+        });
+        const tab = await this.router.revalidateTarget({
+          session: entry.session,
+          routing: entry.routing,
+          tabId: target.tabId,
+        });
 
         const response = await this.sendToTab(tab.id, {
           type: "devcockpit_send_prompt",
@@ -59,7 +44,7 @@
           deliveryId,
           session: entry.session,
           tabId: tab.id,
-          conversationUrl: tab.url,
+          conversationUrl: tab.url || target.url || null,
         });
         await this.queueStore.remove(deliveryId);
         return { ok: true };
@@ -87,7 +72,6 @@
   }
 
   namespace.send = {
-    isSupportedChatGptUrl,
     PromptSendCoordinator,
   };
 })();

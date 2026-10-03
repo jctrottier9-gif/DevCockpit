@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from app.application.conversation_bindings import BindConversationCommand, bind_conversation
 from app.application.prompt_dispatches import CreatePromptDispatchCommand, create_prompt_dispatch
 from app.config import Settings
 from app.infrastructure.database import upgrade_database
@@ -44,9 +45,10 @@ def test_websocket_sends_versioned_envelope_with_minimal_functional_payload_and_
         with client.websocket_connect("/api/companion/ws") as websocket:
             message = websocket.receive_json()
 
-            assert message["version"] == 1
+            assert message["version"] == 2
             assert message["type"] == "prompt"
-            assert set(message) == {"version", "type", "delivery_id", "payload"}
+            assert set(message) == {"version", "type", "delivery_id", "payload", "routing"}
+            assert message["routing"] is None
             assert message["payload"] == {
                 "session": "DevCockpit:DEV:DC-011",
                 "text": "Prompt for DC-011",
@@ -55,13 +57,13 @@ def test_websocket_sends_versioned_envelope_with_minimal_functional_payload_and_
 
             websocket.send_json(
                 {
-                    "version": 1,
+                    "version": 2,
                     "type": "ack",
                     "delivery_id": message["delivery_id"],
                 }
             )
-            websocket.send_json({"version": 1, "type": "ping"})
-            assert websocket.receive_json() == {"version": 1, "type": "pong"}
+            websocket.send_json({"version": 2, "type": "ping"})
+            assert websocket.receive_json() == {"version": 2, "type": "pong"}
 
         with SqlAlchemyUnitOfWork(application.state.session_factory) as uow:
             delivery = uow.prompt_deliveries.get_by_dispatch_id(dispatch.dispatch_id)
@@ -69,6 +71,35 @@ def test_websocket_sends_versioned_envelope_with_minimal_functional_payload_and_
             assert delivery.is_acknowledged is True
             assert delivery.attempt_count == 1
             assert uow.prompt_dispatches.get(dispatch.dispatch_id).status.value == "PREPARED"
+
+
+def test_websocket_v2_carries_exact_binding_snapshot(tmp_path: Path) -> None:
+    application = _application(tmp_path)
+
+    with TestClient(application) as client:
+        _create_dispatch(application, work_item="DC-063A")
+        binding = bind_conversation(
+            BindConversationCommand(
+                agent_session="DevCockpit:DEV:DC-063A",
+                conversation_id="conversation-063a",
+                canonical_url="https://chat.openai.com/c/conversation-063a?model=auto",
+            ),
+            uow_factory=application.state.uow_factory,
+        )
+
+        with client.websocket_connect("/api/companion/ws") as websocket:
+            message = websocket.receive_json()
+            assert message["version"] == 2
+            assert message["routing"] == {
+                "binding_version": binding.version,
+                "conversation_id": "conversation-063a",
+                "canonical_url": "https://chatgpt.com/c/conversation-063a",
+            }
+            websocket.send_json({
+                "version": 2,
+                "type": "ack",
+                "delivery_id": message["delivery_id"],
+            })
 
 
 def test_acknowledged_prompt_can_be_manually_redelivered_over_active_companion(
@@ -83,13 +114,13 @@ def test_acknowledged_prompt_can_be_manually_redelivered_over_active_companion(
             original = websocket.receive_json()
             websocket.send_json(
                 {
-                    "version": 1,
+                    "version": 2,
                     "type": "ack",
                     "delivery_id": original["delivery_id"],
                 }
             )
-            websocket.send_json({"version": 1, "type": "ping"})
-            assert websocket.receive_json() == {"version": 1, "type": "pong"}
+            websocket.send_json({"version": 2, "type": "ping"})
+            assert websocket.receive_json() == {"version": 2, "type": "pong"}
 
             response = client.post(
                 f"/api/prompt-dispatches/{dispatch.dispatch_id}/redeliver"
@@ -107,13 +138,13 @@ def test_acknowledged_prompt_can_be_manually_redelivered_over_active_companion(
 
             websocket.send_json(
                 {
-                    "version": 1,
+                    "version": 2,
                     "type": "ack",
                     "delivery_id": replay["delivery_id"],
                 }
             )
-            websocket.send_json({"version": 1, "type": "ping"})
-            assert websocket.receive_json() == {"version": 1, "type": "pong"}
+            websocket.send_json({"version": 2, "type": "ping"})
+            assert websocket.receive_json() == {"version": 2, "type": "pong"}
 
         with SqlAlchemyUnitOfWork(application.state.session_factory) as uow:
             delivery = uow.prompt_deliveries.get_by_dispatch_id(dispatch.dispatch_id)
@@ -130,13 +161,13 @@ def test_manual_redelivery_requires_connected_companion(tmp_path: Path) -> None:
             original = websocket.receive_json()
             websocket.send_json(
                 {
-                    "version": 1,
+                    "version": 2,
                     "type": "ack",
                     "delivery_id": original["delivery_id"],
                 }
             )
-            websocket.send_json({"version": 1, "type": "ping"})
-            assert websocket.receive_json() == {"version": 1, "type": "pong"}
+            websocket.send_json({"version": 2, "type": "ping"})
+            assert websocket.receive_json() == {"version": 2, "type": "pong"}
 
         response = client.post(
             f"/api/prompt-dispatches/{dispatch.dispatch_id}/redeliver"
@@ -160,12 +191,12 @@ def test_disconnect_before_ack_replays_same_delivery_after_reconnect(tmp_path: P
             assert replay["payload"] == first_message["payload"]
             second.send_json(
                 {
-                    "version": 1,
+                    "version": 2,
                     "type": "ack",
                     "delivery_id": replay["delivery_id"],
                 }
             )
-            second.send_json({"version": 1, "type": "ping"})
+            second.send_json({"version": 2, "type": "ping"})
             assert second.receive_json()["type"] == "pong"
 
         with SqlAlchemyUnitOfWork(application.state.session_factory) as uow:
@@ -182,20 +213,23 @@ def test_protocol_errors_are_explicit(tmp_path: Path) -> None:
             websocket.send_text("{")
             assert websocket.receive_json()["code"] == "invalid_json"
 
-            websocket.send_json({"version": 1, "type": "chatgpt_response", "text": "invalid"})
+            websocket.send_json({"version": 2, "type": "chatgpt_response", "text": "invalid"})
             assert websocket.receive_json()["code"] == "invalid_chatgpt_response"
 
-            websocket.send_json({"version": 1, "type": "unknown"})
+            websocket.send_json({"version": 2, "type": "unknown"})
             assert websocket.receive_json()["code"] == "unknown_type"
 
             websocket.send_json(
                 {
-                    "version": 1,
+                    "version": 2,
                     "type": "ack",
                     "delivery_id": str(uuid4()),
                 }
             )
             assert websocket.receive_json()["code"] == "unknown_delivery_ack"
+
+            websocket.send_json({"version": 1, "type": "ping"})
+            assert websocket.receive_json()["code"] == "unsupported_version"
 
             websocket.send_json({"version": 999, "type": "ping"})
             assert websocket.receive_json()["code"] == "unsupported_version"
@@ -209,14 +243,14 @@ def test_duplicate_ack_is_idempotent_and_connection_stays_usable(tmp_path: Path)
         with client.websocket_connect("/api/companion/ws") as websocket:
             message = websocket.receive_json()
             ack = {
-                "version": 1,
+                "version": 2,
                 "type": "ack",
                 "delivery_id": message["delivery_id"],
             }
             websocket.send_json(ack)
             websocket.send_json(ack)
-            websocket.send_json({"version": 1, "type": "ping"})
-            assert websocket.receive_json() == {"version": 1, "type": "pong"}
+            websocket.send_json({"version": 2, "type": "ping"})
+            assert websocket.receive_json() == {"version": 2, "type": "pong"}
 
 
 def test_multiple_sessions_are_delivered_without_cross_association(tmp_path: Path) -> None:
@@ -238,12 +272,12 @@ def test_multiple_sessions_are_delivered_without_cross_association(tmp_path: Pat
             for message in messages:
                 websocket.send_json(
                     {
-                        "version": 1,
+                        "version": 2,
                         "type": "ack",
                         "delivery_id": message["delivery_id"],
                     }
                 )
-            websocket.send_json({"version": 1, "type": "ping"})
+            websocket.send_json({"version": 2, "type": "ping"})
             assert websocket.receive_json()["type"] == "pong"
 
         with SqlAlchemyUnitOfWork(application.state.session_factory) as uow:
@@ -261,8 +295,8 @@ def test_second_simultaneous_companion_is_rejected_deterministically(tmp_path: P
                     second.receive_text()
                 assert exc.value.code == SINGLE_COMPANION_CLOSE_CODE
 
-            first.send_json({"version": 1, "type": "ping"})
-            assert first.receive_json() == {"version": 1, "type": "pong"}
+            first.send_json({"version": 2, "type": "ping"})
+            assert first.receive_json() == {"version": 2, "type": "pong"}
 
 def test_chatgpt_response_is_persisted_and_identical_replay_gets_same_ack(
     tmp_path: Path,
@@ -276,13 +310,13 @@ def test_chatgpt_response_is_persisted_and_identical_replay_gets_same_ack(
             prompt = websocket.receive_json()
             websocket.send_json(
                 {
-                    "version": 1,
+                    "version": 2,
                     "type": "ack",
                     "delivery_id": prompt["delivery_id"],
                 }
             )
             response_message = {
-                "version": 1,
+                "version": 2,
                 "type": "chatgpt_response",
                 "response_id": response_id,
                 "delivery_id": prompt["delivery_id"],
@@ -293,14 +327,14 @@ def test_chatgpt_response_is_persisted_and_identical_replay_gets_same_ack(
             }
             websocket.send_json(response_message)
             assert websocket.receive_json() == {
-                "version": 1,
+                "version": 2,
                 "type": "chatgpt_response_ack",
                 "response_id": response_id,
             }
 
             websocket.send_json(response_message)
             assert websocket.receive_json() == {
-                "version": 1,
+                "version": 2,
                 "type": "chatgpt_response_ack",
                 "response_id": response_id,
             }
@@ -322,7 +356,7 @@ def test_chatgpt_response_matching_prompt_is_rejected_without_ack_or_persistence
         with client.websocket_connect("/api/companion/ws") as websocket:
             prompt = websocket.receive_json()
             echoed = {
-                "version": 1,
+                "version": 2,
                 "type": "chatgpt_response",
                 "response_id": response_id,
                 "delivery_id": prompt["delivery_id"],
@@ -335,7 +369,7 @@ def test_chatgpt_response_matching_prompt_is_rejected_without_ack_or_persistence
             error = websocket.receive_json()
 
             assert error == {
-                "version": 1,
+                "version": 2,
                 "type": "error",
                 "code": "response_echoes_prompt",
                 "response_id": response_id,
@@ -356,7 +390,7 @@ def test_chatgpt_response_collision_unknown_delivery_and_session_mismatch_are_ex
         with client.websocket_connect("/api/companion/ws") as websocket:
             prompt = websocket.receive_json()
             valid = {
-                "version": 1,
+                "version": 2,
                 "type": "chatgpt_response",
                 "response_id": response_id,
                 "delivery_id": prompt["delivery_id"],
@@ -407,7 +441,7 @@ def test_chatgpt_response_over_limit_fails_without_truncation(tmp_path: Path) ->
         with client.websocket_connect("/api/companion/ws") as websocket:
             websocket.send_json(
                 {
-                    "version": 1,
+                    "version": 2,
                     "type": "chatgpt_response",
                     "response_id": str(uuid4()),
                     "delivery_id": str(uuid4()),
@@ -442,5 +476,5 @@ def test_superseded_prompt_is_not_sent_from_prepared_batch(tmp_path, monkeypatch
 
     monkeypatch.setattr(main_module, 'prepare_prompt_deliveries_for_send', reserve_then_supersede)
     with TestClient(application) as client, client.websocket_connect('/api/companion/ws') as ws:
-        ws.send_json({'version':1, 'type':'ping'})
-        assert ws.receive_json() == {'version':1, 'type':'pong'}
+        ws.send_json({'version':2, 'type':'ping'})
+        assert ws.receive_json() == {'version':2, 'type':'pong'}

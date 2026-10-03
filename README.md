@@ -2,7 +2,7 @@
 
 DevCockpit is a local development-orchestration cockpit designed to reduce the manual coordination needed between a Product Owner, an Architect, one or more Developers, GitHub and ChatGPT.
 
-The first goal is not full autonomy. DevCockpit prepares the right next prompt, routes it to a Firefox extension, observes GitHub/CI evidence, and proposes the next action. The delivered companion still requires an explicit user Send gesture; ADR-0014 accepts automatic routing/send after the prompt has already crossed DevCockpit's authorization gates, to be implemented by DC-063A/DC-063B.
+The first goal is not full autonomy. DevCockpit prepares the right next prompt, routes it to a Firefox extension, observes GitHub/CI evidence, and proposes the next action. DC-063A delivers deterministic conversation routing, while the companion still requires an explicit user Send gesture. Automatic Send remains reserved to DC-063B.
 
 ## Product principles
 
@@ -34,7 +34,7 @@ extension/                 Firefox queue / explicit send + selected response ret
 
 PromptDispatch remains transport-independent. PromptDelivery is separate persisted transport truth and never means that a prompt was sent to ChatGPT.
 
-ASTRA-063 has accepted the next architecture step, documented by ADR-0014: durable `ConversationBinding`, exact conversation routing, a separate `ChatGptPromptSend` state machine and fail-stop automatic send. These are target contracts only. DC-063A/DC-063B are not yet delivered, so the operational companion remains manual.
+ASTRA-063 is documented by ADR-0014. DC-063A now delivers durable `ConversationBinding`, exact conversation routing, dedicated provisional tabs and protocol v2 routing snapshots. The separate `ChatGptPromptSend` state machine and fail-stop automatic Send are still future DC-063B work, so the final Send gesture remains manual.
 
 ## Prerequisites
 
@@ -350,16 +350,21 @@ The functional prompt payload remains exactly:
 }
 ~~~
 
-For reliable ACK/replay it is carried inside the currently delivered protocol version 1:
+For reliable ACK/replay and exact routing it is carried inside protocol version 2:
 
 ~~~json
 {
-  "version": 1,
+  "version": 2,
   "type": "prompt",
   "delivery_id": "stable-uuid",
   "payload": {
     "session": "DevCockpit:DEV:DC-011",
     "text": "Le prompt complet à envoyer à ChatGPT"
+  },
+  "routing": {
+    "binding_version": 4,
+    "conversation_id": "opaque-id",
+    "canonical_url": "https://chatgpt.com/c/opaque-id"
   }
 }
 ~~~
@@ -368,7 +373,7 @@ The extension acknowledges receipt with:
 
 ~~~json
 {
-  "version": 1,
+  "version": 2,
   "type": "ack",
   "delivery_id": "stable-uuid"
 }
@@ -380,9 +385,9 @@ If a connection drops before ACK, the same logical delivery and the same deliver
 
 A PromptDispatch CANCELLED is not sent as new work and is not replayed. No remote-revocation protocol is invented for a message that may already have reached the extension.
 
-Control messages are typed. Version 1 supports ack, ping and chatgpt_response inbound, with pong, chatgpt_response_ack and explicit error responses. A returned response is correlated by delivery_id to its source PromptDelivery/PromptDispatch and the received session must exactly match the source AgentSession.
+Control messages are typed. Version 2 supports ack, ping and chatgpt_response inbound, with pong, chatgpt_response_ack and explicit error responses. A returned response is correlated by delivery_id to its source PromptDelivery/PromptDispatch and the received session must exactly match the source AgentSession.
 
-ADR-0014 accepts a deliberately versioned protocol v2 for DC-063A/DC-063B. It may add an exact routing snapshot for a durable ConversationBinding and durable `chatgpt_send_status` events while preserving the functional `session` + `text` payload. A v1 extension must never be silently treated as auto-send-v2 compatible.
+DC-063A deliberately switches the companion to protocol v2. Each prompt carries either the exact durable ConversationBinding snapshot or `routing: null` for a new AgentSession, while preserving the functional `session` + `text` payload. A v1 extension is explicitly incompatible. Durable `chatgpt_send_status` events remain reserved to DC-063B.
 
 The transport bounds inbound messages to 512 KiB. Oversize responses fail explicitly and are never silently truncated. Full prompt/response bodies and credentials are not logged.
 
@@ -430,7 +435,7 @@ The popup reports `Connecté`, `Reconnexion…`, `Déconnecté`, or an explicit 
 
 ### Queue and ACK semantics
 
-For every protocol-v1 `prompt`, the companion validates the envelope, deduplicates by `delivery_id`, and persists the entry before sending its ACK:
+For every protocol-v2 `prompt`, the companion validates the envelope, deduplicates by `delivery_id`, and persists the entry before sending its ACK:
 
 ~~~text
 receive prompt
@@ -460,13 +465,13 @@ The command fails explicitly when no companion is connected, when the dispatch i
 
 ### Current explicit send to ChatGPT
 
-Until DC-063B is delivered, nothing is injected or sent when a prompt arrives. The user must open the intended ChatGPT conversation and click **Envoyer** on the chosen queue entry. The companion then targets only the active `chatgpt.com` or `chat.openai.com` tab.
+Until DC-063B is delivered, nothing is injected or sent when a prompt arrives. DC-063A may automatically reuse/open the exact bound conversation tab or create a dedicated provisional new-chat tab for that AgentSession. The user still clicks **Envoyer** on the chosen queue entry; immediately before the DOM action, the companion revalidates that the tab is still the exact expected target and fails closed if navigation changed it.
 
 All ChatGPT DOM knowledge is isolated in `extension/src/chatgpt-page-adapter.js`. The adapter uses narrowly scoped composer/send selectors and fails closed when the composer or send button is missing, disabled or ambiguous. It never falls back to the first textarea or first button. When injection/send fails, the prompt remains available for retry. When the page reports a successful send, the entry is removed from the active queue; if local cleanup then fails, `SEND_REQUESTED` remains visible so the user can verify the conversation before retrying rather than blindly duplicating a send.
 
 The ChatGPT UI is an external dependency and its DOM can change. A DOM change may require updating the isolated adapter selectors. DC-030 adds no continuous scraping or generation monitoring: after a successful explicit send, the companion retains a SentPromptContext containing the delivery_id/session. The user later clicks **Retourner une réponse**, the adapter performs one one-shot scan of assistant-role elements, the user explicitly chooses one candidate and confirms it, and a PendingResponse is persisted before WebSocket transmission. The same response_id is replayed after reconnect until chatgpt_response_ack is received.
 
-ADR-0014 changes only the future outbound Send gesture. DC-063A will establish durable ConversationBinding/routing without auto-send; DC-063B will add per-session FIFO, readiness checks, a durable SEND_ARMED barrier, targeted send confirmation, bounded safe retry and AMBIGUOUS fail-stop recovery. Explicit response return remains unchanged.
+DC-063A establishes durable ConversationBinding/routing without auto-send. DC-063B will add per-session FIFO, readiness checks, a durable SEND_ARMED barrier, targeted send confirmation, bounded safe retry and AMBIGUOUS fail-stop recovery. Explicit response return remains unchanged.
 
 ### Manual smoke procedure
 
@@ -478,9 +483,10 @@ FastAPI local started
 → test PromptDispatch prepared through the application use case
 → prompt appears once in the extension queue
 → PromptDelivery becomes ACKNOWLEDGED only after local queue persistence
-→ intended ChatGPT conversation opened in the active tab
+→ companion routes the AgentSession to its exact bound conversation or dedicated provisional tab
 → user selects the prompt and clicks Envoyer
-→ prompt is sent in that active conversation
+→ target is revalidated immediately before the DOM action
+→ prompt is sent only in that routed conversation
 ~~~
 
 If the real ChatGPT DOM cannot be exercised in the current development environment, record that limitation rather than treating the DOM-fixture tests as proof of a browser smoke.
