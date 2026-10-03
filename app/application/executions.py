@@ -269,6 +269,73 @@ Reste strictement dans le scope du WorkItem {work_item.key}. Après avoir pouss�
 """
 
 
+def build_stale_dev_follow_up(
+    project: Project,
+    projection: ExecutionProjection,
+    *,
+    inactivity_seconds: float,
+) -> str:
+    work_item = projection.work_item
+    branch = projection.branch
+    if (
+        work_item is None
+        or branch is None
+        or projection.state is not ExecutionState.DEVELOPING
+        or branch.last_activity_at is None
+    ):
+        raise ValueError(
+            "stale DEV follow-up requires DEVELOPING WorkItem and branch activity evidence"
+        )
+
+    inactivity_minutes = max(1, round(inactivity_seconds / 60))
+    return f"""La session DEV de {work_item.key} semble interrompue ou inactive.
+
+Repository : {project.repository_full_name}
+WorkItem : {work_item.key} — {work_item.title}
+Branche observée : {branch.name}
+Head SHA observé : {branch.sha}
+Dernière activité GitHub sur la branche : {branch.last_activity_at}
+Inactivité observée : au moins {inactivity_minutes} minutes
+Roadmap maître : #{project.roadmap_issue_number}
+
+Reprends le travail existant dans la même session DEV à partir de l'état GitHub actuel.
+
+- synchronise-toi avec le vrai main;
+- relis AGENTS.md, le roadmap canonique et le WorkItem {work_item.key};
+- inspecte la branche existante {branch.name} et ses commits avant toute modification;
+- ne recommence pas la tranche depuis zéro et ne duplique pas le travail déjà poussé;
+- détermine ce qui reste réellement à terminer pour {work_item.key};
+- poursuis uniquement dans le scope de {work_item.key};
+- si une PR existe désormais, reprends-la plutôt que d'en créer une concurrente;
+- quand la PR est complète, assure-toi que l'auto-merge est armé lorsque permis, rapporte la PR et le head SHA, puis ARRÊTE ton tour DEV;
+- ne reste pas à poller la CI et ne commence pas la tranche suivante.
+
+Cette relance est un watchdog d'inactivité : GitHub demeure la source de vérité.
+"""
+
+
+def _stale_dev_idempotency_key(
+    project: Project,
+    projection: ExecutionProjection,
+) -> str:
+    work_item = projection.work_item
+    branch = projection.branch
+    if (
+        work_item is None
+        or branch is None
+        or projection.state is not ExecutionState.DEVELOPING
+        or branch.last_activity_at is None
+    ):
+        raise ValueError(
+            "stale DEV idempotency requires immutable branch activity evidence"
+        )
+    return _bounded_idempotency_key(
+        "execution:"
+        f"{project.project_id}:{work_item.key}:DEV:STALE:"
+        f"{branch.name}:{branch.sha}:{branch.last_activity_at}:v1"
+    )
+
+
 def build_roadmap_reconciliation_follow_up(
     project: Project,
     projection: ExecutionProjection,
