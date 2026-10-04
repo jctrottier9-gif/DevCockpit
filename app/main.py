@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.architecture_gates import build_architecture_gate_router
 from app.api.attention import build_attention_router
+from app.api.cockpit import build_cockpit_router
 from app.api.flow_analytics import build_flow_analytics_router
 from app.api.orchestration import build_orchestration_router
 from app.application.chatgpt_prompt_sends import (
@@ -484,6 +485,15 @@ def create_app(
     ))
 
     application.include_router(build_attention_router(
+        project_catalog=active_project_catalog,
+        roadmap_reader=active_roadmap_reader,
+        evidence_reader=active_execution_reader,
+        uow_factory=uow_factory,
+        max_parallel_dev_executions=active_settings.max_parallel_dev_executions,
+        companion_connections=connection_manager,
+    ))
+
+    application.include_router(build_cockpit_router(
         project_catalog=active_project_catalog,
         roadmap_reader=active_roadmap_reader,
         evidence_reader=active_execution_reader,
