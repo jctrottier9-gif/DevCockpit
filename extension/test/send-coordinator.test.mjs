@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createMemoryStorage, loadClassicScripts } from "./helpers.mjs";
+import { createMemoryStorage, loadClassicScripts, settle } from "./helpers.mjs";
 
 const DELIVERY_ID = "8fcd3422-3dbd-481f-a5b0-5915a1f7f5be";
+const SECOND_DELIVERY_ID = "9fcd3422-3dbd-481f-a5b0-5915a1f7f5be";
 const SESSION = "DevCockpit:DEV:DC-063B";
 
 async function setup({
@@ -255,4 +256,109 @@ test("canonical conversation accepts nested ChatGPT project and workspace routes
     canonicalConversation("https://chatgpt.com/g/g-p-project/c/conv-123/extra"),
     null,
   );
+});
+
+
+test("resumeSession wakes the next queued delivery after predecessor removal", async () => {
+  const { coordinator, sendStore, queueStore, sentPromptStore } = await setup();
+
+  await queueStore.acceptPrompt({
+    deliveryId: SECOND_DELIVERY_ID,
+    session: SESSION,
+    text: "second prompt",
+    routing: null,
+  });
+  await sendStore.ensureQueued({
+    deliveryId: SECOND_DELIVERY_ID,
+    session: SESSION,
+  });
+
+  await sendStore.transition({
+    deliveryId: DELIVERY_ID,
+    session: SESSION,
+    state: "ROUTING",
+    attempt: 1,
+  });
+  await sendStore.transition({
+    deliveryId: DELIVERY_ID,
+    session: SESSION,
+    state: "SEND_ARMED",
+    attempt: 1,
+  });
+  await sendStore.transition({
+    deliveryId: DELIVERY_ID,
+    session: SESSION,
+    state: "SENT_CONFIRMED",
+    attempt: 1,
+    conversation: {
+      conversation_id: "conv-a",
+      canonical_url: "https://chatgpt.com/c/conv-a",
+    },
+  });
+  await queueStore.remove(DELIVERY_ID);
+
+  const result = await coordinator.resumeSession(SESSION);
+
+  assert.equal(result.state, "SENT_CONFIRMED");
+  assert.equal((await sendStore.get(SECOND_DELIVERY_ID)).state, "SENT_CONFIRMED");
+  assert.equal((await sentPromptStore.get(SECOND_DELIVERY_ID)).delivery_id, SECOND_DELIVERY_ID);
+  assert.equal((await queueStore.list()).length, 0);
+});
+
+test("resumeSession never skips a blocked session head", async () => {
+  const { coordinator, sendStore, queueStore } = await setup();
+
+  await queueStore.acceptPrompt({
+    deliveryId: SECOND_DELIVERY_ID,
+    session: SESSION,
+    text: "second prompt",
+    routing: null,
+  });
+  await sendStore.ensureQueued({
+    deliveryId: SECOND_DELIVERY_ID,
+    session: SESSION,
+  });
+  await sendStore.transition({
+    deliveryId: DELIVERY_ID,
+    session: SESSION,
+    state: "BLOCKED",
+    attempt: 1,
+    errorCode: "manual_fix_required",
+  });
+
+  const result = await coordinator.resumeSession(SESSION);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.state, "BLOCKED");
+  assert.equal(result.error, "session_head_not_sendable");
+  assert.equal((await sendStore.get(SECOND_DELIVERY_ID)).state, "QUEUED");
+  assert.equal((await queueStore.list()).length, 2);
+});
+
+test("normal confirmed send automatically schedules the next delivery in the session", async () => {
+  const { coordinator, sendStore, queueStore } = await setup();
+
+  await queueStore.acceptPrompt({
+    deliveryId: SECOND_DELIVERY_ID,
+    session: SESSION,
+    text: "second prompt",
+    routing: null,
+  });
+  await sendStore.ensureQueued({
+    deliveryId: SECOND_DELIVERY_ID,
+    session: SESSION,
+  });
+
+  const first = await coordinator.enqueue(DELIVERY_ID);
+  assert.equal(first.state, "SENT_CONFIRMED");
+
+  for (let index = 0; index < 5; index += 1) {
+    await settle();
+    if ((await sendStore.get(SECOND_DELIVERY_ID)).state === "SENT_CONFIRMED") {
+      break;
+    }
+  }
+
+  assert.equal((await sendStore.get(SECOND_DELIVERY_ID)).state, "SENT_CONFIRMED");
+  assert.equal((await queueStore.list()).length, 0);
 });
