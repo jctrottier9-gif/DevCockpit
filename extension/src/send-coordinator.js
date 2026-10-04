@@ -137,6 +137,42 @@
       return this.enqueue(deliveryId);
     }
 
+    async resumeSession(session) {
+      if (typeof session !== "string" || session.trim() === "") {
+        return { ok: false, error: "invalid_session" };
+      }
+      const queue = await this.queueStore.list();
+      const entries = queue.filter((entry) => entry.session === session);
+      for (const entry of entries) {
+        const state = await this.sendStore.get(entry.delivery_id);
+        if (!state) {
+          return {
+            ok: false,
+            error: "chatgpt_send_not_found:" + entry.delivery_id,
+          };
+        }
+        if (state.state === SEND_STATE.SENT_CONFIRMED) {
+          continue;
+        }
+        if (
+          [
+            SEND_STATE.QUEUED,
+            SEND_STATE.ROUTING,
+            SEND_STATE.WAITING_READY,
+            SEND_STATE.RETRYABLE_FAILURE,
+          ].includes(state.state)
+        ) {
+          return this.enqueue(entry.delivery_id);
+        }
+        return {
+          ok: false,
+          state: state.state,
+          error: "session_head_not_sendable",
+        };
+      }
+      return { ok: true, state: "EMPTY" };
+    }
+
     async _run(entry) {
       const existing = await this.sendStore.get(entry.delivery_id);
       if (!existing) return { ok: false, error: "chatgpt_send_not_found" };
@@ -333,6 +369,7 @@
       } catch {
         // SENT_CONFIRMED is already durable; never replay the irreversible send.
       }
+      void this.resumeSession(entry.session);
       return { ok: true, state: SEND_STATE.SENT_CONFIRMED, conversation };
     }
   }
