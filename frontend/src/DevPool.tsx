@@ -101,6 +101,7 @@ function DevExecutionCard({
       {watchdog ? <>
         <p>Dernière activité branche : {new Date(watchdog.branch_last_activity_at).toLocaleString()}</p>
         <p>Seuil : {Math.round(watchdog.threshold_seconds / 60)} min</p>
+        <p>Échéance : {watchdog.deadline_at ? new Date(watchdog.deadline_at).toLocaleString() : 'non déterminée'}</p>
         <p>
           État : {watchdog.stale_due ? 'stale détecté' : 'dans la fenêtre'}
           {watchdog.relaunch_prepared ? ' · relance préparée' : ''}
