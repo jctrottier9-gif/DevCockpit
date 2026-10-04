@@ -84,6 +84,42 @@
     return comparableText(left) === comparableText(right);
   }
 
+  function elementsOverlap(left, right) {
+    if (!left || !right) return false;
+    return Boolean(left.contains?.(right) || right.contains?.(left));
+  }
+
+  function groupLogicalUserTurns(document) {
+    const candidates = uniqueMatches(document, USER_MESSAGE_SELECTORS).filter((element) =>
+      visibleElement(document, element),
+    );
+    const groups = [];
+    for (const candidate of candidates) {
+      const touching = [];
+      for (let index = 0; index < groups.length; index += 1) {
+        if (groups[index].some((member) => elementsOverlap(member, candidate))) {
+          touching.push(index);
+        }
+      }
+      if (touching.length === 0) {
+        groups.push([candidate]);
+        continue;
+      }
+      const merged = [candidate];
+      for (let offset = touching.length - 1; offset >= 0; offset -= 1) {
+        const index = touching[offset];
+        merged.push(...groups[index]);
+        groups.splice(index, 1);
+      }
+      groups.push([...new Set(merged)]);
+    }
+    return groups;
+  }
+
+  function userTurnMatchesText(group, text) {
+    return group.some((element) => sameText(elementText(element), text));
+  }
+
   function elementText(element) {
     if (!element) return "";
     if (element.tagName === "TEXTAREA") return normalizedText(element.value);
@@ -274,7 +310,7 @@
         return {
           ok: true,
           baseline: {
-            user_message_count: uniqueMatches(this.document, USER_MESSAGE_SELECTORS).length,
+            user_message_count: groupLogicalUserTurns(this.document).length,
             expected_text: normalizedText(text),
           },
         };
@@ -309,10 +345,10 @@
 
         for (let index = 0; index < this.confirmationPollCount; index += 1) {
           await this.sleep(this.confirmationPollMs);
-          const messages = uniqueMatches(this.document, USER_MESSAGE_SELECTORS);
-          const matchingMessage = messages
+          const userTurns = groupLogicalUserTurns(this.document);
+          const matchingMessage = userTurns
             .slice(baseline.user_message_count)
-            .some((element) => sameText(elementText(element), baseline.expected_text));
+            .some((group) => userTurnMatchesText(group, baseline.expected_text));
           let composerChanged = true;
           try {
             composerChanged =
@@ -355,10 +391,14 @@
       if (typeof text !== "string" || text.trim() === "") {
         return { ok: false, error: "prompt_empty" };
       }
-      const matchingMessages = uniqueMatches(
+      const rawUserMessages = uniqueMatches(
         this.document,
         USER_MESSAGE_SELECTORS,
-      ).filter((element) => sameText(elementText(element), text));
+      ).filter((element) => visibleElement(this.document, element));
+      const userTurns = groupLogicalUserTurns(this.document);
+      const matchingTurns = userTurns.filter((group) =>
+        userTurnMatchesText(group, text),
+      );
 
       let composerMatches = false;
       try {
@@ -378,17 +418,27 @@
         }
       }
 
-      if (composerMatches && matchingMessages.length === 0) {
+      if (composerMatches && matchingTurns.length === 0) {
         return { ok: true, state: "NOT_SENT" };
       }
-      if (!composerMatches && matchingMessages.length === 1) {
+      if (!composerMatches && matchingTurns.length === 1) {
         return {
           ok: true,
           state: "SENT",
           conversationUrl: canonicalConversationUrl(this.location?.href) || null,
         };
       }
-      return { ok: false, error: "delivery_evidence_ambiguous" };
+      return {
+        ok: false,
+        error:
+          "delivery_evidence_ambiguous:" +
+          [
+            "composer=" + (composerMatches ? "1" : "0"),
+            "raw=" + rawUserMessages.length,
+            "logical=" + userTurns.length,
+            "matching=" + matchingTurns.length,
+          ].join(","),
+      };
     }
 
     listAssistantResponses() {
@@ -427,6 +477,9 @@
     editableMode,
     comparableText,
     sameText,
+    elementsOverlap,
+    groupLogicalUserTurns,
+    userTurnMatchesText,
     LOGIN_SELECTORS,
     USER_MESSAGE_SELECTORS,
     USER_MESSAGE_SELECTOR,
