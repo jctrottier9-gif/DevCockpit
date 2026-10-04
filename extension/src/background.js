@@ -45,7 +45,10 @@
     webSocketFactory: (url) => new WebSocket(url),
     onPrompt: async (prompt) => {
       await queueStore.acceptPrompt(prompt);
-      await sendStore.ensureQueued(prompt);
+      const sendState = await sendStore.ensureQueued(prompt);
+      if (sendState.state === SEND_STATE.SENT_CONFIRMED) {
+        await queueStore.remove(prompt.deliveryId);
+      }
       await broadcast("devcockpit_queue_changed");
     },
     onPromptAccepted: async (prompt) => {
