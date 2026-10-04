@@ -4,6 +4,7 @@
   const namespace = (globalThis.DevCockpitCompanion ||= {});
   const { ROUTING_KIND } = namespace.routingStore;
   const NEW_CHAT_URL = "https://chatgpt.com/";
+  const DEFAULT_CREATED_TAB_POLL_DELAYS_MS = Object.freeze([50, 100, 250, 500, 1000]);
 
   class RoutingError extends Error {
     constructor(code) {
@@ -92,10 +93,18 @@
   }
 
   class ConversationRouter {
-    constructor({ routingStore, queryTabs, createTab }) {
+    constructor({
+      routingStore,
+      queryTabs,
+      createTab,
+      sleep = (delay) => new Promise((resolve) => setTimeout(resolve, delay)),
+      createdTabPollDelaysMs = DEFAULT_CREATED_TAB_POLL_DELAYS_MS,
+    }) {
       this.routingStore = routingStore;
       this.queryTabs = queryTabs;
       this.createTab = createTab;
+      this.sleep = sleep;
+      this.createdTabPollDelaysMs = createdTabPollDelaysMs;
       this.sessionChains = new Map();
     }
 
@@ -120,6 +129,35 @@
       return tabs
         .filter((tab) => Number.isInteger(tab?.id))
         .sort((left, right) => left.id - right.id);
+    }
+
+    async _awaitCreatedTabTarget(created, matchesTarget) {
+      if (!Number.isInteger(created?.id)) {
+        throw new RoutingError("tab_create_failed");
+      }
+      if (created.url && matchesTarget(created)) {
+        return created;
+      }
+      if (created.url && isSupportedChatGptUrl(created.url)) {
+        throw new RoutingError("created_tab_target_mismatch");
+      }
+
+      for (const delay of this.createdTabPollDelaysMs) {
+        await this.sleep(delay);
+        const tabs = await this._tabs();
+        const candidate = tabs.find((tab) => tab.id === created.id);
+        if (!candidate) {
+          continue;
+        }
+        if (matchesTarget(candidate)) {
+          return candidate;
+        }
+        if (candidate.url && isSupportedChatGptUrl(candidate.url)) {
+          throw new RoutingError("created_tab_target_mismatch");
+        }
+      }
+
+      throw new RoutingError("created_tab_navigation_timeout");
     }
 
     async route({ session, routing }) {
@@ -160,13 +198,14 @@
       target ||= matches[0] || null;
 
       if (!target) {
-        target = await this.createTab({ url: routing.canonical_url, active: false });
-        if (!Number.isInteger(target?.id)) {
-          throw new RoutingError("tab_create_failed");
-        }
-        if (target.url && !tabIdentityMatches(target, routing)) {
-          throw new RoutingError("created_tab_target_mismatch");
-        }
+        const created = await this.createTab({
+          url: routing.canonical_url,
+          active: false,
+        });
+        target = await this._awaitCreatedTabTarget(
+          created,
+          (tab) => tabIdentityMatches(tab, routing),
+        );
       }
 
       await this.routingStore.setBound({
@@ -207,17 +246,15 @@
       }
 
       const created = await this.createTab({ url: NEW_CHAT_URL, active: false });
-      if (!Number.isInteger(created?.id)) {
-        throw new RoutingError("tab_create_failed");
-      }
-      if (created.url && !isNewChatUrl(created.url)) {
-        throw new RoutingError("created_tab_target_mismatch");
-      }
-      await this.routingStore.setProvisional(session, created.id);
+      const target = await this._awaitCreatedTabTarget(
+        created,
+        (tab) => isNewChatUrl(tab.url),
+      );
+      await this.routingStore.setProvisional(session, target.id);
       return {
         kind: ROUTING_KIND.PROVISIONAL,
-        tabId: created.id,
-        url: created.url || NEW_CHAT_URL,
+        tabId: target.id,
+        url: target.url || NEW_CHAT_URL,
         routing: null,
       };
     }
