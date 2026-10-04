@@ -28,7 +28,6 @@ class ChatGptPromptSendState(StrEnum):
 _TERMINAL_STATES = frozenset(
     {
         ChatGptPromptSendState.SENT_CONFIRMED,
-        ChatGptPromptSendState.BLOCKED,
         ChatGptPromptSendState.AMBIGUOUS,
     }
 )
@@ -61,7 +60,9 @@ _ALLOWED_TRANSITIONS = {
         ChatGptPromptSendState.AMBIGUOUS,
     },
     ChatGptPromptSendState.SENT_CONFIRMED: set(),
-    ChatGptPromptSendState.BLOCKED: set(),
+    ChatGptPromptSendState.BLOCKED: {
+        ChatGptPromptSendState.ROUTING,
+    },
     ChatGptPromptSendState.AMBIGUOUS: set(),
 }
 
