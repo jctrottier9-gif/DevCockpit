@@ -538,6 +538,12 @@ def test_stale_developing_branch_prepares_one_same_session_watchdog_follow_up():
     )
 
     assert first.projection.items[0].execution.state is ExecutionState.DEVELOPING
+    assert first.projection.items[0].watchdog is not None
+    assert first.projection.items[0].watchdog.stale_due
+    assert first.projection.items[0].watchdog.relaunch_prepared
+    assert first.projection.items[0].watchdog.branch_last_activity_at == "2026-10-03T07:00:00Z"
+    assert first.projection.items[0].interaction is not None
+    assert first.projection.items[0].interaction.dispatch_id is not None
     assert len(first.dispatches) == 1
     watchdog = first.dispatches[0]
     assert watchdog.agent_session == "DevCockpit:DEV:A"
@@ -677,7 +683,15 @@ def test_stale_watchdog_starts_only_after_sent_confirmed_timestamp():
     )
 
     assert before.dispatches == ()
+    assert before.projection.items[0].watchdog is not None
+    assert before.projection.items[0].watchdog.send_confirmed_at == confirmed
+    assert before.projection.items[0].watchdog.stale_due is False
+    assert before.projection.items[0].interaction is not None
+    assert before.projection.items[0].interaction.send_state == "SENT_CONFIRMED"
     assert len(after.dispatches) == 1
+    assert after.projection.items[0].watchdog is not None
+    assert after.projection.items[0].watchdog.stale_due
+    assert after.projection.items[0].watchdog.relaunch_prepared
     assert ":DEV:STALE:" in after.dispatches[0].idempotency_key
 
 
