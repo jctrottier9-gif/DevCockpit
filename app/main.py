@@ -526,7 +526,6 @@ def create_app(
         evidence_reader=active_execution_reader,
         uow_factory=uow_factory,
         max_parallel_dev_executions=active_settings.max_parallel_dev_executions,
-        dev_stale_after_seconds=active_settings.dev_stale_after_seconds,
         companion_connections=connection_manager,
     ))
 
@@ -536,6 +535,7 @@ def create_app(
         evidence_reader=active_execution_reader,
         uow_factory=uow_factory,
         max_parallel_dev_executions=active_settings.max_parallel_dev_executions,
+        dev_stale_after_seconds=active_settings.dev_stale_after_seconds,
         companion_connections=connection_manager,
     ))
 
