@@ -137,3 +137,21 @@ test("no, blank or ambiguous assistant response fails closed", async () => {
   result = value.adapter.listAssistantResponses();
   assert.equal(result.error, "assistant_response_dom_ambiguous");
 });
+
+
+test("logged-out ChatGPT page is BLOCKED before any send click", async () => {
+  const login = new FakeElement({ tagName: "BUTTON" });
+  const composer = new FakeElement({ attributes: { contenteditable: "true" } });
+  const button = new FakeElement({ tagName: "BUTTON" });
+  const { adapter } = await adapterFor(new Map([
+    ['button[data-testid="login-button"]', [login]],
+    ['#prompt-textarea[contenteditable="true"]', [composer]],
+    ['button[data-testid="send-button"]', [button]],
+  ]));
+
+  const result = await adapter.preparePrompt("Hello");
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "login_required");
+  assert.equal(button.clicked, false);
+});
