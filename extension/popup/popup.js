@@ -56,7 +56,8 @@
         localStatusLabel(sendState?.state || entry.local_status);
       fragment.querySelector(".preview").textContent = entry.text;
       fragment.querySelector(".full-text").textContent = entry.text;
-      showEntryError(fragment.querySelector(".entry-error"), entry.last_error);
+      const entryError = fragment.querySelector(".entry-error");
+      showEntryError(entryError, entry.last_error);
 
       const sendButton = fragment.querySelector(".send");
       const ambiguous = sendState?.state === "AMBIGUOUS";
@@ -70,11 +71,11 @@
         : "Disponible seulement après un échec certain avant SEND_ARMED.";
       if (ambiguous) {
         showEntryError(
-          fragment.querySelector(".entry-error"),
+          entryError,
           "Envoi potentiellement effectué. Vérifiez l’état dans l’onglet ChatGPT; aucun renvoi automatique n’est permis.",
         );
       } else if (sendState?.error_code) {
-        showEntryError(fragment.querySelector(".entry-error"), sendState.error_code);
+        showEntryError(entryError, sendState.error_code);
       }
       sendButton.addEventListener("click", async () => {
         sendButton.disabled = true;
@@ -85,8 +86,9 @@
           deliveryId: entry.delivery_id,
         });
         if (!result?.ok && result?.error) {
-          errorElement.textContent = result.error;
-          errorElement.hidden = false;
+          showEntryError(entryError, result.error);
+          sendButton.disabled = false;
+          return;
         }
         await refresh();
       });
