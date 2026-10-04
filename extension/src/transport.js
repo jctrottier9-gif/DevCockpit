@@ -5,6 +5,7 @@
   const {
     parseServerMessage,
     buildAckMessage,
+    buildChatGptSendStatusMessage,
     buildChatGptResponseMessage,
   } = namespace.protocol;
 
@@ -38,8 +39,11 @@
       onPrompt,
       onState,
       getPendingResponses = async () => [],
+      getPendingSendStatuses = async () => [],
+      onPromptAccepted = async () => {},
       onResponseAck = async () => {},
       onResponseError = async () => {},
+      onSendStatusAck = async () => {},
       setTimeoutFn = globalThis.setTimeout.bind(globalThis),
       clearTimeoutFn = globalThis.clearTimeout.bind(globalThis),
       reconnectDelaysMs = DEFAULT_RECONNECT_DELAYS_MS,
@@ -49,8 +53,11 @@
       this.onPrompt = onPrompt;
       this.onState = onState;
       this.getPendingResponses = getPendingResponses;
+      this.getPendingSendStatuses = getPendingSendStatuses;
+      this.onPromptAccepted = onPromptAccepted;
       this.onResponseAck = onResponseAck;
       this.onResponseError = onResponseError;
+      this.onSendStatusAck = onSendStatusAck;
       this.setTimeoutFn = setTimeoutFn;
       this.clearTimeoutFn = clearTimeoutFn;
       this.reconnectDelaysMs = reconnectDelaysMs;
@@ -95,7 +102,7 @@
         this.reconnectAttempt = 0;
         this._emit(CONNECTION_STATUS.CONNECTED);
         this.messageChain = this.messageChain
-          .then(() => this._replayPendingResponses(socket))
+          .then(() => this._replayPendingOutbound(socket))
           .catch((error) => this._emit(this.currentStatus, errorText(error)));
       });
 
@@ -131,13 +138,20 @@
       });
     }
 
-    async _replayPendingResponses(socket) {
-      const pending = await this.getPendingResponses();
-      for (const response of pending) {
+    async _replayPendingOutbound(socket) {
+      const pendingResponses = await this.getPendingResponses();
+      for (const response of pendingResponses) {
         if (this.socket !== socket || this.currentStatus !== CONNECTION_STATUS.CONNECTED) {
           return;
         }
         socket.send(buildChatGptResponseMessage(responseWirePayload(response)));
+      }
+      const pendingStatuses = await this.getPendingSendStatuses();
+      for (const event of pendingStatuses) {
+        if (this.socket !== socket || this.currentStatus !== CONNECTION_STATUS.CONNECTED) {
+          return;
+        }
+        socket.send(buildChatGptSendStatusMessage(event));
       }
     }
 
@@ -152,6 +166,19 @@
           routing: message.routing,
         });
         socket.send(buildAckMessage(message.deliveryId));
+        Promise.resolve(
+          this.onPromptAccepted({
+            deliveryId: message.deliveryId,
+            session: message.session,
+            text: message.text,
+            routing: message.routing,
+          }),
+        ).catch((error) => this._emit(this.currentStatus, errorText(error)));
+        return;
+      }
+
+      if (message.type === "chatgpt_send_status_ack") {
+        await this.onSendStatusAck(message.eventId);
         return;
       }
 
@@ -165,6 +192,22 @@
           await this.onResponseError(message.responseId, message.code);
         }
         this._emit(this.currentStatus, "Serveur: " + message.code);
+      }
+    }
+
+    sendPendingSendStatus(event) {
+      if (
+        this.currentStatus !== CONNECTION_STATUS.CONNECTED ||
+        !this.socket
+      ) {
+        return false;
+      }
+      try {
+        this.socket.send(buildChatGptSendStatusMessage(event));
+        return true;
+      } catch (error) {
+        this._emit(this.currentStatus, errorText(error));
+        return false;
       }
     }
 
