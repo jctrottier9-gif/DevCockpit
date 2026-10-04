@@ -51,6 +51,97 @@ class ExecutionEvaluation:
     dispatch: PromptDispatch | None
 
 
+def _execution_from_roadmap(
+    project: Project,
+    roadmap,
+    work_item_id: str,
+    *,
+    evidence_reader: ExecutionEvidenceReader,
+) -> ExecutionProjection:
+    if not roadmap.pipeline.valid:
+        return ExecutionProjection(
+            work_item=None,
+            state=ExecutionState.BLOCKED,
+            next_action=NextAction.RESOLVE_BLOCKER,
+            diagnostics=tuple(
+                ExecutionDiagnostic(code=item.code, message=item.message)
+                for item in roadmap.pipeline.diagnostics
+            ),
+        )
+
+    scheduler = derive_scheduler_projection(roadmap.pipeline)
+    scheduler_item = next(
+        (item for item in scheduler.items if item.work_item.key == work_item_id),
+        None,
+    )
+    if scheduler_item is None:
+        return blocked_projection(
+            work_item=None,
+            code="WORK_ITEM_NOT_FOUND",
+            message=f"{work_item_id} is not present in the canonical scheduler projection.",
+        )
+
+    work_item = scheduler_item.work_item
+    if not scheduler_item.executable:
+        dependencies = ", ".join(scheduler_item.unsatisfied_dependencies)
+        message = (
+            f"{work_item.key} is not authorized by the deterministic scheduler."
+            if not dependencies
+            else f"{work_item.key} is waiting for dependencies: {dependencies}."
+        )
+        return blocked_projection(
+            work_item=work_item,
+            code=scheduler_item.reason.value,
+            message=message,
+        )
+
+    if (
+        work_item.type is not WorkItemType.WORK
+        or scheduler_item.expected_role != PromptDispatchRole.DEV.value
+    ):
+        return blocked_projection(
+            work_item=work_item,
+            code="ROLE_ROUTING_NOT_AVAILABLE",
+            message=(
+                f"{work_item.key} is not an executable DEV WorkItem for this projection."
+            ),
+        )
+
+    try:
+        evidence = evidence_reader.read(project, work_item)
+    except ExecutionSourceError as exc:
+        return blocked_projection(
+            work_item=work_item,
+            code=exc.code,
+            message="GitHub execution evidence is unavailable.",
+        )
+
+    return derive_execution_projection(work_item, evidence)
+
+
+def read_project_execution_for_work_item(
+    project: Project,
+    work_item_id: str,
+    *,
+    roadmap_reader: RoadmapIssueReader,
+    evidence_reader: ExecutionEvidenceReader,
+) -> ExecutionProjection:
+    try:
+        roadmap = read_project_roadmap(project, reader=roadmap_reader)
+    except RoadmapSourceError as exc:
+        return blocked_projection(
+            work_item=None,
+            code=exc.code,
+            message="Canonical roadmap source is unavailable.",
+        )
+    return _execution_from_roadmap(
+        project,
+        roadmap,
+        work_item_id,
+        evidence_reader=evidence_reader,
+    )
+
+
 def read_project_execution(
     project: Project,
     *,
@@ -67,14 +158,11 @@ def read_project_execution(
         )
 
     if not roadmap.pipeline.valid:
-        return ExecutionProjection(
-            work_item=None,
-            state=ExecutionState.BLOCKED,
-            next_action=NextAction.RESOLVE_BLOCKER,
-            diagnostics=tuple(
-                ExecutionDiagnostic(code=item.code, message=item.message)
-                for item in roadmap.pipeline.diagnostics
-            ),
+        return _execution_from_roadmap(
+            project,
+            roadmap,
+            "",
+            evidence_reader=evidence_reader,
         )
 
     work_item = roadmap.pipeline.active_ready_item
@@ -85,44 +173,12 @@ def read_project_execution(
             message="The canonical MAIN lane does not currently contain a READY WorkItem.",
         )
 
-    scheduler = derive_scheduler_projection(roadmap.pipeline)
-    scheduler_item = next(
-        item for item in scheduler.items if item.work_item.key == work_item.key
+    return _execution_from_roadmap(
+        project,
+        roadmap,
+        work_item.key,
+        evidence_reader=evidence_reader,
     )
-    if not scheduler_item.executable:
-        dependencies = ", ".join(scheduler_item.unsatisfied_dependencies)
-        message = (
-            f"{work_item.key} is not authorized by the deterministic scheduler."
-            if not dependencies
-            else f"{work_item.key} is waiting for dependencies: {dependencies}."
-        )
-        return blocked_projection(
-            work_item=work_item,
-            code=scheduler_item.reason.value,
-            message=message,
-        )
-
-    if work_item.type is not WorkItemType.WORK:
-        return blocked_projection(
-            work_item=work_item,
-            code="ROLE_ROUTING_NOT_AVAILABLE",
-            message=(
-                f"{work_item.key} is an architecture gate; DC-021 does not route "
-                "Architect or Product Owner work."
-            ),
-        )
-
-    try:
-        evidence = evidence_reader.read(project, work_item)
-    except ExecutionSourceError as exc:
-        return blocked_projection(
-            work_item=work_item,
-            code=exc.code,
-            message="GitHub execution evidence is unavailable.",
-        )
-
-    return derive_execution_projection(work_item, evidence)
-
 
 def evaluate_project_execution(
     project: Project,
