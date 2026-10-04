@@ -226,3 +226,47 @@ test("provisional revalidation fails closed after navigation into an existing co
     (error) => error?.code === "provisional_target_changed",
   );
 });
+
+
+test("conversation identity accepts nested project and workspace routes", async () => {
+  const { context } = await setup();
+  const { conversationIdentity } = context.DevCockpitCompanion.routing;
+
+  assert.deepEqual(
+    conversationIdentity("https://chatgpt.com/g/g-p-project/c/conv-a?model=auto"),
+    {
+      conversationId: "conv-a",
+      canonicalUrl: "https://chatgpt.com/c/conv-a",
+    },
+  );
+  assert.deepEqual(
+    conversationIdentity("https://chatgpt.com/w/team/c/conv-b#anchor"),
+    {
+      conversationId: "conv-b",
+      canonicalUrl: "https://chatgpt.com/c/conv-b",
+    },
+  );
+  assert.equal(
+    conversationIdentity("https://chatgpt.com/g/g-p-project/c/conv-a/extra"),
+    null,
+  );
+});
+
+test("bound routing recognizes nested project URL for the same conversation id", async () => {
+  const { router, created } = await setup({
+    initialTabs: [
+      {
+        id: 12,
+        url: "https://chatgpt.com/g/g-p-project/c/conv-a?model=auto",
+      },
+    ],
+  });
+
+  const target = await router.route({
+    session: "DevCockpit:DEV:NESTED",
+    routing: ROUTING,
+  });
+
+  assert.equal(target.tabId, 12);
+  assert.equal(created.length, 0);
+});
