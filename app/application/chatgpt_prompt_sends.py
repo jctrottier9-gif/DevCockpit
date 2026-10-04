@@ -104,7 +104,12 @@ def ensure_chatgpt_prompt_send_for_ack(
     return projection
 
 
-def _promote_binding(command: RecordChatGptSendStatusCommand, *, uow) -> None:
+def _promote_binding(
+    command: RecordChatGptSendStatusCommand,
+    *,
+    uow,
+    recorded_at: datetime,
+) -> None:
     if (
         command.state is not ChatGptPromptSendState.SENT_CONFIRMED
         or command.conversation_id is None
@@ -121,7 +126,7 @@ def _promote_binding(command: RecordChatGptSendStatusCommand, *, uow) -> None:
                 agent_session=command.session,
                 conversation_id=command.conversation_id,
                 canonical_url=command.canonical_url,
-                now=command.occurred_at,
+                now=recorded_at,
             )
         )
         return
@@ -177,13 +182,18 @@ def record_chatgpt_send_status(
                 now=delivery.acknowledged_at or delivery.updated_at,
             )
 
+        recorded_at = datetime.now(timezone.utc)
         try:
             changed = projection.apply_event(
                 event,
-                recorded_at=datetime.now(timezone.utc),
+                recorded_at=recorded_at,
             )
             if changed:
-                _promote_binding(command, uow=uow)
+                _promote_binding(
+                    command,
+                    uow=uow,
+                    recorded_at=recorded_at,
+                )
                 uow.chatgpt_prompt_sends.save(projection)
         except ChatGptSendStatusError:
             raise
