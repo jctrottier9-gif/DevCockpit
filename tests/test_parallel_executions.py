@@ -12,6 +12,7 @@ from app.domain.execution import (
     WorkflowRunEvidence,
 )
 from app.domain.project import Project
+from app.domain.chatgpt_prompt_send import ChatGptPromptSend, ChatGptPromptSendState
 from app.domain.prompt_delivery import PromptDelivery
 from app.domain.prompt_dispatch import PromptDispatch, PromptDispatchRole
 from app.domain.resource_lock import (
@@ -202,10 +203,31 @@ class Deliveries:
         self.by_dispatch[delivery.dispatch_id] = delivery
 
 
+class PromptSends:
+    def __init__(self) -> None:
+        self.by_delivery = {}
+
+    def get(self, delivery_id):
+        return self.by_delivery.get(delivery_id)
+
+    def save(self, prompt_send):
+        self.by_delivery[prompt_send.delivery_id] = prompt_send
+
+
 class Uow:
-    def __init__(self, dispatches, handoffs, fences, resource_locks, deliveries) -> None:
+    def __init__(
+        self,
+        dispatches,
+        handoffs,
+        fences,
+        resource_locks,
+        deliveries,
+        prompt_sends=None,
+    ) -> None:
         self.prompt_dispatches = dispatches
         self.prompt_deliveries = deliveries
+        if prompt_sends is not None:
+            self.chatgpt_prompt_sends = prompt_sends
         self.handoffs = handoffs
         self.roadmap_target_fences = fences
         self.resource_locks = resource_locks
@@ -233,6 +255,7 @@ def factory(
     fences=None,
     resource_locks=None,
     deliveries=None,
+    prompt_sends=None,
 ):
     shared_dispatches = dispatches or DispatchRepository()
     shared_handoffs = handoffs or Handoffs()
@@ -247,6 +270,7 @@ def factory(
             shared_fences,
             shared_resource_locks,
             shared_deliveries,
+            prompt_sends,
         ),
     )
 
@@ -575,6 +599,86 @@ def test_stale_watchdog_waits_one_hour_after_firefox_ack_even_for_old_branch():
     assert result.projection.items[0].execution.state is ExecutionState.DEVELOPING
     assert result.dispatches == ()
     assert len(dispatches.by_key) == 1
+
+
+def test_stale_watchdog_starts_only_after_sent_confirmed_timestamp():
+    started = datetime(2026, 10, 3, 8, 0, tzinfo=timezone.utc)
+    confirmed = datetime(2026, 10, 3, 9, 40, tzinfo=timezone.utc)
+    dispatches = DispatchRepository()
+    deliveries = Deliveries()
+    prompt_sends = PromptSends()
+
+    initial = PromptDispatch.prepare(
+        project_id=PROJECT.project_id,
+        work_item_id="A",
+        role=PromptDispatchRole.DEV,
+        prompt_text="Initial A",
+        idempotency_key="execution:DevCockpit:A:DEV:INITIAL:v1",
+        now=started,
+    )
+    dispatches.add(initial)
+    delivery = PromptDelivery.create(dispatch_id=initial.dispatch_id, now=started)
+    delivery.record_attempt(now=started + timedelta(minutes=1))
+    delivery.acknowledge(now=started + timedelta(minutes=2))
+    deliveries.save(delivery)
+    prompt_sends.save(
+        ChatGptPromptSend.rehydrate(
+            delivery_id=delivery.delivery_id,
+            session=initial.agent_session,
+            state=ChatGptPromptSendState.SENT_CONFIRMED,
+            attempt_count=1,
+            last_error_code=None,
+            next_retry_at=None,
+            confirmed_at=confirmed,
+            updated_at=confirmed,
+            last_event_id=None,
+        )
+    )
+
+    _, uow_factory = factory(
+        dispatches,
+        deliveries=deliveries,
+        prompt_sends=prompt_sends,
+    )
+    evidence = EvidenceReader(
+        {
+            "A": ExecutionEvidence(
+                default_branch="main",
+                branches=(
+                    BranchEvidence(
+                        name="work/a-load-intervals",
+                        sha="old-sha",
+                        ahead_by=2,
+                        last_activity_at="2026-10-03T01:00:00Z",
+                    ),
+                ),
+            )
+        }
+    )
+    roadmap = RoadmapReader(v3("A | WORK | READY | #1 | MAIN | A | - | -"))
+
+    before = evaluate_project_parallel_dev_executions(
+        PROJECT,
+        roadmap_reader=roadmap,
+        evidence_reader=evidence,
+        uow_factory=uow_factory,
+        max_parallel_dev_executions=1,
+        dev_stale_after_seconds=3600,
+        clock=lambda: datetime(2026, 10, 3, 10, 0, tzinfo=timezone.utc),
+    )
+    after = evaluate_project_parallel_dev_executions(
+        PROJECT,
+        roadmap_reader=roadmap,
+        evidence_reader=evidence,
+        uow_factory=uow_factory,
+        max_parallel_dev_executions=1,
+        dev_stale_after_seconds=3600,
+        clock=lambda: datetime(2026, 10, 3, 10, 41, tzinfo=timezone.utc),
+    )
+
+    assert before.dispatches == ()
+    assert len(after.dispatches) == 1
+    assert ":DEV:STALE:" in after.dispatches[0].idempotency_key
 
 
 def test_repoll_and_restart_reconstruct_active_slots_without_duplicate_initial_prompts():
