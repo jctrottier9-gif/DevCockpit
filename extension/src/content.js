@@ -16,6 +16,9 @@
     if (message?.type === "devcockpit_send_prompt") {
       return Promise.resolve(adapter.sendPrompt(message.text));
     }
+    if (message?.type === "devcockpit_inspect_prompt_delivery") {
+      return Promise.resolve(adapter.inspectPromptDelivery(message.text));
+    }
     if (message?.type === "devcockpit_list_chatgpt_responses") {
       return Promise.resolve(adapter.listAssistantResponses());
     }
