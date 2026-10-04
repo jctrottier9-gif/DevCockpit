@@ -637,3 +637,93 @@ details { margin: 1rem 0; }
   .drawer-facts div { grid-template-columns: 1fr; gap: .2rem; }
   .context-drawer { width: 100%; }
 }
+
+
+/* DC-070B parallel DEV Pool */
+.dev-pool-compact {
+  display: grid;
+  gap: .45rem;
+  padding: 0 .8rem .75rem;
+}
+.dev-pool-compact__item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: .1rem .55rem;
+  width: 100%;
+  margin: 0;
+  padding: .55rem .65rem;
+  border: 1px solid #e2e7ee;
+  border-radius: 8px;
+  background: #f9fbfd;
+  text-align: left;
+}
+.dev-pool-compact__item:hover,
+.dev-pool-compact__item:focus-visible {
+  border-color: #9db6d6;
+  background: #f0f6ff;
+}
+.dev-pool-compact__item strong { grid-row: 1 / span 2; align-self: center; }
+.dev-pool-compact__item span { font-size: .72rem; font-weight: 800; }
+.dev-pool-compact__item small { color: #687386; }
+.dev-pool-compact__more {
+  color: #687386;
+  font-size: .72rem;
+  text-align: right;
+}
+.dev-pool-detail { display: grid; gap: .85rem; }
+.dev-execution-list { display: grid; gap: .85rem; }
+.dev-execution-card {
+  min-width: 0;
+  padding: .9rem;
+  border: 1px solid #dfe4ec;
+  border-radius: 12px;
+  background: #fff;
+}
+.dev-execution-card__header {
+  display: flex;
+  justify-content: space-between;
+  gap: .75rem;
+  align-items: flex-start;
+}
+.dev-execution-card__header h3 { margin: .1rem 0; }
+.dev-session {
+  margin: .15rem 0 0;
+  color: #687386;
+  font-size: .75rem;
+  overflow-wrap: anywhere;
+}
+.dev-execution-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .35rem .65rem;
+  margin: .75rem 0;
+  color: #536074;
+  font-size: .76rem;
+}
+.dev-execution-summary span {
+  padding: .2rem .45rem;
+  border-radius: 999px;
+  background: #f4f6f9;
+}
+.dev-execution-facts { margin: .75rem 0; }
+.dev-execution-subsection {
+  margin-top: .75rem;
+  padding-top: .65rem;
+  border-top: 1px solid #edf0f4;
+}
+.dev-execution-subsection p {
+  margin: .3rem 0;
+  color: #5e6879;
+  font-size: .82rem;
+}
+.dev-execution-alert {
+  padding: .45rem .55rem;
+  border-radius: 8px;
+  background: #fff1f2;
+  color: #8b2635 !important;
+}
+.state-badge--active,
+.state-badge--selected { border-color: #abc5e6; background: #f0f6ff; color: #2f5d93; }
+.state-badge--waiting_for_capacity,
+.state-badge--waiting_for_resource_lock { border-color: #dbc27b; background: #fff9e8; color: #74580c; }
+.state-badge--inhibited { border-color: #d7dde7; background: #f6f8fb; color: #536074; }
