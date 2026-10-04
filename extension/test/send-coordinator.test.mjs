@@ -225,3 +225,34 @@ test("unrelated tab messaging failure remains non-retryable", async () => {
   assert.equal(transitions.includes("SEND_ARMED"), false);
   assert.equal((await sendStore.get(DELIVERY_ID)).state, "BLOCKED");
 });
+
+
+test("canonical conversation accepts nested ChatGPT project and workspace routes", async () => {
+  const context = await loadClassicScripts(
+    [
+      "src/queue-store.js",
+      "src/response-store.js",
+      "src/send-store.js",
+      "src/send-coordinator.js",
+    ],
+    {},
+  );
+  const { canonicalConversation } = context.DevCockpitCompanion.send;
+
+  assert.equal(
+    canonicalConversation("https://chatgpt.com/g/g-p-project/c/conv-123?model=auto#x").conversation_id,
+    "conv-123",
+  );
+  assert.equal(
+    canonicalConversation("https://chatgpt.com/g/g-p-project/c/conv-123?model=auto#x").canonical_url,
+    "https://chatgpt.com/c/conv-123",
+  );
+  assert.equal(
+    canonicalConversation("https://chatgpt.com/w/team/c/conv-456").canonical_url,
+    "https://chatgpt.com/c/conv-456",
+  );
+  assert.equal(
+    canonicalConversation("https://chatgpt.com/g/g-p-project/c/conv-123/extra"),
+    null,
+  );
+});
