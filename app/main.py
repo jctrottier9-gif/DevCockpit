@@ -322,6 +322,11 @@ def _parallel_execution_item_payload(
                     if item.watchdog.send_confirmed_at is not None
                     else None
                 ),
+                "deadline_at": (
+                    item.watchdog.deadline_at.isoformat()
+                    if item.watchdog.deadline_at is not None
+                    else None
+                ),
                 "stale_due": item.watchdog.stale_due,
                 "relaunch_prepared": item.watchdog.relaunch_prepared,
             }
