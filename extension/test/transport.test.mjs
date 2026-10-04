@@ -183,3 +183,54 @@ test("normal close reconnects and companion conflict fails closed", async () => 
   value.transport.retry();
   assert.equal(value.sockets.length, 2);
 });
+
+
+test("send-status outbox event replays and clears only after correlated ACK", async () => {
+  const event = {
+    event_id: "20cd3422-3dbd-481f-a5b0-5915a1f7f5be",
+    delivery_id: DELIVERY_ID,
+    session: "DevCockpit:DEV:DC-063B",
+    state: "SEND_ARMED",
+    attempt: 1,
+    conversation: null,
+    error_code: null,
+    next_retry_at: null,
+    occurred_at: "2026-10-04T15:00:00.000Z",
+  };
+  const sockets = [];
+  const acks = [];
+  const context = await loadClassicScripts([
+    "src/protocol.js",
+    "src/transport.js",
+  ]);
+  const { CompanionTransport } = context.DevCockpitCompanion.transport;
+  const transport = new CompanionTransport({
+    url: "ws://127.0.0.1:8000/api/companion/ws",
+    webSocketFactory: (url) => {
+      const socket = new FakeSocket(url);
+      sockets.push(socket);
+      return socket;
+    },
+    onPrompt: async () => {},
+    getPendingSendStatuses: async () => [event],
+    onSendStatusAck: async (eventId) => acks.push(eventId),
+  });
+
+  transport.connect();
+  sockets[0].emit("open");
+  await settle();
+
+  const outbound = JSON.parse(sockets[0].sent[0]);
+  assert.equal(outbound.type, "chatgpt_send_status");
+  assert.equal(outbound.event_id, event.event_id);
+
+  sockets[0].emit("message", {
+    data: JSON.stringify({
+      version: 2,
+      type: "chatgpt_send_status_ack",
+      event_id: event.event_id,
+    }),
+  });
+  await settle();
+  assert.equal(acks[0], event.event_id);
+});
