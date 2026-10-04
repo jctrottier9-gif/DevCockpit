@@ -4,6 +4,7 @@
   const namespace = globalThis.DevCockpitCompanion;
   const { QueueStore } = namespace.queue;
   const { SentPromptStore, PendingResponseStore } = namespace.responses;
+  const { ChatGptSendStore, SEND_STATE } = namespace.sendStore;
   const { ConversationRoutingStore } = namespace.routingStore;
   const { ConversationRouter, isSupportedChatGptUrl } = namespace.routing;
   const { CompanionTransport, CONNECTION_STATUS } = namespace.transport;
@@ -15,6 +16,7 @@
   const queueStore = new QueueStore(browser.storage.local);
   const sentPromptStore = new SentPromptStore(browser.storage.local);
   const pendingResponseStore = new PendingResponseStore(browser.storage.local);
+  const sendStore = new ChatGptSendStore(browser.storage.local);
   const routingStore = new ConversationRoutingStore(browser.storage.local);
   const router = new ConversationRouter({
     routingStore,
@@ -28,6 +30,7 @@
     status: CONNECTION_STATUS.DISCONNECTED,
     lastError: null,
   };
+  let sendCoordinator = null;
 
   async function broadcast(type) {
     try {
@@ -37,45 +40,27 @@
     }
   }
 
-  async function routeQueuedPrompt(prompt) {
-    try {
-      await router.route({
-        session: prompt.session,
-        routing: prompt.routing,
-      });
-      await queueStore.setError(prompt.deliveryId, null);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      try {
-        await queueStore.setError(prompt.deliveryId, message);
-      } catch {
-        // The queue remains authoritative for accepted delivery state.
-      }
-    } finally {
-      await broadcast("devcockpit_queue_changed");
-    }
-  }
-
-  async function routePersistedQueue() {
-    const queue = await queueStore.list();
-    for (const entry of queue) {
-      void routeQueuedPrompt({
-        deliveryId: entry.delivery_id,
-        session: entry.session,
-        routing: entry.routing,
-      });
-    }
-  }
-
   const transport = new CompanionTransport({
     url: SOCKET_URL,
     webSocketFactory: (url) => new WebSocket(url),
     onPrompt: async (prompt) => {
       await queueStore.acceptPrompt(prompt);
+      await sendStore.ensureQueued(prompt);
       await broadcast("devcockpit_queue_changed");
-      void routeQueuedPrompt(prompt);
+    },
+    onPromptAccepted: async (prompt) => {
+      void sendCoordinator.enqueue(prompt.deliveryId).then(async () => {
+        await broadcast("devcockpit_queue_changed");
+        await broadcast("devcockpit_sent_prompts_changed");
+        await broadcast("devcockpit_send_state_changed");
+      });
     },
     getPendingResponses: () => pendingResponseStore.list(),
+    getPendingSendStatuses: () => sendStore.pendingEvents(),
+    onSendStatusAck: async (eventId) => {
+      await sendStore.ackEvent(eventId);
+      await broadcast("devcockpit_send_state_changed");
+    },
     onResponseAck: async (responseId) => {
       await pendingResponseStore.remove(responseId);
       await broadcast("devcockpit_response_changed");
@@ -93,12 +78,41 @@
     },
   });
 
-  const sendCoordinator = new PromptSendCoordinator({
+  sendCoordinator = new PromptSendCoordinator({
     queueStore,
     sentPromptStore,
+    sendStore,
     router,
     sendToTab: (tabId, message) => browser.tabs.sendMessage(tabId, message),
+    emitStatus: (event) => transport.sendPendingSendStatus(event),
   });
+
+  async function recoverPersistedSends() {
+    const ambiguousEvents = await sendStore.recoverInterruptedArmedSends();
+    for (const event of ambiguousEvents) {
+      transport.sendPendingSendStatus(event);
+    }
+
+    const queue = await queueStore.list();
+    for (const entry of queue) {
+      await sendStore.ensureQueued({
+        deliveryId: entry.delivery_id,
+        session: entry.session,
+      });
+      const state = await sendStore.get(entry.delivery_id);
+      if (
+        state &&
+        [
+          SEND_STATE.QUEUED,
+          SEND_STATE.ROUTING,
+          SEND_STATE.WAITING_READY,
+          SEND_STATE.RETRYABLE_FAILURE,
+        ].includes(state.state)
+      ) {
+        void sendCoordinator.enqueue(entry.delivery_id);
+      }
+    }
+  }
 
   async function activeChatGptTab() {
     const tabs = await browser.tabs.query({ active: true, currentWindow: true });
@@ -123,7 +137,8 @@
       if (context.tab_id !== null && tab.id !== context.tab_id) {
         return {
           ok: false,
-          error: "Ouvrez l’onglet ChatGPT utilisé pour ce prompt avant de choisir une réponse",
+          error:
+            "Ouvrez l’onglet ChatGPT utilisé pour ce prompt avant de choisir une réponse",
         };
       }
       const result = await browser.tabs.sendMessage(tab.id, {
@@ -189,6 +204,8 @@
         socketUrl: SOCKET_URL,
         connection,
         queue: await queueStore.list(),
+        sendStates: await sendStore.list(),
+        pendingSendStatuses: await sendStore.pendingEvents(),
         sentPrompts: await sentPromptStore.list(),
         pendingResponses: await pendingResponseStore.list(),
         routing: await routingStore.list(),
@@ -201,12 +218,12 @@
     }
 
     if (
-      message?.type === "devcockpit_send_prompt" &&
+      message?.type === "devcockpit_retry_chatgpt_send" &&
       typeof message.deliveryId === "string"
     ) {
-      const result = await sendCoordinator.send(message.deliveryId);
-      await broadcast("devcockpit_queue_changed");
-      await broadcast("devcockpit_sent_prompts_changed");
+      await sendStore.retryBlocked(message.deliveryId);
+      const result = await sendCoordinator.enqueue(message.deliveryId);
+      await broadcast("devcockpit_send_state_changed");
       return result;
     }
 
@@ -227,6 +244,6 @@
     return undefined;
   });
 
-  void routePersistedQueue();
+  void recoverPersistedSends();
   transport.connect();
 })();
