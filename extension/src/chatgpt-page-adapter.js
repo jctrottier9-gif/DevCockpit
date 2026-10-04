@@ -6,8 +6,23 @@
   const COMPOSER_SELECTORS = Object.freeze([
     "#prompt-textarea",
     '[data-testid="prompt-textarea"]',
+    'form[data-chatgpt-composer] [contenteditable="true"][role="textbox"]',
+    'form[data-type="unified-composer"] [contenteditable="true"][role="textbox"]',
+    'form[data-type="unified-composer"] [data-lexical-editor="true"][role="textbox"]',
+    '.composer-parent .ProseMirror[contenteditable="true"]',
+    '.ProseMirror[contenteditable="true"][role="textbox"]',
+    '[contenteditable="true"][data-lexical-editor="true"][role="textbox"]',
+    'textarea[name="prompt-textarea"]',
+    'textarea[aria-label="Chat with ChatGPT"]',
   ]);
-  const SEND_BUTTON_SELECTOR = 'button[data-testid="send-button"]';
+  const SEND_BUTTON_SELECTORS = Object.freeze([
+    'button[data-testid="send-button"]',
+    'button[data-testid="composer-send-button"]',
+    'button[data-testid*="composer-send"]',
+    'button[type="submit"][aria-label*="Send" i]',
+    'button[type="submit"]',
+  ]);
+  const SEND_BUTTON_SELECTOR = SEND_BUTTON_SELECTORS[0];
   const LOGIN_SELECTORS = Object.freeze([
     'button[data-testid="login-button"]',
     'a[href="/auth/login"]',
@@ -29,6 +44,27 @@
       for (const element of document.querySelectorAll(selector)) matches.add(element);
     }
     return [...matches];
+  }
+
+  function visibleElement(document, element) {
+    if (!element || typeof element.getAttribute !== "function") return false;
+    if (
+      element.hidden === true ||
+      element.getAttribute("aria-hidden") === "true" ||
+      element.hasAttribute?.("inert") ||
+      element.hasAttribute?.("disabled")
+    ) {
+      return false;
+    }
+    if (typeof element.getClientRects === "function" && element.getClientRects().length === 0) {
+      return false;
+    }
+    const view = document.defaultView || globalThis;
+    if (typeof view.getComputedStyle === "function") {
+      const style = view.getComputedStyle(element);
+      if (style?.display === "none" || style?.visibility === "hidden") return false;
+    }
+    return true;
   }
 
   function normalizedText(value) {
@@ -85,15 +121,47 @@
     throw new ChatGptAdapterError("composer_not_supported");
   }
 
+  function composerDiagnostics(document) {
+    const counts = [
+      ["id", "#prompt-textarea"],
+      ["testid", '[data-testid="prompt-textarea"]'],
+      ["prose", ".ProseMirror"],
+      ["role", '[role="textbox"]'],
+      ["lexical", '[data-lexical-editor="true"]'],
+      ["form", 'form[data-chatgpt-composer], form[data-type="unified-composer"]'],
+    ];
+    return counts
+      .map(([label, selector]) => {
+        try {
+          return label + "=" + document.querySelectorAll(selector).length;
+        } catch {
+          return label + "=?";
+        }
+      })
+      .join(",");
+  }
+
   function exactComposer(document) {
-    const composers = uniqueMatches(document, COMPOSER_SELECTORS);
-    if (composers.length === 0) throw new ChatGptAdapterError("composer_not_found");
+    const composers = uniqueMatches(document, COMPOSER_SELECTORS).filter((element) =>
+      visibleElement(document, element),
+    );
+    if (composers.length === 0) {
+      throw new ChatGptAdapterError(
+        "composer_not_found:" + composerDiagnostics(document),
+      );
+    }
     if (composers.length !== 1) throw new ChatGptAdapterError("composer_ambiguous");
     return composers[0];
   }
 
-  function exactEnabledSendButton(document) {
-    const buttons = uniqueMatches(document, [SEND_BUTTON_SELECTOR]);
+  function exactEnabledSendButton(document, composer) {
+    const scope =
+      typeof composer?.closest === "function"
+        ? composer.closest("form") || document
+        : document;
+    const buttons = uniqueMatches(scope, SEND_BUTTON_SELECTORS).filter((element) =>
+      visibleElement(document, element),
+    );
     if (buttons.length === 0) throw new ChatGptAdapterError("send_button_not_found");
     if (buttons.length !== 1) throw new ChatGptAdapterError("send_button_ambiguous");
     const button = buttons[0];
@@ -171,7 +239,7 @@
         const composer = exactComposer(this.document);
         insertIntoComposer(this.document, composer, text);
         await this.afterInput();
-        exactEnabledSendButton(this.document);
+        exactEnabledSendButton(this.document, composer);
         return {
           ok: true,
           baseline: {
@@ -205,7 +273,7 @@
         if (elementText(composer) !== normalizedText(text)) {
           throw new ChatGptAdapterError("composer_changed_before_send");
         }
-        exactEnabledSendButton(this.document).click();
+        exactEnabledSendButton(this.document, composer).click();
         clicked = true;
 
         for (let index = 0; index < this.confirmationPollCount; index += 1) {
@@ -221,7 +289,7 @@
           } catch (error) {
             if (
               error instanceof ChatGptAdapterError &&
-              error.code !== "composer_not_found"
+              !error.code.startsWith("composer_not_found")
             ) {
               throw error;
             }
@@ -282,7 +350,9 @@
 
   namespace.chatgpt = {
     COMPOSER_SELECTORS,
+    SEND_BUTTON_SELECTORS,
     SEND_BUTTON_SELECTOR,
+    visibleElement,
     editableMode,
     LOGIN_SELECTORS,
     USER_MESSAGE_SELECTOR,
