@@ -54,6 +54,7 @@
       this.retryDelaysMs = retryDelaysMs;
       this.deliveryWorkers = new Map();
       this.sessionChains = new Map();
+      this.enqueueSetupChain = Promise.resolve();
     }
 
     async _emit(result) {
@@ -86,20 +87,32 @@
       const existingWorker = this.deliveryWorkers.get(deliveryId);
       if (existingWorker) return existingWorker;
 
-      const worker = (async () => {
+      const setup = this.enqueueSetupChain.then(async () => {
         const entry = await this._queueEntry(deliveryId);
-        if (!entry) return { ok: false, error: "delivery_not_found:" + deliveryId };
+        if (!entry) {
+          return {
+            run: Promise.resolve({
+              ok: false,
+              error: "delivery_not_found:" + deliveryId,
+            }),
+          };
+        }
+
         const prior = this.sessionChains.get(entry.session) || Promise.resolve();
         const run = prior.then(() => this._run(entry), () => this._run(entry));
         this.sessionChains.set(
           entry.session,
           run.then(() => undefined, () => undefined),
         );
-        return run;
-      })().finally(() => {
-        this.deliveryWorkers.delete(deliveryId);
+        return { run };
       });
+      this.enqueueSetupChain = setup.then(() => undefined, () => undefined);
 
+      const worker = setup
+        .then(({ run }) => run)
+        .finally(() => {
+          this.deliveryWorkers.delete(deliveryId);
+        });
       this.deliveryWorkers.set(deliveryId, worker);
       return worker;
     }
