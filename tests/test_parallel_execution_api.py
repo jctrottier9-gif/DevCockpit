@@ -74,6 +74,9 @@ def test_parallel_execution_api_exposes_capacity_and_is_idempotent(tmp_path):
         "DevCockpit:DEV:B",
     ]
 
+    assert all(item["interaction"] is None for item in read_payload["executions"])
+    assert all(item["watchdog"] is None for item in read_payload["executions"])
+
     first = client.post("/api/projects/DevCockpit/executions/evaluate")
     assert first.status_code == 200
     first_payload = first.json()
@@ -103,6 +106,17 @@ def test_parallel_execution_api_exposes_capacity_and_is_idempotent(tmp_path):
         "B": "ACTIVE",
         "C": "WAITING_FOR_CAPACITY",
     }
+    active = {
+        item["work_item"]["key"]: item
+        for item in second_payload["executions"]
+        if item["active"]
+    }
+    assert active["A"]["interaction"]["dispatch_status"] == "PREPARED"
+    assert active["A"]["interaction"]["delivery_status"] is None
+    assert active["A"]["interaction"]["send_state"] is None
+    assert active["A"]["interaction"]["imported_response_available"] is False
+    assert active["B"]["interaction"]["dispatch_status"] == "PREPARED"
+
 
 
 @pytest.mark.parametrize("value", [0, -1, 33])
