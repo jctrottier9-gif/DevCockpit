@@ -157,7 +157,12 @@ export default function CockpitDashboard({
           >
             <strong>{item.work_item_id}</strong>
             <span>{item.slot_state}</span>
-            <small>{item.execution_state}{item.ci_state ? ' · CI ' + item.ci_state : ''}</small>
+            <small>
+              {item.execution_state}
+              {item.ci_state ? ' · CI ' + item.ci_state : ''}
+              {item.watchdog_stale ? ' · STALE' : ''}
+              {item.watchdog_relaunch_prepared ? ' · relance' : ''}
+            </small>
           </button>)}
           {overview.dev_pool.items.length > 3 && <span className="dev-pool-compact__more">
             +{overview.dev_pool.items.length - 3} autre(s)
