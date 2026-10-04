@@ -365,8 +365,8 @@ def test_upgrade_from_0003_preserves_existing_history(tmp_path):
     upgrade_database(settings)
     upgrade_database(settings)
     with uow() as u:
-        assert u.chatgpt_responses.get(returned.response_id).text == imported.text
-        assert u.chatgpt_responses.get(returned.response_id).imported_at == imported.imported_at
+        assert u.chatgpt_responses.get(response_id).text == imported.text
+        assert u.chatgpt_responses.get(response_id).imported_at == imported.imported_at
         assert u.prompt_dispatches.get(dispatch.dispatch_id).prompt_text == dispatch.prompt_text
         assert u.handoffs.list_for_work_item(PROJECT.project_id,KEY) == []
     with engine.connect() as c:
