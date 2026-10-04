@@ -18,6 +18,7 @@ Current decisions:
 - [ADR-0012 — Automatic DEV roadmap reconciliation](ADR-0012-automatic-dev-roadmap-reconciliation.md)
 - [ADR-0013 — Stale DEV watchdog and bounded ChatGPT retry](ADR-0013-stale-dev-watchdog-and-bounded-retry.md)
 - [ADR-0014 — Automatic ChatGPT routing, durable ConversationBinding, and fail-stop send idempotence](ADR-0014-automatic-chatgpt-routing-and-send-idempotence.md)
+- [ADR-0015 — Hybrid cockpit and application projection contracts](ADR-0015-hybrid-cockpit-and-projection-contracts.md)
 
 ## Rule
 
