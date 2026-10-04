@@ -3,119 +3,141 @@ import test from "node:test";
 import { createMemoryStorage, loadClassicScripts } from "./helpers.mjs";
 
 const DELIVERY_ID = "8fcd3422-3dbd-481f-a5b0-5915a1f7f5be";
-const ROUTING = {
-  binding_version: 4,
-  conversation_id: "abc",
-  canonical_url: "https://chatgpt.com/c/abc",
-};
+const SESSION = "DevCockpit:DEV:DC-063B";
 
 async function setup({
-  response = { ok: true },
-  revalidateError = null,
-  routing = ROUTING,
+  commitResponse = {
+    ok: true,
+    conversationUrl: "https://chatgpt.com/c/new-conversation",
+  },
+  prepareResponse = {
+    ok: true,
+    baseline: { user_message_count: 0, expected_text: "send me" },
+  },
 } = {}) {
   const storage = createMemoryStorage();
-  const context = await loadClassicScripts([
-    "src/queue-store.js",
-    "src/response-store.js",
-    "src/send-coordinator.js",
-  ]);
+  let counter = 0;
+  const context = await loadClassicScripts(
+    [
+      "src/queue-store.js",
+      "src/response-store.js",
+      "src/send-store.js",
+      "src/send-coordinator.js",
+    ],
+    {
+      crypto: {
+        randomUUID: () =>
+          `00000000-0000-4000-8000-${String(++counter).padStart(12, "0")}`,
+      },
+    },
+  );
   const { QueueStore } = context.DevCockpitCompanion.queue;
   const { SentPromptStore } = context.DevCockpitCompanion.responses;
+  const { ChatGptSendStore } = context.DevCockpitCompanion.sendStore;
   const { PromptSendCoordinator } = context.DevCockpitCompanion.send;
-  const store = new QueueStore(storage);
-  const sentPromptStore = new SentPromptStore(storage, {
-    now: () => new Date("2026-10-03T16:00:00.000Z"),
+
+  const queueStore = new QueueStore(storage);
+  const sentPromptStore = new SentPromptStore(storage);
+  const sendStore = new ChatGptSendStore(storage, {
+    uuid: () =>
+      `00000000-0000-4000-8000-${String(++counter).padStart(12, "0")}`,
   });
-  await store.acceptPrompt({
+  await queueStore.acceptPrompt({
     deliveryId: DELIVERY_ID,
-    session: "DevCockpit:DEV:DC-063A",
+    session: SESSION,
     text: "send me",
-    routing,
+    routing: null,
   });
-  const sent = [];
-  const routed = [];
-  const router = {
-    async route(target) {
-      routed.push({ phase: "route", ...target });
-      return {
-        kind: routing === null ? "PROVISIONAL" : "BOUND",
-        tabId: 7,
-        url: routing?.canonical_url || "https://chatgpt.com/",
-      };
-    },
-    async revalidateTarget(target) {
-      routed.push({ phase: "revalidate", ...target });
-      if (revalidateError) throw new Error(revalidateError);
-      return {
-        id: 7,
-        url: routing?.canonical_url || "https://chatgpt.com/",
-      };
-    },
+  await sendStore.ensureQueued({ deliveryId: DELIVERY_ID, session: SESSION });
+
+  const calls = [];
+  const transitions = [];
+  const originalTransition = sendStore.transition.bind(sendStore);
+  sendStore.transition = async (command) => {
+    const result = await originalTransition(command);
+    transitions.push(result.entry.state);
+    return result;
   };
+
   const coordinator = new PromptSendCoordinator({
-    queueStore: store,
+    queueStore,
     sentPromptStore,
-    router,
-    sendToTab: async (tabId, message) => {
-      sent.push({ tabId, message });
-      return response;
+    sendStore,
+    router: {
+      async route() {
+        return { kind: "PROVISIONAL", tabId: 7, url: "https://chatgpt.com/" };
+      },
+      async revalidateTarget() {
+        return { id: 7, url: "https://chatgpt.com/" };
+      },
     },
+    sendToTab: async (_tabId, message) => {
+      calls.push(message.type);
+      if (message.type === "devcockpit_prepare_prompt") {
+        return prepareResponse;
+      }
+      return commitResponse;
+    },
+    retryDelaysMs: [],
   });
-  return { store, sentPromptStore, sent, routed, coordinator };
+
+  return {
+    coordinator,
+    sendStore,
+    queueStore,
+    sentPromptStore,
+    calls,
+    transitions,
+  };
 }
 
-test("manual send routes and revalidates exact target before DOM action", async () => {
-  const { store, sentPromptStore, sent, routed, coordinator } = await setup();
-  assert.equal(sent.length, 0);
+test("automatic send persists SEND_ARMED before exactly one DOM commit", async () => {
+  const { coordinator, sendStore, queueStore, calls, transitions } = await setup();
 
-  const result = await coordinator.send(DELIVERY_ID);
+  const result = await coordinator.enqueue(DELIVERY_ID);
+
   assert.equal(result.ok, true);
-  assert.deepEqual(routed.map((entry) => entry.phase), ["route", "revalidate"]);
-  assert.equal(routed[1].routing.conversation_id, "abc");
-  assert.equal(sent.length, 1);
-  assert.equal(sent[0].tabId, 7);
-  assert.equal(sent[0].message.text, "send me");
-  assert.equal((await store.list()).length, 0);
-
-  const contexts = await sentPromptStore.list();
-  assert.equal(contexts.length, 1);
-  assert.equal(contexts[0].delivery_id, DELIVERY_ID);
-  assert.equal(contexts[0].session, "DevCockpit:DEV:DC-063A");
-  assert.equal(contexts[0].tab_id, 7);
-  assert.equal(contexts[0].conversation_url, "https://chatgpt.com/c/abc");
+  assert.deepEqual(calls, [
+    "devcockpit_prepare_prompt",
+    "devcockpit_commit_prepared_prompt",
+  ]);
+  assert.ok(
+    transitions.indexOf("SEND_ARMED") <
+      transitions.indexOf("SENT_CONFIRMED"),
+  );
+  assert.equal((await sendStore.get(DELIVERY_ID)).state, "SENT_CONFIRMED");
+  assert.equal((await queueStore.list()).length, 0);
 });
 
-test("failed ChatGPT action keeps prompt and creates no sent context", async () => {
-  const { store, sentPromptStore, coordinator } = await setup({
-    response: { ok: false, error: "composer_not_found" },
+test("post-barrier uncertainty becomes AMBIGUOUS and never auto-resends", async () => {
+  const { coordinator, sendStore, calls } = await setup({
+    commitResponse: {
+      ok: false,
+      error: "send_confirmation_timeout",
+      ambiguous: true,
+    },
   });
-  const result = await coordinator.send(DELIVERY_ID);
-  assert.equal(result.ok, false);
-  const queue = await store.list();
-  assert.equal(queue.length, 1);
-  assert.equal(queue[0].local_status, "QUEUED");
-  assert.equal(queue[0].last_error, "composer_not_found");
-  assert.equal((await sentPromptStore.list()).length, 0);
+
+  const first = await coordinator.enqueue(DELIVERY_ID);
+  const second = await coordinator.enqueue(DELIVERY_ID);
+
+  assert.equal(first.state, "AMBIGUOUS");
+  assert.equal(second.state, "AMBIGUOUS");
+  assert.equal(
+    calls.filter((item) => item === "devcockpit_commit_prepared_prompt").length,
+    1,
+  );
+  assert.equal((await sendStore.get(DELIVERY_ID)).state, "AMBIGUOUS");
 });
 
-test("concurrent navigation detected by revalidation fails before DOM send", async () => {
-  const { store, sentPromptStore, sent, coordinator } = await setup({
-    revalidateError: "bound_target_changed",
+test("certain pre-barrier readiness failure is BLOCKED without DOM click", async () => {
+  const { coordinator, sendStore, calls } = await setup({
+    prepareResponse: { ok: false, error: "send_button_disabled" },
   });
-  const result = await coordinator.send(DELIVERY_ID);
-  assert.equal(result.ok, false);
-  assert.match(result.error, /bound_target_changed/);
-  assert.equal(sent.length, 0);
-  assert.equal((await store.list())[0].local_status, "QUEUED");
-  assert.equal((await sentPromptStore.list()).length, 0);
-});
 
-test("provisional manual send preserves dedicated tab identity", async () => {
-  const { routed, sent, coordinator } = await setup({ routing: null });
-  const result = await coordinator.send(DELIVERY_ID);
-  assert.equal(result.ok, true);
-  assert.equal(routed[0].routing, null);
-  assert.equal(routed[1].routing, null);
-  assert.equal(sent[0].tabId, 7);
+  const result = await coordinator.enqueue(DELIVERY_ID);
+
+  assert.equal(result.state, "BLOCKED");
+  assert.deepEqual(calls, ["devcockpit_prepare_prompt"]);
+  assert.equal((await sendStore.get(DELIVERY_ID)).state, "BLOCKED");
 });
