@@ -35,6 +35,7 @@ class AttentionKind(StrEnum):
     ROADMAP_APPLICATION = "ROADMAP_APPLICATION"
     RESOURCE_LOCK_CONFLICT = "RESOURCE_LOCK_CONFLICT"
     ARCHITECTURE_GATE_AUTHORIZATION = "ARCHITECTURE_GATE_AUTHORIZATION"
+    CHATGPT_SEND = "CHATGPT_SEND"
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,7 +213,7 @@ def _execution_items(
                 items,
                 AttentionItem(
                     stable_key=_stable_key(project_id, "DEV", work_item.key, action_kind),
-                    level=AttentionLevel.ACTION,
+                    level=level,
                     kind=AttentionKind.CI_RED,
                     title=f"DEV · {work_item.key} · CI rouge",
                     reason="La projection d'exécution exige une correction de la CI.",
@@ -420,6 +421,10 @@ def _prompt_items(
             continue
         with uow_factory() as uow:
             delivery = uow.prompt_deliveries.get_by_dispatch_id(dispatch.dispatch_id)
+            send_projection = None
+            send_repository = getattr(uow, "chatgpt_prompt_sends", None)
+            if delivery is not None and send_repository is not None:
+                send_projection = send_repository.get(delivery.delivery_id)
         if delivery is not None and delivery.delivery_id in responded_delivery_ids:
             continue
 
@@ -447,7 +452,55 @@ def _prompt_items(
             not companion_connected
             and (delivery is None or not delivery.is_acknowledged)
         )
-        if blocked_by_transport:
+        level = AttentionLevel.ACTION
+        if (
+            send_projection is not None
+            and send_projection.state.value == "SENT_CONFIRMED"
+        ):
+            continue
+        if (
+            send_projection is not None
+            and send_projection.state.value in {"AMBIGUOUS", "BLOCKED"}
+        ):
+            primary_action = AttentionAction(
+                kind="RECONCILE_CHATGPT_SEND",
+                label=(
+                    "Vérifier l'envoi ChatGPT avant toute reprise"
+                    if send_projection.state.value == "AMBIGUOUS"
+                    else "Corriger le blocage d'envoi ChatGPT"
+                ),
+                target="companion",
+                work_item_id=dispatch.work_item_id,
+                dispatch_id=str(dispatch.dispatch_id),
+            )
+            kind = AttentionKind.CHATGPT_SEND
+            reason = (
+                "L'envoi a franchi SEND_ARMED mais sa confirmation est incertaine; "
+                "aucun renvoi automatique n'est permis."
+                if send_projection.state.value == "AMBIGUOUS"
+                else "L'envoi automatique est bloqué avant la barrière irréversible."
+            )
+            action_kind = "RECONCILE_CHATGPT_SEND"
+        elif (
+            send_projection is not None
+            and delivery is not None
+            and delivery.is_acknowledged
+        ):
+            level = AttentionLevel.WATCH
+            primary_action = AttentionAction(
+                kind="WAIT_CHATGPT_SEND",
+                label="Suivre l'envoi automatique ChatGPT",
+                target="companion",
+                work_item_id=dispatch.work_item_id,
+                dispatch_id=str(dispatch.dispatch_id),
+            )
+            kind = AttentionKind.CHATGPT_SEND
+            reason = (
+                f"Envoi automatique en cours: {send_projection.state.value}. "
+                "Aucune action humaine n'est requise tant qu'il n'est pas bloqué ou ambigu."
+            )
+            action_kind = "WAIT_CHATGPT_SEND"
+        elif blocked_by_transport:
             primary_action = AttentionAction(
                 kind="CONNECT_COMPANION",
                 label="Reconnecter le companion Firefox",
@@ -552,6 +605,21 @@ def _prompt_items(
                         delivery.is_acknowledged if delivery is not None else False
                     ),
                     "transport_connected": companion_connected,
+                    "chatgpt_send_state": (
+                        send_projection.state.value
+                        if send_projection is not None
+                        else None
+                    ),
+                    "chatgpt_send_attempt": (
+                        send_projection.attempt_count
+                        if send_projection is not None
+                        else None
+                    ),
+                    "chatgpt_send_error": (
+                        send_projection.last_error_code
+                        if send_projection is not None
+                        else None
+                    ),
                 },
             ),
         )
