@@ -257,6 +257,77 @@ test("prompt inspection proves SENT when one matching user message exists and co
   assert.equal(result.conversationUrl, "https://chatgpt.com/c/abc-123");
 });
 
+test("rendered Markdown user text matches the complete source prompt", async () => {
+  const context = await loadClassicScripts(
+    ["src/chatgpt-page-adapter.js"],
+    { InputEvent: FakeEvent, Event: FakeEvent },
+  );
+  const { sameRenderedPromptText } = context.DevCockpitCompanion.chatgpt;
+  const source = [
+    "Tu travailles sur le dépôt GitHub `tchi99/RessourcePlanner`.",
+    "",
+    "## Important",
+    "- lis `AGENTS.md`;",
+    "- PR : [#606](https://github.com/tchi99/RessourcePlanner/pull/606)",
+    "",
+    "```text",
+    "COCKPIT_PIPELINE_V3",
+    "```",
+  ].join("\n");
+  const rendered = [
+    "Tu travailles sur le dépôt GitHub tchi99/RessourcePlanner.",
+    "",
+    "Important",
+    "• lis AGENTS.md;",
+    "• PR : #606",
+    "",
+    "COCKPIT_PIPELINE_V3",
+  ].join("\n");
+
+  assert.equal(sameRenderedPromptText(rendered, source), true);
+  assert.equal(
+    sameRenderedPromptText(
+      rendered.replace("COCKPIT_PIPELINE_V3", "COCKPIT_PIPELINE"),
+      source,
+    ),
+    false,
+  );
+});
+
+test("prompt inspection proves SENT for a Markdown-rendered logical user turn", async () => {
+  const source = [
+    "Tu travailles sur le dépôt GitHub `tchi99/RessourcePlanner`.",
+    "",
+    "- consulte `AGENTS.md`;",
+    "- roadmap **#55**.",
+  ].join("\n");
+  const rendered = [
+    "Tu travailles sur le dépôt GitHub tchi99/RessourcePlanner.",
+    "",
+    "• consulte AGENTS.md;",
+    "• roadmap #55.",
+  ].join("\n");
+  const composer = new FakeElement({
+    attributes: { contenteditable: "true", role: "textbox" },
+    text: "",
+  });
+  const outer = new FakeElement({ text: rendered });
+  const inner = new FakeElement({ text: rendered });
+  outer.children.add(inner);
+  const { adapter } = await adapterFor(new Map([
+    ['#prompt-textarea', [composer]],
+    ['[data-message-author-role="user"]', [outer]],
+    ['[data-user-message-bubble]', [inner]],
+  ]));
+  adapter.location = { href: "https://chatgpt.com/c/abc-123" };
+
+  const result = adapter.inspectPromptDelivery(source);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.state, "SENT");
+  assert.equal(result.conversationUrl, "https://chatgpt.com/c/abc-123");
+});
+
 test("nested DOM candidates for one user turn count as one SENT proof", async () => {
   const composer = new FakeElement({
     attributes: { contenteditable: "true", role: "textbox" },
