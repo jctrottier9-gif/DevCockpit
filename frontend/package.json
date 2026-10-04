@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build"
+    "build": "tsc --noEmit && vite build",
+    "test:workspace": "node --experimental-strip-types --test tests/projectWorkspace.test.mjs"
   },
   "dependencies": {
     "react": "19.1.1",
