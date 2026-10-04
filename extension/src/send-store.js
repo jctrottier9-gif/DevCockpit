@@ -246,6 +246,45 @@
         return clone(entry);
       });
     }
+
+    async resolveAmbiguous({
+      deliveryId,
+      state,
+      conversation = null,
+      errorCode = null,
+    }) {
+      if (![SEND_STATE.BLOCKED, SEND_STATE.SENT_CONFIRMED].includes(state)) {
+        throw new ChatGptSendStorageError("invalid_ambiguous_resolution_state");
+      }
+      return this._mutate(async () => {
+        const { states, outbox } = await this._loadUnsafe();
+        const entry = states.find((item) => item.delivery_id === deliveryId);
+        if (!entry || entry.state !== SEND_STATE.AMBIGUOUS) {
+          throw new ChatGptSendStorageError("chatgpt_send_not_ambiguous");
+        }
+        const occurredAt = this.now().toISOString();
+        entry.state = state;
+        entry.conversation = conversation ? clone(conversation) : null;
+        entry.error_code = errorCode;
+        entry.next_retry_at = null;
+        entry.updated_at = occurredAt;
+
+        const event = {
+          event_id: this.uuid(),
+          delivery_id: entry.delivery_id,
+          session: entry.session,
+          state,
+          attempt: entry.attempt,
+          conversation: conversation ? clone(conversation) : null,
+          error_code: errorCode,
+          next_retry_at: null,
+          occurred_at: occurredAt,
+        };
+        outbox.push(event);
+        await this._saveUnsafe(states, outbox);
+        return { entry: clone(entry), event: clone(event) };
+      });
+    }
   }
 
   namespace.sendStore = {
