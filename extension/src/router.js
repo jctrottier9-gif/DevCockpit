@@ -43,12 +43,17 @@
     }
     const url = new URL(rawUrl);
     const parts = url.pathname.split("/").filter(Boolean);
-    if (parts.length !== 2 || parts[0] !== "c" || !parts[1]) {
+    if (
+      parts.length < 2 ||
+      parts[parts.length - 2] !== "c" ||
+      !parts[parts.length - 1]
+    ) {
       return null;
     }
+    const conversationId = parts[parts.length - 1];
     return {
-      conversationId: parts[1],
-      canonicalUrl: "https://chatgpt.com/c/" + parts[1],
+      conversationId,
+      canonicalUrl: "https://chatgpt.com/c/" + conversationId,
     };
   }
 
