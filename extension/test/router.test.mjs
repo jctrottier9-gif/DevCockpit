@@ -232,20 +232,17 @@ test("conversation identity accepts nested project and workspace routes", async 
   const { context } = await setup();
   const { conversationIdentity } = context.DevCockpitCompanion.routing;
 
-  assert.deepEqual(
-    conversationIdentity("https://chatgpt.com/g/g-p-project/c/conv-a?model=auto"),
-    {
-      conversationId: "conv-a",
-      canonicalUrl: "https://chatgpt.com/c/conv-a",
-    },
+  const project = conversationIdentity(
+    "https://chatgpt.com/g/g-p-project/c/conv-a?model=auto",
   );
-  assert.deepEqual(
-    conversationIdentity("https://chatgpt.com/w/team/c/conv-b#anchor"),
-    {
-      conversationId: "conv-b",
-      canonicalUrl: "https://chatgpt.com/c/conv-b",
-    },
+  assert.equal(project.conversationId, "conv-a");
+  assert.equal(project.canonicalUrl, "https://chatgpt.com/c/conv-a");
+
+  const workspace = conversationIdentity(
+    "https://chatgpt.com/w/team/c/conv-b#anchor",
   );
+  assert.equal(workspace.conversationId, "conv-b");
+  assert.equal(workspace.canonicalUrl, "https://chatgpt.com/c/conv-b");
   assert.equal(
     conversationIdentity("https://chatgpt.com/g/g-p-project/c/conv-a/extra"),
     null,
