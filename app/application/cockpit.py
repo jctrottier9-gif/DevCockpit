@@ -71,6 +71,8 @@ class CockpitDevPoolItemSummary:
     slot_state: str
     execution_state: str
     ci_state: str | None
+    watchdog_stale: bool
+    watchdog_relaunch_prepared: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -300,6 +302,12 @@ def _dev_pool_summary(
                 slot_state=item.slot_state.value,
                 execution_state=item.execution.state.value,
                 ci_state=item.execution.ci.state.value if item.execution.ci is not None else None,
+                watchdog_stale=(
+                    item.watchdog.stale_due if item.watchdog is not None else False
+                ),
+                watchdog_relaunch_prepared=(
+                    item.watchdog.relaunch_prepared if item.watchdog is not None else False
+                ),
             )
             for item in projection.items
         ),
