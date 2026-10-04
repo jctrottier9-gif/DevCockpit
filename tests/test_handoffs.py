@@ -93,6 +93,85 @@ def view(env):
     return read_orchestration(PROJECT, KEY, roadmap_reader=env['roadmap'], evidence_reader=env['evidence'], uow_factory=env['uow'])
 
 
+def test_parallel_dev_handoff_targets_selected_work_item_not_main(env):
+    parallel_key = "DC-PAR"
+
+    class ParallelRoadmap:
+        def read(self, project):
+            return RoadmapIssue(
+                project.repository_full_name,
+                1,
+                """<!-- COCKPIT_PIPELINE_V3 -->
+KEY | TYPE | STATUS | PARENT | LANE | TITLE | REPLACES | DEPENDS_ON
+DC-040 | WORK | READY | #1 | MAIN | Main work | - | -
+DC-PAR | WORK | READY | #1 | PARALLEL | Parallel work | - | -
+<!-- /COCKPIT_PIPELINE_V3 -->""",
+                "2026-10-04T20:00:00Z",
+            )
+
+    roadmap = ParallelRoadmap()
+    parallel_source = source(env, key=parallel_key)
+
+    initial_view = read_orchestration(
+        PROJECT,
+        parallel_key,
+        roadmap_reader=roadmap,
+        evidence_reader=env["evidence"],
+        uow_factory=env["uow"],
+    )
+    assert initial_view["execution_projection"]["work_item"]["key"] == parallel_key
+    assert [item["agent_session"] for item in initial_view["dev_sources"]] == [
+        "DevCockpit:DEV:DC-PAR"
+    ]
+
+    handoff = create_handoff(
+        PROJECT,
+        parallel_key,
+        CreateHandoff(
+            uuid4(),
+            parallel_source.dispatch_id,
+            "Quelle approche parallèle ?",
+            "Contexte parallèle confirmé",
+            "JC",
+        ),
+        roadmap_reader=roadmap,
+        uow_factory=env["uow"],
+    )
+    imported = response(env, handoff.request_dispatch_id)
+    resumed = accept_decision(
+        handoff.handoff_id,
+        AcceptDecision(
+            uuid4(),
+            handoff.version,
+            imported.response_id,
+            "Poursuivre uniquement le DEV parallèle.",
+            DecisionEffect.CONTINUE_IN_SCOPE,
+            "JC",
+        ),
+        project_catalog=ProjectCatalog((PROJECT,)),
+        roadmap_reader=roadmap,
+        evidence_reader=env["evidence"],
+        uow_factory=env["uow"],
+    )
+
+    assert resumed.status == HandoffStatus.RESUME_PREPARED
+    with env["uow"]() as uow:
+        resume = uow.prompt_dispatches.get(resumed.resume_dispatch_id)
+        assert resume.work_item_id == parallel_key
+        assert resume.agent_session == "DevCockpit:DEV:DC-PAR"
+        assert uow.handoffs.list_for_work_item(PROJECT.project_id, KEY) == []
+
+    final_view = read_orchestration(
+        PROJECT,
+        parallel_key,
+        roadmap_reader=roadmap,
+        evidence_reader=env["evidence"],
+        uow_factory=env["uow"],
+    )
+    assert final_view["work_item_id"] == parallel_key
+    assert final_view["execution_projection"]["work_item"]["key"] == parallel_key
+
+
 def test_full_loop_replay_multiple_responses_and_frozen_decision(env):
     cmd = CreateHandoff(uuid4(), env['source'].dispatch_id, 'Question', 'Contexte', 'JC')
     h = create(env, cmd)
