@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 
 from app.application.executions import (
@@ -77,6 +77,7 @@ class DevWatchdogSummary:
     branch_last_activity_at: str
     threshold_seconds: float
     send_confirmed_at: datetime | None
+    deadline_at: datetime | None
     stale_due: bool
     relaunch_prepared: bool
 
@@ -425,32 +426,29 @@ def _read_candidate_snapshots(
     return roadmap.issue, scheduler, tuple(snapshots)
 
 
-def _stale_dev_due(
+def _stale_dev_reference(
     project: Project,
     execution: ExecutionProjection,
     *,
     uow,
-    now: datetime,
-    stale_after_seconds: float,
-) -> bool:
+) -> datetime | None:
     if (
-        stale_after_seconds <= 0
-        or execution.state is not ExecutionState.DEVELOPING
+        execution.state is not ExecutionState.DEVELOPING
         or execution.work_item is None
         or execution.branch is None
         or execution.branch.last_activity_at is None
     ):
-        return False
+        return None
 
     initial = uow.prompt_dispatches.get_by_idempotency_key(
         _initial_idempotency_key(project, execution.work_item)
     )
     if initial is None:
-        return False
+        return None
 
     delivery = uow.prompt_deliveries.get_by_dispatch_id(initial.dispatch_id)
     if delivery is None:
-        return False
+        return None
 
     send_repository = getattr(uow, "chatgpt_prompt_sends", None)
     if send_repository is not None:
@@ -462,26 +460,41 @@ def _stale_dev_due(
             or prompt_send.state is not ChatGptPromptSendState.SENT_CONFIRMED
             or prompt_send.confirmed_at is None
         ):
-            return False
+            return None
         send_lower_bound = prompt_send.confirmed_at
     else:
         # Compatibility for isolated legacy test doubles. Production UoWs always
         # expose chatgpt_prompt_sends after DC-063B.
         if not delivery.is_acknowledged or delivery.acknowledged_at is None:
-            return False
+            return None
         send_lower_bound = delivery.acknowledged_at
 
     branch_activity = _parse_github_timestamp(execution.branch.last_activity_at)
     if branch_activity is None:
-        return False
+        return None
 
-    reference = max(
+    return max(
         branch_activity,
         _as_utc(initial.created_at),
         _as_utc(send_lower_bound),
     )
-    return (now - reference).total_seconds() >= stale_after_seconds
 
+
+def _stale_dev_due(
+    project: Project,
+    execution: ExecutionProjection,
+    *,
+    uow,
+    now: datetime,
+    stale_after_seconds: float,
+) -> bool:
+    if stale_after_seconds <= 0:
+        return False
+    reference = _stale_dev_reference(project, execution, uow=uow)
+    return (
+        reference is not None
+        and (now - reference).total_seconds() >= stale_after_seconds
+    )
 
 def _parse_github_timestamp(value: str) -> datetime | None:
     try:
@@ -705,10 +718,18 @@ def _watchdog_summary(
             uow.prompt_dispatches.get_by_idempotency_key(stale_key) is not None
         )
 
+    reference = _stale_dev_reference(project, execution, uow=uow)
+    deadline_at = (
+        reference + timedelta(seconds=stale_after_seconds)
+        if reference is not None and stale_after_seconds > 0
+        else None
+    )
+
     return DevWatchdogSummary(
         branch_last_activity_at=branch.last_activity_at,
         threshold_seconds=stale_after_seconds,
         send_confirmed_at=prompt_send.confirmed_at if prompt_send is not None else None,
+        deadline_at=deadline_at,
         stale_due=_stale_dev_due(
             project,
             execution,
