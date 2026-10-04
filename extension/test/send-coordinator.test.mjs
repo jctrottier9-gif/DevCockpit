@@ -86,6 +86,7 @@ async function setup({
       }
       return commitResponse;
     },
+    sleep: async () => {},
     retryDelaysMs,
   });
 
