@@ -16,7 +16,7 @@ export function resolveActiveProjectId(
     return preferredProjectId
   }
 
-  return [...configuredProjectIds].sort((left, right) => left.localeCompare(right))[0] ?? null
+  return [...configuredProjectIds].sort()[0] ?? null
 }
 
 export function isCurrentProjectLoad(
