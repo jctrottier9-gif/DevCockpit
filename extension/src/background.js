@@ -100,6 +100,16 @@
         session: entry.session,
       });
       const state = await sendStore.get(entry.delivery_id);
+      if (state?.state === SEND_STATE.SENT_CONFIRMED) {
+        await sentPromptStore.recordSent({
+          deliveryId: entry.delivery_id,
+          session: entry.session,
+          tabId: null,
+          conversationUrl: state.conversation?.canonical_url || null,
+        });
+        await queueStore.remove(entry.delivery_id);
+        continue;
+      }
       if (
         state &&
         [
