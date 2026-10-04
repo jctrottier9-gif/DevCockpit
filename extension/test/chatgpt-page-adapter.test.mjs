@@ -36,7 +36,10 @@ class FakeElement {
   getAttribute(name) { return this.attributes[name] ?? null; }
   hasAttribute(name) { return Object.prototype.hasOwnProperty.call(this.attributes, name); }
   getClientRects() { return this.visible ? [{}] : []; }
-  focus() { this.focused = true; }
+  focus() {
+    this.focused = true;
+    if (this.ownerDocument) this.ownerDocument.activeElement = this;
+  }
   dispatchEvent(event) { this.events.push(event); return true; }
   click() { this.clicked = true; }
   contains(other) { return this.children.has(other); }
@@ -45,12 +48,52 @@ class FakeElement {
 class FakeDocument {
   constructor(selectorMap) {
     this.selectorMap = selectorMap;
-    this.defaultView = { InputEvent: FakeEvent, Event: FakeEvent };
     this.queryCount = 0;
+    this.activeElement = null;
+    this.selectedElement = null;
+    const selection = {
+      removeAllRanges: () => {
+        this.selectedElement = null;
+      },
+      addRange: (range) => {
+        this.selectedElement = range.element || null;
+      },
+    };
+    this.defaultView = {
+      InputEvent: FakeEvent,
+      Event: FakeEvent,
+      getSelection: () => selection,
+    };
+    for (const elements of selectorMap.values()) {
+      for (const element of elements) element.ownerDocument = this;
+    }
   }
   querySelectorAll(selector) {
     this.queryCount += 1;
     return this.selectorMap.get(selector) || [];
+  }
+  createRange() {
+    const range = {
+      element: null,
+      selectNodeContents: (element) => {
+        range.element = element;
+      },
+      collapse: () => {},
+    };
+    return range;
+  }
+  execCommand(command, _showUi, value) {
+    const element = this.selectedElement || this.activeElement;
+    if (!element) return false;
+    if (command === "delete") {
+      element.textContent = "";
+      return true;
+    }
+    if (command === "insertText") {
+      element.textContent = (element.textContent || "") + String(value ?? "");
+      return true;
+    }
+    return false;
   }
 }
 
@@ -151,6 +194,83 @@ test("adapter accepts visible ProseMirror role textbox fallback", async () => {
   assert.equal(prepared.ok, true);
   assert.equal(composer.textContent, "Fallback composer");
   assert.equal(button.clicked, false);
+});
+
+test("prepare replaces stale visible DOM through native editor commands", async () => {
+  const composer = new FakeElement({
+    attributes: { contenteditable: "true", role: "textbox" },
+    text: "stale visible prompt",
+  });
+  const button = new FakeElement({ tagName: "BUTTON" });
+  const { adapter, document } = await adapterFor(new Map([
+    ['#prompt-textarea', [composer]],
+    ['button[data-testid="send-button"]', [button]],
+    ['[data-message-author-role="user"]', []],
+  ]));
+  const commands = [];
+  const original = document.execCommand.bind(document);
+  document.execCommand = (command, showUi, value) => {
+    commands.push(command);
+    return original(command, showUi, value);
+  };
+
+  const prepared = await adapter.preparePrompt("Fresh prompt");
+
+  assert.equal(prepared.ok, true);
+  assert.deepEqual(commands, ["delete", "insertText"]);
+  assert.equal(composer.textContent, "Fresh prompt");
+  assert.equal(button.clicked, false);
+});
+
+test("prompt inspection proves NOT_SENT only when composer owns exact prompt", async () => {
+  const composer = new FakeElement({
+    attributes: { contenteditable: "true", role: "textbox" },
+    text: "Prompt A",
+  });
+  const { adapter } = await adapterFor(new Map([
+    ['#prompt-textarea', [composer]],
+    ['[data-message-author-role="user"]', []],
+  ]));
+
+  const result = adapter.inspectPromptDelivery("Prompt A");
+
+  assert.deepEqual(result, { ok: true, state: "NOT_SENT" });
+});
+
+test("prompt inspection proves SENT when one matching user message exists and composer changed", async () => {
+  const composer = new FakeElement({
+    attributes: { contenteditable: "true", role: "textbox" },
+    text: "",
+  });
+  const user = new FakeElement({ text: "Prompt A" });
+  const { adapter } = await adapterFor(new Map([
+    ['#prompt-textarea', [composer]],
+    ['[data-message-author-role="user"]', [user]],
+  ]));
+  adapter.location = { href: "https://chatgpt.com/c/abc-123" };
+
+  const result = adapter.inspectPromptDelivery("Prompt A");
+
+  assert.equal(result.ok, true);
+  assert.equal(result.state, "SENT");
+  assert.equal(result.conversationUrl, "https://chatgpt.com/c/abc-123");
+});
+
+test("prompt inspection stays ambiguous when composer and user turn both match", async () => {
+  const composer = new FakeElement({
+    attributes: { contenteditable: "true", role: "textbox" },
+    text: "Prompt A",
+  });
+  const user = new FakeElement({ text: "Prompt A" });
+  const { adapter } = await adapterFor(new Map([
+    ['#prompt-textarea', [composer]],
+    ['[data-message-author-role="user"]', [user]],
+  ]));
+
+  const result = adapter.inspectPromptDelivery("Prompt A");
+
+  assert.equal(result.ok, false);
+  assert.equal(result.error, "delivery_evidence_ambiguous");
 });
 
 test("hidden textarea fallback is ignored in favor of visible editor", async () => {
