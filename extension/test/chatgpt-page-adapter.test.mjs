@@ -55,23 +55,39 @@ async function adapterFor(selectorMap) {
   };
 }
 
-test("adapter sends prompt only through exact composer and button", async () => {
+test("adapter prepares without click then confirms exact sent user message", async () => {
   const composer = new FakeElement({ attributes: { contenteditable: "true" } });
   const button = new FakeElement({ tagName: "BUTTON" });
-  const { adapter } = await adapterFor(new Map([
+  const userMessage = new FakeElement({ text: "Hello ChatGPT" });
+  const selectorMap = new Map([
     ['#prompt-textarea[contenteditable="true"]', [composer]],
     ['button[data-testid="send-button"]', [button]],
-  ]));
-  const result = await adapter.sendPrompt("Hello ChatGPT");
+    ['[data-message-author-role="user"]', []],
+  ]);
+  const { adapter } = await adapterFor(selectorMap);
+  adapter.location = { href: "https://chatgpt.com/c/confirmed" };
+  adapter.sleep = async () => {
+    composer.textContent = "";
+    selectorMap.set('[data-message-author-role="user"]', [userMessage]);
+  };
+
+  const prepared = await adapter.preparePrompt("Hello ChatGPT");
+  assert.equal(prepared.ok, true);
+  assert.equal(button.clicked, false);
+
+  const result = await adapter.commitPreparedPrompt(
+    "Hello ChatGPT",
+    prepared.baseline,
+  );
   assert.equal(result.ok, true);
-  assert.equal(composer.textContent, "Hello ChatGPT");
+  assert.equal(result.conversationUrl, "https://chatgpt.com/c/confirmed");
   assert.equal(button.clicked, true);
 });
 
 test("missing or ambiguous composer fails closed", async () => {
   const button = new FakeElement({ tagName: "BUTTON" });
   let value = await adapterFor(new Map([['button[data-testid="send-button"]', [button]]]));
-  let result = await value.adapter.sendPrompt("Hello");
+  let result = await value.adapter.preparePrompt("Hello");
   assert.equal(result.error, "composer_not_found");
   assert.equal(button.clicked, false);
 
@@ -81,7 +97,7 @@ test("missing or ambiguous composer fails closed", async () => {
     ['#prompt-textarea[contenteditable="true"]', [first, second]],
     ['button[data-testid="send-button"]', [button]],
   ]));
-  result = await value.adapter.sendPrompt("Hello");
+  result = await value.adapter.preparePrompt("Hello");
   assert.equal(result.error, "composer_ambiguous");
   assert.equal(button.clicked, false);
 });
