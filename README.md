@@ -2,13 +2,13 @@
 
 DevCockpit is a local development-orchestration cockpit designed to reduce the manual coordination needed between a Product Owner, an Architect, one or more Developers, GitHub and ChatGPT.
 
-The first goal is not full autonomy. DevCockpit prepares the right next prompt, routes it to a Firefox extension, observes GitHub/CI evidence, and proposes the next action. DC-063A delivers deterministic conversation routing, while the companion still requires an explicit user Send gesture. Automatic Send remains reserved to DC-063B.
+The first goal is not full autonomy. DevCockpit prepares the right next prompt, routes it to a Firefox extension, observes GitHub/CI evidence, and proposes the next action. DC-063A delivers deterministic conversation routing and DC-063B automatically sends only already-authorized PromptDispatch records through a durable fail-stop barrier; response return remains explicit.
 
 ## Product principles
 
 - GitHub and the canonical roadmap are the source of truth for delivery state.
 - ChatGPT is a work surface, not the source of truth.
-- Prompt authorization remains DevCockpit-owned; the delivered companion is still user-triggered for Send, while ADR-0014 accepts automatic Send only for already-authorized PromptDispatch records after DC-063B.
+- Prompt authorization remains DevCockpit-owned; DC-063B automatic Send is limited to already-authorized PromptDispatch records and never substitutes for product or architecture authorization.
 - The Firefox extension is a thin companion, not an orchestration engine.
 - CI/PR/merge evidence is derived from GitHub.
 - Orchestration is deterministic whenever possible.
@@ -29,12 +29,12 @@ app/domain/                Prompt models + Project + WorkItem/parser rules
         ↓
 app/infrastructure/        SQLite / GitHub read adapter / WebSocket protocol
 
-extension/                 Firefox queue / explicit send + selected response return
+extension/                 Firefox queue / fail-stop auto-send + selected response return
 ~~~
 
 PromptDispatch remains transport-independent. PromptDelivery is separate persisted transport truth and never means that a prompt was sent to ChatGPT.
 
-ASTRA-063 is documented by ADR-0014. DC-063A now delivers durable `ConversationBinding`, exact conversation routing, dedicated provisional tabs and protocol v2 routing snapshots. The separate `ChatGptPromptSend` state machine and fail-stop automatic Send are still future DC-063B work, so the final Send gesture remains manual.
+ASTRA-063 is documented by ADR-0014. DC-063A delivers durable `ConversationBinding`, exact conversation routing, dedicated provisional tabs and protocol v2 routing snapshots. DC-063B delivers the separate durable `ChatGptPromptSend` state machine, per-session automatic Send, replayable status evidence, targeted confirmation and fail-stop recovery.
 
 ## Prerequisites
 
@@ -385,9 +385,9 @@ If a connection drops before ACK, the same logical delivery and the same deliver
 
 A PromptDispatch CANCELLED is not sent as new work and is not replayed. No remote-revocation protocol is invented for a message that may already have reached the extension.
 
-Control messages are typed. Version 2 supports ack, ping and chatgpt_response inbound, with pong, chatgpt_response_ack and explicit error responses. A returned response is correlated by delivery_id to its source PromptDelivery/PromptDispatch and the received session must exactly match the source AgentSession.
+Control messages are typed. Version 2 supports ack, ping, chatgpt_send_status and chatgpt_response inbound, with pong, chatgpt_send_status_ack, chatgpt_response_ack and explicit error responses. A returned response is correlated by delivery_id to its source PromptDelivery/PromptDispatch and the received session must exactly match the source AgentSession.
 
-DC-063A deliberately switches the companion to protocol v2. Each prompt carries either the exact durable ConversationBinding snapshot or `routing: null` for a new AgentSession, while preserving the functional `session` + `text` payload. A v1 extension is explicitly incompatible. Durable `chatgpt_send_status` events remain reserved to DC-063B.
+DC-063A deliberately switches the companion to protocol v2. Each prompt carries either the exact durable ConversationBinding snapshot or `routing: null` for a new AgentSession, while preserving the functional `session` + `text` payload. A v1 extension is explicitly incompatible. DC-063B adds durable replayable `chatgpt_send_status` events with correlated backend ACKs.
 
 The transport bounds inbound messages to 512 KiB. Oversize responses fail explicitly and are never silently truncated. Full prompt/response bodies and credentials are not logged.
 
@@ -421,7 +421,7 @@ npm test
 npm run build
 ~~~
 
-`npm run check` validates the manifest, referenced extension files and JavaScript syntax. `npm test` runs the protocol, queue, reconnect, ACK, explicit-send and ChatGPT adapter tests without contacting ChatGPT. `npm run build` creates the temporary-loadable extension under `extension/dist/`.
+`npm run check` validates the manifest, referenced extension files and JavaScript syntax. `npm test` runs the protocol, queue, reconnect, ACK, automatic-send barrier/recovery and ChatGPT adapter tests without contacting ChatGPT. `npm run build` creates the temporary-loadable extension under `extension/dist/`.
 
 ### Load temporarily in Firefox
 
@@ -447,9 +447,9 @@ receive prompt
 
 If local persistence fails, no ACK is sent. An identical replay reuses the existing local entry and can be ACKed again. Reusing one `delivery_id` with different `session` or `text` is treated as an explicit local delivery conflict; the stored text is not overwritten.
 
-An ACK therefore means only that the Firefox companion has durably accepted responsibility for that delivery in its local queue. It still does **not** mean that the prompt was sent to ChatGPT, that ChatGPT produced a response, or that any WorkItem state changed.
+An ACK therefore means only that the Firefox companion has durably accepted responsibility for that delivery in its local queue. It still does **not** mean that the prompt was sent to ChatGPT. DC-063B records that stronger fact separately as `ChatGptPromptSend.SENT_CONFIRMED`.
 
-The queue stores only local transport/UI fields such as `delivery_id`, `session`, `text`, `received_at`, `local_status` and an optional local error. Its `QUEUED` / `SEND_REQUESTED` states are not roadmap or WorkItem statuses.
+The transport queue stores only local delivery/UI fields. DC-063B keeps a separate durable local `ChatGptPromptSend` projection and status outbox with `QUEUED`, `ROUTING`, `WAITING_READY`, `SEND_ARMED`, `SENT_CONFIRMED`, `RETRYABLE_FAILURE`, `BLOCKED` and `AMBIGUOUS`; none of these are roadmap or WorkItem statuses.
 
 ### Manual targeted redelivery
 
@@ -463,15 +463,15 @@ POST /api/prompt-dispatches/{dispatch_id}/redeliver
 
 The command fails explicitly when no companion is connected, when the dispatch is no longer PREPARED, or when the delivery has never been acknowledged.
 
-### Current explicit send to ChatGPT
+### Automatic fail-stop send to ChatGPT
 
 Until DC-063B is delivered, nothing is injected or sent when a prompt arrives. DC-063A may automatically reuse/open the exact bound conversation tab or create a dedicated provisional new-chat tab for that AgentSession. The user still clicks **Envoyer** on the chosen queue entry; immediately before the DOM action, the companion revalidates that the tab is still the exact expected target and fails closed if navigation changed it.
 
-All ChatGPT DOM knowledge is isolated in `extension/src/chatgpt-page-adapter.js`. The adapter uses narrowly scoped composer/send selectors and fails closed when the composer or send button is missing, disabled or ambiguous. It never falls back to the first textarea or first button. When injection/send fails, the prompt remains available for retry. When the page reports a successful send, the entry is removed from the active queue; if local cleanup then fails, `SEND_REQUESTED` remains visible so the user can verify the conversation before retrying rather than blindly duplicating a send.
+All ChatGPT DOM knowledge is isolated in `extension/src/chatgpt-page-adapter.js`. The adapter uses narrowly scoped composer/send selectors, distinguishes the exact Send button from busy states, and fails closed when the page is logged out or the DOM target is missing, disabled or ambiguous. The background worker serializes sends per AgentSession while allowing distinct sessions to progress independently. It persists `SEND_ARMED` and a replayable status event before the irreversible click, then requires both composer change and a newly observed user message matching the expected prompt. Only pre-barrier failures may retry automatically; any uncertainty after `SEND_ARMED` becomes `AMBIGUOUS` and is never auto-resent.
 
 The ChatGPT UI is an external dependency and its DOM can change. A DOM change may require updating the isolated adapter selectors. DC-030 adds no continuous scraping or generation monitoring: after a successful explicit send, the companion retains a SentPromptContext containing the delivery_id/session. The user later clicks **Retourner une réponse**, the adapter performs one one-shot scan of assistant-role elements, the user explicitly chooses one candidate and confirms it, and a PendingResponse is persisted before WebSocket transmission. The same response_id is replayed after reconnect until chatgpt_response_ack is received.
 
-DC-063A establishes durable ConversationBinding/routing without auto-send. DC-063B will add per-session FIFO, readiness checks, a durable SEND_ARMED barrier, targeted send confirmation, bounded safe retry and AMBIGUOUS fail-stop recovery. Explicit response return remains unchanged.
+DC-063A establishes durable ConversationBinding/routing. DC-063B adds per-session FIFO, readiness checks, a durable SEND_ARMED barrier, targeted send confirmation, bounded safe retry, backend `ChatGptPromptSend` projection and AMBIGUOUS fail-stop recovery. Explicit response return remains unchanged.
 
 ### Manual smoke procedure
 
@@ -637,7 +637,7 @@ PromptDelivery + WebSocket
         ↓
 Firefox extension
         ↓
-user clicks Send (current; automatic after DC-063B for already-authorized dispatches)
+Firefox auto-sends the already-authorized dispatch through SEND_ARMED/SENT_CONFIRMED
         ↓
 ChatGPT role session
         ↓
@@ -674,7 +674,7 @@ The canonical roadmap lives in GitHub issue #1 and contains a machine-readable C
 
 ## Architecture decisions
 
-Durable decisions live under docs/architecture/, including authority boundaries, orchestration identity, the currently manual ChatGPT companion/WebSocket protocol, explicit Alembic schema migrations, explicit Handoff/Decision semantics, human architecture-gate authorization, stale-DEV recovery, and ADR-0014 for the accepted automatic-routing/ConversationBinding/fail-stop-send target.
+Durable decisions live under docs/architecture/, including authority boundaries, orchestration identity, the ChatGPT companion/WebSocket protocol, explicit Alembic schema migrations, explicit Handoff/Decision semantics, human architecture-gate authorization, stale-DEV recovery, and ADR-0014 for the delivered automatic-routing/ConversationBinding/fail-stop-send model.
 
 ## Development workflow
 

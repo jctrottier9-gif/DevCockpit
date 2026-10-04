@@ -3,7 +3,10 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 import json
+from datetime import datetime
 from uuid import UUID
+
+from app.domain.chatgpt_prompt_send import ChatGptPromptSendState
 
 from fastapi import WebSocket
 
@@ -39,7 +42,23 @@ class ChatGptResponseMessage:
     text: str
 
 
-InboundProtocolMessage = AckMessage | PingMessage | ChatGptResponseMessage
+@dataclass(frozen=True, slots=True)
+class ChatGptSendStatusMessage:
+    event_id: UUID
+    delivery_id: UUID
+    session: str
+    state: ChatGptPromptSendState
+    attempt_count: int
+    conversation_id: str | None
+    canonical_url: str | None
+    error_code: str | None
+    next_retry_at: datetime | None
+    occurred_at: datetime
+
+
+InboundProtocolMessage = (
+    AckMessage | PingMessage | ChatGptResponseMessage | ChatGptSendStatusMessage
+)
 
 
 def _exact_keys(value: dict[str, object], expected: set[str]) -> bool:
@@ -81,6 +100,14 @@ def build_chatgpt_response_ack(response_id: UUID) -> dict[str, object]:
         "version": PROTOCOL_VERSION,
         "type": "chatgpt_response_ack",
         "response_id": str(response_id),
+    }
+
+
+def build_chatgpt_send_status_ack(event_id: UUID) -> dict[str, object]:
+    return {
+        "version": PROTOCOL_VERSION,
+        "type": "chatgpt_send_status_ack",
+        "event_id": str(event_id),
     }
 
 
@@ -130,6 +157,102 @@ def parse_inbound_message(raw_message: str) -> InboundProtocolMessage:
         if not _exact_keys(payload, {"version", "type"}):
             raise ProtocolMessageError("invalid_ping")
         return PingMessage()
+
+
+    if message_type == "chatgpt_send_status":
+        if not _exact_keys(
+            payload,
+            {"version", "type", "event_id", "delivery_id", "payload"},
+        ):
+            raise ProtocolMessageError("invalid_chatgpt_send_status")
+        event_id = _uuid(payload.get("event_id"), code="invalid_send_event_id")
+        delivery_id = _uuid(payload.get("delivery_id"), code="invalid_delivery_id")
+        status_payload = payload.get("payload")
+        if not isinstance(status_payload, dict) or not _exact_keys(
+            status_payload,
+            {
+                "session",
+                "state",
+                "attempt",
+                "conversation",
+                "error_code",
+                "next_retry_at",
+                "occurred_at",
+            },
+        ):
+            raise ProtocolMessageError("invalid_chatgpt_send_status_payload")
+        session = status_payload.get("session")
+        if not isinstance(session, str) or not session.strip():
+            raise ProtocolMessageError("invalid_send_session")
+        try:
+            state = ChatGptPromptSendState(status_payload.get("state"))
+        except (TypeError, ValueError) as exc:
+            raise ProtocolMessageError("invalid_send_state") from exc
+        attempt = status_payload.get("attempt")
+        if not isinstance(attempt, int) or isinstance(attempt, bool) or attempt < 0:
+            raise ProtocolMessageError("invalid_send_attempt")
+
+        conversation = status_payload.get("conversation")
+        conversation_id = None
+        canonical_url = None
+        if conversation is not None:
+            if not isinstance(conversation, dict) or not _exact_keys(
+                conversation,
+                {"conversation_id", "canonical_url"},
+            ):
+                raise ProtocolMessageError("invalid_send_conversation")
+            conversation_id = conversation.get("conversation_id")
+            canonical_url = conversation.get("canonical_url")
+            if (
+                not isinstance(conversation_id, str)
+                or not conversation_id.strip()
+                or not isinstance(canonical_url, str)
+                or not canonical_url.strip()
+            ):
+                raise ProtocolMessageError("invalid_send_conversation")
+
+        error_code = status_payload.get("error_code")
+        if error_code is not None and (
+            not isinstance(error_code, str) or not error_code.strip()
+        ):
+            raise ProtocolMessageError("invalid_send_error_code")
+
+        def _optional_datetime(value: object, code: str) -> datetime | None:
+            if value is None:
+                return None
+            if not isinstance(value, str):
+                raise ProtocolMessageError(code)
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise ProtocolMessageError(code) from exc
+            if parsed.tzinfo is None:
+                raise ProtocolMessageError(code)
+            return parsed
+
+        next_retry_at = _optional_datetime(
+            status_payload.get("next_retry_at"),
+            "invalid_send_next_retry_at",
+        )
+        occurred_at = _optional_datetime(
+            status_payload.get("occurred_at"),
+            "invalid_send_occurred_at",
+        )
+        if occurred_at is None:
+            raise ProtocolMessageError("invalid_send_occurred_at")
+
+        return ChatGptSendStatusMessage(
+            event_id=event_id,
+            delivery_id=delivery_id,
+            session=session,
+            state=state,
+            attempt_count=attempt,
+            conversation_id=conversation_id,
+            canonical_url=canonical_url,
+            error_code=error_code,
+            next_retry_at=next_retry_at,
+            occurred_at=occurred_at,
+        )
 
     if message_type == "chatgpt_response":
         if not _exact_keys(

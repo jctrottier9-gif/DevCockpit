@@ -140,3 +140,36 @@ for (const [name, message, expectedCode] of [
     );
   });
 }
+
+
+test("protocol builds replayable chatgpt_send_status and parses event ACK", async () => {
+  const context = await loadClassicScripts(["src/protocol.js"]);
+  const { buildChatGptSendStatusMessage, parseServerMessage } =
+    context.DevCockpitCompanion.protocol;
+  const eventId = "20cd3422-3dbd-481f-a5b0-5915a1f7f5be";
+
+  const wire = JSON.parse(
+    buildChatGptSendStatusMessage({
+      event_id: eventId,
+      delivery_id: DELIVERY_ID,
+      session: "DevCockpit:DEV:DC-063B",
+      state: "SEND_ARMED",
+      attempt: 1,
+      conversation: null,
+      error_code: null,
+      next_retry_at: null,
+      occurred_at: "2026-10-04T15:00:00.000Z",
+    }),
+  );
+  assert.equal(wire.type, "chatgpt_send_status");
+  assert.equal(wire.event_id, eventId);
+  assert.equal(wire.payload.state, "SEND_ARMED");
+
+  const ack = parseServerMessage(JSON.stringify({
+    version: 2,
+    type: "chatgpt_send_status_ack",
+    event_id: eventId,
+  }));
+  assert.equal(ack.type, "chatgpt_send_status_ack");
+  assert.equal(ack.eventId, eventId);
+});

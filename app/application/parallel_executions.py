@@ -419,8 +419,27 @@ def _stale_dev_due(
         return False
 
     delivery = uow.prompt_deliveries.get_by_dispatch_id(initial.dispatch_id)
-    if delivery is None or not delivery.is_acknowledged or delivery.acknowledged_at is None:
+    if delivery is None:
         return False
+
+    send_repository = getattr(uow, "chatgpt_prompt_sends", None)
+    if send_repository is not None:
+        from app.domain.chatgpt_prompt_send import ChatGptPromptSendState
+
+        prompt_send = send_repository.get(delivery.delivery_id)
+        if (
+            prompt_send is None
+            or prompt_send.state is not ChatGptPromptSendState.SENT_CONFIRMED
+            or prompt_send.confirmed_at is None
+        ):
+            return False
+        send_lower_bound = prompt_send.confirmed_at
+    else:
+        # Compatibility for isolated legacy test doubles. Production UoWs always
+        # expose chatgpt_prompt_sends after DC-063B.
+        if not delivery.is_acknowledged or delivery.acknowledged_at is None:
+            return False
+        send_lower_bound = delivery.acknowledged_at
 
     branch_activity = _parse_github_timestamp(execution.branch.last_activity_at)
     if branch_activity is None:
@@ -429,7 +448,7 @@ def _stale_dev_due(
     reference = max(
         branch_activity,
         _as_utc(initial.created_at),
-        _as_utc(delivery.acknowledged_at),
+        _as_utc(send_lower_bound),
     )
     return (now - reference).total_seconds() >= stale_after_seconds
 

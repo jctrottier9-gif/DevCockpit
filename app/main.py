@@ -12,6 +12,11 @@ from app.api.architecture_gates import build_architecture_gate_router
 from app.api.attention import build_attention_router
 from app.api.flow_analytics import build_flow_analytics_router
 from app.api.orchestration import build_orchestration_router
+from app.application.chatgpt_prompt_sends import (
+    ChatGptSendStatusError,
+    RecordChatGptSendStatusCommand,
+    record_chatgpt_send_status,
+)
 from app.application.chatgpt_responses import (
     ChatGptResponseImportError,
     ImportChatGptResponseCommand,
@@ -71,10 +76,12 @@ from app.infrastructure.prompt_dispatches import SqlAlchemyUnitOfWork
 from app.infrastructure.websocket_transport import (
     AckMessage,
     ChatGptResponseMessage,
+    ChatGptSendStatusMessage,
     CompanionConnectionManager,
     PingMessage,
     ProtocolMessageError,
     build_chatgpt_response_ack,
+    build_chatgpt_send_status_ack,
     build_error_message,
     build_pong_message,
     build_prompt_message,
@@ -772,6 +779,32 @@ def create_app(
                     message = parse_inbound_message(raw_message)
                 except ProtocolMessageError as exc:
                     await connection_manager.send_json(build_error_message(exc.code))
+                    continue
+
+
+                if isinstance(message, ChatGptSendStatusMessage):
+                    try:
+                        record_chatgpt_send_status(
+                            RecordChatGptSendStatusCommand(
+                                event_id=message.event_id,
+                                delivery_id=message.delivery_id,
+                                session=message.session,
+                                state=message.state,
+                                attempt_count=message.attempt_count,
+                                conversation_id=message.conversation_id,
+                                canonical_url=message.canonical_url,
+                                error_code=message.error_code,
+                                next_retry_at=message.next_retry_at,
+                                occurred_at=message.occurred_at,
+                            ),
+                            uow_factory=uow_factory,
+                        )
+                    except ChatGptSendStatusError as exc:
+                        await connection_manager.send_json(build_error_message(exc.code))
+                    else:
+                        await connection_manager.send_json(
+                            build_chatgpt_send_status_ack(message.event_id)
+                        )
                     continue
 
                 if isinstance(message, ChatGptResponseMessage):

@@ -2,7 +2,7 @@
   "manifest_version": 2,
   "name": "DevCockpit Companion",
   "version": "0.1.0",
-  "description": "Explicitly sends DevCockpit prompts to ChatGPT and returns a user-selected assistant response through a durable local queue.",
+  "description": "Automatically sends already-authorized DevCockpit prompts to exact ChatGPT conversations and returns only user-selected assistant responses.",
   "browser_specific_settings": {
     "gecko": {
       "id": "devcockpit-companion@local",
@@ -21,6 +21,7 @@
       "src/protocol.js",
       "src/queue-store.js",
       "src/response-store.js",
+      "src/send-store.js",
       "src/routing-store.js",
       "src/router.js",
       "src/transport.js",
