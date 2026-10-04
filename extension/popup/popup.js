@@ -59,14 +59,19 @@
       showEntryError(fragment.querySelector(".entry-error"), entry.last_error);
 
       const sendButton = fragment.querySelector(".send");
-      sendButton.hidden = sendState?.state !== "BLOCKED";
-      sendButton.textContent = "Réessayer après correction";
-      sendButton.title =
-        "Disponible seulement après un échec certain avant SEND_ARMED.";
-      if (sendState?.state === "AMBIGUOUS") {
+      const ambiguous = sendState?.state === "AMBIGUOUS";
+      const blocked = sendState?.state === "BLOCKED";
+      sendButton.hidden = !ambiguous && !blocked;
+      sendButton.textContent = ambiguous
+        ? "Vérifier l'envoi"
+        : "Réessayer après correction";
+      sendButton.title = ambiguous
+        ? "Vérifie le DOM ChatGPT sans renvoyer automatiquement."
+        : "Disponible seulement après un échec certain avant SEND_ARMED.";
+      if (ambiguous) {
         showEntryError(
           fragment.querySelector(".entry-error"),
-          "Envoi potentiellement effectué. Vérifiez la conversation ChatGPT; aucun renvoi automatique n'est permis.",
+          "Envoi potentiellement effectué. Vérifiez l’état dans l’onglet ChatGPT; aucun renvoi automatique n’est permis.",
         );
       } else if (sendState?.error_code) {
         showEntryError(fragment.querySelector(".entry-error"), sendState.error_code);
@@ -74,7 +79,9 @@
       sendButton.addEventListener("click", async () => {
         sendButton.disabled = true;
         const result = await browser.runtime.sendMessage({
-          type: "devcockpit_retry_chatgpt_send",
+          type: ambiguous
+            ? "devcockpit_resolve_ambiguous_send"
+            : "devcockpit_retry_chatgpt_send",
           deliveryId: entry.delivery_id,
         });
         if (!result?.ok && result?.error) {
