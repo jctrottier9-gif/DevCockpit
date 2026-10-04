@@ -4,7 +4,7 @@
   const namespace = (globalThis.DevCockpitCompanion ||= {});
   const { ROUTING_KIND } = namespace.routingStore;
   const NEW_CHAT_URL = "https://chatgpt.com/";
-  const DEFAULT_CREATED_TAB_POLL_DELAYS_MS = Object.freeze([50, 100, 250, 500, 1000]);
+  const DEFAULT_CREATED_TAB_POLL_DELAYS_MS = Object.freeze([100, 250, 500, 1000, 2000, 3000, 3000]);
 
   class RoutingError extends Error {
     constructor(code) {
