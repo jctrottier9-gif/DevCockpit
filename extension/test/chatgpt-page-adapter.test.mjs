@@ -257,6 +257,79 @@ test("prompt inspection proves SENT when one matching user message exists and co
   assert.equal(result.conversationUrl, "https://chatgpt.com/c/abc-123");
 });
 
+test("nested DOM candidates for one user turn count as one SENT proof", async () => {
+  const composer = new FakeElement({
+    attributes: { contenteditable: "true", role: "textbox" },
+    text: "",
+  });
+  const outer = new FakeElement({ text: "Prompt A" });
+  const inner = new FakeElement({ text: "Prompt A" });
+  outer.children.add(inner);
+  const { adapter } = await adapterFor(new Map([
+    ['#prompt-textarea', [composer]],
+    ['[data-message-author-role="user"]', [outer]],
+    ['[data-user-message-bubble]', [inner]],
+  ]));
+  adapter.location = { href: "https://chatgpt.com/c/abc-123" };
+
+  const result = adapter.inspectPromptDelivery("Prompt A");
+
+  assert.equal(result.ok, true);
+  assert.equal(result.state, "SENT");
+});
+
+test("two distinct matching user turns remain ambiguous", async () => {
+  const composer = new FakeElement({
+    attributes: { contenteditable: "true", role: "textbox" },
+    text: "",
+  });
+  const first = new FakeElement({ text: "Prompt A" });
+  const second = new FakeElement({ text: "Prompt A" });
+  const { adapter } = await adapterFor(new Map([
+    ['#prompt-textarea', [composer]],
+    ['[data-message-author-role="user"]', [first, second]],
+  ]));
+
+  const result = adapter.inspectPromptDelivery("Prompt A");
+
+  assert.equal(result.ok, false);
+  assert.match(result.error, /logical=2/);
+  assert.match(result.error, /matching=2/);
+});
+
+test("post-send confirmation uses logical user-turn count, not nested DOM count", async () => {
+  const composer = new FakeElement({ attributes: { contenteditable: "true" } });
+  const button = new FakeElement({ tagName: "BUTTON" });
+  const priorOuter = new FakeElement({ text: "Earlier" });
+  const priorInner = new FakeElement({ text: "Earlier" });
+  priorOuter.children.add(priorInner);
+  const selectorMap = new Map([
+    ['#prompt-textarea', [composer]],
+    ['button[data-testid="send-button"]', [button]],
+    ['[data-message-author-role="user"]', [priorOuter]],
+    ['[data-user-message-bubble]', [priorInner]],
+  ]);
+  const { adapter } = await adapterFor(selectorMap);
+  const prepared = await adapter.preparePrompt("Prompt A");
+  assert.equal(prepared.ok, true);
+  assert.equal(prepared.baseline.user_message_count, 1);
+
+  const sentOuter = new FakeElement({ text: "Prompt A" });
+  const sentInner = new FakeElement({ text: "Prompt A" });
+  sentOuter.children.add(sentInner);
+  adapter.location = { href: "https://chatgpt.com/c/abc-123" };
+  adapter.sleep = async () => {
+    composer.textContent = "";
+    selectorMap.set('[data-message-author-role="user"]', [priorOuter, sentOuter]);
+    selectorMap.set('[data-user-message-bubble]', [priorInner, sentInner]);
+  };
+
+  const result = await adapter.commitPreparedPrompt("Prompt A", prepared.baseline);
+
+  assert.equal(result.ok, true);
+  assert.equal(button.clicked, true);
+});
+
 test("prompt inspection stays ambiguous when composer and user turn both match", async () => {
   const composer = new FakeElement({
     attributes: { contenteditable: "true", role: "textbox" },
@@ -271,7 +344,7 @@ test("prompt inspection stays ambiguous when composer and user turn both match",
   const result = adapter.inspectPromptDelivery("Prompt A");
 
   assert.equal(result.ok, false);
-  assert.equal(result.error, "delivery_evidence_ambiguous");
+  assert.match(result.error, /^delivery_evidence_ambiguous:/);
 });
 
 test("hidden textarea fallback is ignored in favor of visible editor", async () => {
