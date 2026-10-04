@@ -100,11 +100,18 @@
     return comparableText(text);
   }
 
+  function lexicalPromptFingerprint(value) {
+    const normalized = String(value ?? "")
+      .normalize("NFKC")
+      .toLocaleLowerCase("fr-CA");
+    return normalized.match(/[\p{L}\p{N}]+/gu) || [];
+  }
+
   function sameRenderedPromptText(renderedText, sourcePrompt) {
-    return (
-      renderedPromptComparableText(renderedText) ===
-      renderedPromptComparableText(sourcePrompt)
-    );
+    const rendered = lexicalPromptFingerprint(renderedText);
+    const source = lexicalPromptFingerprint(sourcePrompt);
+    if (rendered.length !== source.length) return false;
+    return rendered.every((token, index) => token === source[index]);
   }
 
   function elementsOverlap(left, right) {
@@ -503,6 +510,7 @@
     comparableText,
     sameText,
     renderedPromptComparableText,
+    lexicalPromptFingerprint,
     sameRenderedPromptText,
     elementsOverlap,
     groupLogicalUserTurns,
