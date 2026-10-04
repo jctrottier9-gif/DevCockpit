@@ -119,6 +119,16 @@
       };
     }
 
+    if (message.type === "chatgpt_send_status_ack") {
+      if (!hasExactKeys(message, ["event_id", "type", "version"])) {
+        throw new ProtocolError("invalid_send_status_ack");
+      }
+      if (!isUuid(message.event_id)) {
+        throw new ProtocolError("invalid_send_event_id");
+      }
+      return { type: "chatgpt_send_status_ack", eventId: message.event_id };
+    }
+
     if (message.type === "chatgpt_response_ack") {
       if (!hasExactKeys(message, ["response_id", "type", "version"])) {
         throw new ProtocolError("invalid_response_ack");
@@ -169,6 +179,34 @@
     });
   }
 
+  function buildChatGptSendStatusMessage(event) {
+    if (!isUuid(event?.event_id) || !isUuid(event?.delivery_id)) {
+      throw new ProtocolError("invalid_send_status_identity");
+    }
+    if (typeof event.session !== "string" || event.session.trim() === "") {
+      throw new ProtocolError("invalid_send_session");
+    }
+    const rawMessage = JSON.stringify({
+      version: PROTOCOL_VERSION,
+      type: "chatgpt_send_status",
+      event_id: event.event_id,
+      delivery_id: event.delivery_id,
+      payload: {
+        session: event.session,
+        state: event.state,
+        attempt: event.attempt,
+        conversation: event.conversation ?? null,
+        error_code: event.error_code ?? null,
+        next_retry_at: event.next_retry_at ?? null,
+        occurred_at: event.occurred_at,
+      },
+    });
+    if (utf8ByteLength(rawMessage) > MAX_MESSAGE_BYTES) {
+      throw new ProtocolError("message_too_large");
+    }
+    return rawMessage;
+  }
+
   function buildChatGptResponseMessage({ responseId, deliveryId, session, text }) {
     if (!isUuid(responseId)) {
       throw new ProtocolError("invalid_response_id");
@@ -202,6 +240,7 @@
     ProtocolError,
     parseServerMessage,
     buildAckMessage,
+    buildChatGptSendStatusMessage,
     buildChatGptResponseMessage,
   };
 })();
