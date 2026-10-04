@@ -1,7 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import AttentionCenter from './AttentionCenter'
 import FlowAnalytics from './FlowAnalytics'
 import Orchestration from './Orchestration'
+import {
+  ACTIVE_PROJECT_STORAGE_KEY,
+  isCurrentProjectLoad,
+  resolveActiveProjectId,
+} from './projectWorkspace'
 
 type LoadState = 'loading' | 'ready' | 'error'
 
@@ -171,31 +176,107 @@ const actionLabels: Record<string, string> = {
   NONE: 'Aucune action',
 }
 
+function readPreferredProjectId() {
+  try {
+    return window.localStorage.getItem(ACTIVE_PROJECT_STORAGE_KEY)
+  } catch {
+    return null
+  }
+}
+
+function persistPreferredProjectId(projectId: string) {
+  try {
+    window.localStorage.setItem(ACTIVE_PROJECT_STORAGE_KEY, projectId)
+  } catch {
+    // Navigation preference only; storage failures must not block the workspace.
+  }
+}
+
 function App() {
   const [state, setState] = useState<LoadState>('loading')
+  const [projects, setProjects] = useState<Project[]>([])
+  const [activeProjectId, setActiveProjectId] = useState('')
+  const [loadedProjectId, setLoadedProjectId] = useState<string | null>(null)
   const [roadmap, setRoadmap] = useState<RoadmapResponse | null>(null)
   const [executions, setExecutions] = useState<ParallelExecutionsResponse | null>(null)
   const [scheduler, setScheduler] = useState<SchedulerResponse | null>(null)
   const [responses, setResponses] = useState<ImportedResponse[]>([])
   const [error, setError] = useState('')
   const [orchestrationKey, setOrchestrationKey] = useState('')
+  const activeProjectIdRef = useRef('')
+  const loadGenerationRef = useRef(0)
+
+  function resetProjectView() {
+    setLoadedProjectId(null)
+    setRoadmap(null)
+    setExecutions(null)
+    setScheduler(null)
+    setResponses([])
+    setOrchestrationKey('')
+    setError('')
+    setState('loading')
+  }
+
+  function selectProject(projectId: string) {
+    if (!projects.some(project => project.project_id === projectId)) return
+    if (projectId === activeProjectId) return
+
+    loadGenerationRef.current += 1
+    activeProjectIdRef.current = projectId
+    resetProjectView()
+    setActiveProjectId(projectId)
+    persistPreferredProjectId(projectId)
+  }
 
   useEffect(() => {
     const controller = new AbortController()
 
-    async function loadProject() {
+    async function loadProjects() {
       try {
         const projectsResponse = await fetch('/api/projects', { signal: controller.signal })
         if (!projectsResponse.ok) {
           throw new Error('Unable to load configured projects')
         }
+
         const projectsPayload = (await projectsResponse.json()) as { projects: Project[] }
-        const project = projectsPayload.projects[0]
-        if (!project) {
+        const configuredProjects = projectsPayload.projects ?? []
+        const initialProjectId = resolveActiveProjectId(
+          configuredProjects,
+          readPreferredProjectId(),
+        )
+        if (!initialProjectId) {
           throw new Error('No project is configured')
         }
 
-        const encodedProject = encodeURIComponent(project.project_id)
+        setProjects(configuredProjects)
+        activeProjectIdRef.current = initialProjectId
+        setActiveProjectId(initialProjectId)
+        persistPreferredProjectId(initialProjectId)
+      } catch (caught: unknown) {
+        if (caught instanceof DOMException && caught.name === 'AbortError') {
+          return
+        }
+        setError(caught instanceof Error ? caught.message : 'Unable to load projects')
+        setState('error')
+      }
+    }
+
+    void loadProjects()
+    return () => controller.abort()
+  }, [])
+
+  useEffect(() => {
+    if (!activeProjectId) return
+
+    const controller = new AbortController()
+    const projectId = activeProjectId
+    const generation = ++loadGenerationRef.current
+    activeProjectIdRef.current = projectId
+    resetProjectView()
+
+    async function loadProject() {
+      try {
+        const encodedProject = encodeURIComponent(projectId)
         const [roadmapResponse, executionsResponse, schedulerResponse, responsesResponse] = await Promise.all([
           fetch('/api/projects/' + encodedProject + '/roadmap', { signal: controller.signal }),
           fetch('/api/projects/' + encodedProject + '/executions', { signal: controller.signal }),
@@ -206,10 +287,29 @@ function App() {
         const executionsPayload = (await executionsResponse.json()) as ParallelExecutionsResponse
         const schedulerPayload = (await schedulerResponse.json()) as SchedulerResponse
         const responsesPayload = (await responsesResponse.json()) as { responses: ImportedResponse[] }
+
+        if (!isCurrentProjectLoad(
+          projectId,
+          activeProjectIdRef.current,
+          generation,
+          loadGenerationRef.current,
+        )) {
+          return
+        }
+
+        if (
+          roadmapPayload.project?.project_id !== projectId
+          || executionsPayload.project?.project_id !== projectId
+          || (responsesPayload.responses ?? []).some(response => response.project_id !== projectId)
+        ) {
+          throw new Error('Project context mismatch while loading ' + projectId)
+        }
+
         setRoadmap(roadmapPayload)
         setExecutions(executionsPayload)
         setScheduler(schedulerPayload)
         setResponses(responsesPayload.responses ?? [])
+        setLoadedProjectId(projectId)
 
         if (!roadmapResponse.ok) {
           setError(roadmapPayload.source.code ?? 'GitHub roadmap unavailable')
@@ -236,6 +336,14 @@ function App() {
         if (caught instanceof DOMException && caught.name === 'AbortError') {
           return
         }
+        if (!isCurrentProjectLoad(
+          projectId,
+          activeProjectIdRef.current,
+          generation,
+          loadGenerationRef.current,
+        )) {
+          return
+        }
         setError(caught instanceof Error ? caught.message : 'Unable to load project')
         setState('error')
       }
@@ -243,11 +351,18 @@ function App() {
 
     void loadProject()
     return () => controller.abort()
-  }, [])
+  }, [activeProjectId])
 
-  const pipeline = roadmap?.pipeline
+  const activeProject = projects.find(project => project.project_id === activeProjectId) ?? null
+  const currentRoadmap = loadedProjectId === activeProjectId ? roadmap : null
+  const currentExecutions = loadedProjectId === activeProjectId ? executions : null
+  const currentScheduler = loadedProjectId === activeProjectId ? scheduler : null
+  const currentResponses = loadedProjectId === activeProjectId ? responses : []
+  const pipeline = currentRoadmap?.pipeline
   const ready = pipeline?.active_ready_item
-  const primaryExecution = executions?.executions.find(item => item.active) ?? executions?.executions[0] ?? null
+  const primaryExecution = currentExecutions?.executions.find(item => item.active)
+    ?? currentExecutions?.executions[0]
+    ?? null
   const displayedWorkItem = primaryExecution?.work_item ?? ready
 
   return (
@@ -255,8 +370,28 @@ function App() {
       <section className="panel">
         <p className="eyebrow">DEVCOCKPIT</p>
         <h1>Execution projection</h1>
-        {roadmap && <AttentionCenter
-          projectId={roadmap.project.project_id}
+
+        {projects.length > 0 && <section className="project-workspace" aria-label="Contexte projet">
+          <label htmlFor="active-project">Projet actif
+            <select
+              id="active-project"
+              value={activeProjectId}
+              disabled={projects.length === 1}
+              onChange={event => selectProject(event.target.value)}
+            >
+              {projects.map(project => <option key={project.project_id} value={project.project_id}>
+                {project.project_id}
+              </option>)}
+            </select>
+          </label>
+          {activeProject && <p>
+            {activeProject.repository_full_name} · roadmap #{activeProject.roadmap_issue_number}
+          </p>}
+        </section>}
+
+        {activeProjectId && <AttentionCenter
+          key={'attention:' + activeProjectId}
+          projectId={activeProjectId}
           onOpenWorkItem={(workItemId) => {
             setOrchestrationKey(workItemId)
             window.requestAnimationFrame(() => {
@@ -264,11 +399,11 @@ function App() {
             })
           }}
         />}
-        {roadmap ? (
+        {activeProject ? (
           <div className="roadmap-summary">
-            <div><span>Projet</span><strong>{roadmap.project.project_id}</strong></div>
-            <div><span>Repository</span><strong>{roadmap.project.repository_full_name}</strong></div>
-            <div><span>Roadmap</span><strong>#{roadmap.project.roadmap_issue_number}</strong></div>
+            <div><span>Projet</span><strong>{activeProject.project_id}</strong></div>
+            <div><span>Repository</span><strong>{activeProject.repository_full_name}</strong></div>
+            <div><span>Roadmap</span><strong>#{activeProject.roadmap_issue_number}</strong></div>
             <div><span>Pipeline</span><strong>{pipeline ? (pipeline.valid ? 'valid' : 'invalid') : 'unavailable'}</strong></div>
             <div><span>WorkItem</span><strong>{displayedWorkItem?.key ?? 'none'}</strong></div>
             <div><span>État</span><strong>{primaryExecution?.execution_state ?? 'unavailable'}</strong></div>
@@ -279,9 +414,9 @@ function App() {
           </div>
         ) : null}
         <div className={'health health--' + state} aria-live="polite">
-          {state === 'loading' ? 'Reading GitHub execution…' : state === 'ready' ? 'Execution loaded' : error}
+          {state === 'loading' ? 'Reading project context…' : state === 'ready' ? 'Project context loaded' : error}
         </div>
-        {roadmap && <FlowAnalytics projectId={roadmap.project.project_id} />}
+        {activeProjectId && <FlowAnalytics key={'analytics:' + activeProjectId} projectId={activeProjectId} />}
         {pipeline && !pipeline.valid ? (
           <ul className="diagnostics">
             {pipeline.diagnostics.map((diagnostic) => (
@@ -300,14 +435,14 @@ function App() {
             ))}
           </ul>
         ) : null}
-        {executions?.capacity && <section className="responses">
+        {currentExecutions?.capacity && <section className="responses">
           <h2>Exécutions DEV parallèles</h2>
           <p>
-            DEV capacity: {executions.capacity.used} / {executions.capacity.limit}
-            {' · '}disponible: {executions.capacity.available}
+            DEV capacity: {currentExecutions.capacity.used} / {currentExecutions.capacity.limit}
+            {' · '}disponible: {currentExecutions.capacity.available}
           </p>
           <div className="response-list">
-            {executions.executions.map(item => <article className="response-card" key={item.work_item?.key ?? item.agent_session}>
+            {currentExecutions.executions.map(item => <article className="response-card" key={item.work_item?.key ?? item.agent_session}>
               <div className="response-meta">
                 <strong>{item.work_item?.key ?? '—'} · {item.slot_state}</strong>
                 <span>{item.agent_session}</span>
@@ -341,14 +476,14 @@ function App() {
             </article>)}
           </div>
         </section>}
-        {scheduler?.scheduler && <section className="responses">
+        {currentScheduler?.scheduler && <section className="responses">
           <h2>Scheduler déterministe</h2>
-          <p>Pipeline V{scheduler.scheduler.pipeline_version ?? '—'} · candidats : {scheduler.scheduler.executable_candidates.join(', ') || 'aucun'}</p>
-          {scheduler.scheduler.diagnostics.length > 0 && <ul className="diagnostics">
-            {scheduler.scheduler.diagnostics.map(d => <li key={d.code + '-' + (d.line_number ?? 'global')}>{d.code}: {d.message}</li>)}
+          <p>Pipeline V{currentScheduler.scheduler.pipeline_version ?? '—'} · candidats : {currentScheduler.scheduler.executable_candidates.join(', ') || 'aucun'}</p>
+          {currentScheduler.scheduler.diagnostics.length > 0 && <ul className="diagnostics">
+            {currentScheduler.scheduler.diagnostics.map(d => <li key={d.code + '-' + (d.line_number ?? 'global')}>{d.code}: {d.message}</li>)}
           </ul>}
           <div className="response-list">
-            {scheduler.scheduler.work_items.map(item => <article className="response-card" key={item.key}>
+            {currentScheduler.scheduler.work_items.map(item => <article className="response-card" key={item.key}>
               <div className="response-meta">
                 <strong>{item.key} · {item.canonical_status}</strong>
                 <span>{item.scheduler_state} · {item.reason}</span>
@@ -359,22 +494,22 @@ function App() {
             </article>)}
           </div>
         </section>}
-        {roadmap && pipeline && <>
+        {currentRoadmap && pipeline && <>
           <label>WorkItem à consulter<select value={orchestrationKey || displayedWorkItem?.key || ''} onChange={e => setOrchestrationKey(e.target.value)}>
             <option value="">Choisir un WorkItem</option>
             {pipeline.work_items.map(w => <option key={w.key} value={w.key}>{w.key} · {w.title}</option>)}
           </select></label>
           {(orchestrationKey || displayedWorkItem?.key) && <div id="orchestration"><Orchestration
-            key={roadmap.project.project_id + (orchestrationKey || displayedWorkItem?.key)}
-            projectId={roadmap.project.project_id} workItem={orchestrationKey || displayedWorkItem!.key} /></div>}
+            key={activeProjectId + ':' + (orchestrationKey || displayedWorkItem?.key)}
+            projectId={activeProjectId} workItem={orchestrationKey || displayedWorkItem!.key} /></div>}
         </>}
         <section className="responses">
           <h2>Réponses ChatGPT importées</h2>
-          {responses.length === 0 ? (
+          {currentResponses.length === 0 ? (
             <p className="responses-empty">Aucune réponse retournée.</p>
           ) : (
             <div className="response-list">
-              {responses.map((response) => (
+              {currentResponses.map((response) => (
                 <article className="response-card" key={response.response_id}>
                   <div className="response-meta">
                     <strong>{response.work_item_id} · {response.role}</strong>
