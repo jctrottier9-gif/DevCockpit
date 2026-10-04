@@ -275,13 +275,13 @@
       const parts = parsed.pathname.split("/").filter(Boolean);
       if (
         !["chatgpt.com", "chat.openai.com"].includes(parsed.hostname.toLowerCase()) ||
-        parts.length !== 2 ||
-        parts[0] !== "c" ||
-        !parts[1]
+        parts.length < 2 ||
+        parts[parts.length - 2] !== "c" ||
+        !parts[parts.length - 1]
       ) {
         return null;
       }
-      return "https://chatgpt.com/c/" + parts[1];
+      return "https://chatgpt.com/c/" + parts[parts.length - 1];
     } catch {
       return null;
     }

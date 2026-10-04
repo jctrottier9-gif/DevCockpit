@@ -32,10 +32,17 @@
         return null;
       }
       const parts = parsed.pathname.split("/").filter(Boolean);
-      if (parts.length !== 2 || parts[0] !== "c" || !parts[1]) return null;
+      if (
+        parts.length < 2 ||
+        parts[parts.length - 2] !== "c" ||
+        !parts[parts.length - 1]
+      ) {
+        return null;
+      }
+      const conversationId = parts[parts.length - 1];
       return {
-        conversation_id: parts[1],
-        canonical_url: "https://chatgpt.com/c/" + parts[1],
+        conversation_id: conversationId,
+        canonical_url: "https://chatgpt.com/c/" + conversationId,
       };
     } catch {
       return null;
