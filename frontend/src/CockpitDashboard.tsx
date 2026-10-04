@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import ContextDrawer from './ContextDrawer'
+import DevPool from './DevPool'
 import type {
   CockpitHorizonItem,
   CockpitOverview,
@@ -147,6 +148,21 @@ export default function CockpitDashboard({
             </span>
           </span>
         </button>
+        {overview.dev_pool.items.length > 0 && <div className="dev-pool-compact" aria-label="Exécutions DEV">
+          {overview.dev_pool.items.slice(0, 3).map(item => <button
+            type="button"
+            key={item.work_item_id}
+            className="dev-pool-compact__item"
+            onClick={() => onOpenWorkItem(item.work_item_id)}
+          >
+            <strong>{item.work_item_id}</strong>
+            <span>{item.slot_state}</span>
+            <small>{item.execution_state}{item.ci_state ? ' · CI ' + item.ci_state : ''}</small>
+          </button>)}
+          {overview.dev_pool.items.length > 3 && <span className="dev-pool-compact__more">
+            +{overview.dev_pool.items.length - 3} autre(s)
+          </span>}
+        </div>}
         <div className="role-card-counts">
           <span>{overview.dev_pool.waiting_for_capacity} attente capacité</span>
           <span>{overview.dev_pool.waiting_for_resource_lock} attente lock</span>
@@ -190,14 +206,16 @@ export default function CockpitDashboard({
       title="DEV Pool"
       onClose={() => setDrawer(null)}
     >
-      <p>Cette carte ouvre le pool de développement comme une surface collective. Le détail par exécution arrive avec DC-070B.</p>
-      <dl className="drawer-facts">
-        <div><dt>Slots occupés</dt><dd>{overview.dev_pool.active}</dd></div>
-        <div><dt>Candidats</dt><dd>{overview.dev_pool.candidates}</dd></div>
-        <div><dt>Capacité libre</dt><dd>{overview.dev_pool.capacity_available ?? '—'}</dd></div>
-        <div><dt>Attente ResourceLock</dt><dd>{overview.dev_pool.waiting_for_resource_lock}</dd></div>
-      </dl>
-      <button type="button" onClick={() => { setDrawer(null); onOpenTechnical('technical-executions') }}>Voir les exécutions techniques</button>
+      <DevPool
+        projectId={projectId}
+        onOpenWorkItem={workItemId => {
+          setDrawer(null)
+          onOpenWorkItem(workItemId)
+        }}
+      />
+      <button type="button" onClick={() => { setDrawer(null); onOpenTechnical('technical-executions') }}>
+        Voir les exécutions techniques
+      </button>
     </ContextDrawer>}
 
     {selectedRole && <ContextDrawer
@@ -243,9 +261,11 @@ export default function CockpitDashboard({
         <div><dt>Rôle attendu</dt><dd>{selectedWorkItem.expected_role ?? '—'}</dd></div>
         <div><dt>Action projetée</dt><dd>{selectedWorkItem.next_action ?? '—'}</dd></div>
       </dl>
-      {selectedWorkItem.lane === 'MAIN'
-        ? <button type="button" onClick={() => { setDrawer(null); onOpenWorkItem(selectedWorkItem.key) }}>Ouvrir l’Orchestration MAIN existante</button>
-        : <p className="drawer-note">Le détail Orchestration ciblé d’un DEV parallèle arrive avec DC-070B; ce shell ne replie pas silencieusement vers MAIN.</p>}
+      {selectedWorkItem.expected_role === 'DEV'
+        ? <button type="button" onClick={() => { setDrawer(null); onOpenWorkItem(selectedWorkItem.key) }}>
+            Ouvrir l’Orchestration de {selectedWorkItem.key}
+          </button>
+        : <p className="drawer-note">Aucune Orchestration DEV n’est proposée pour ce rôle attendu.</p>}
       <p className="drawer-note">« Ensuite » reste une perspective de navigation et n’autorise jamais l’exécution.</p>
     </ContextDrawer>}
   </section>
