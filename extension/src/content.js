@@ -5,6 +5,14 @@
   const adapter = new ChatGptPageAdapter(document);
 
   browser.runtime.onMessage.addListener((message) => {
+    if (message?.type === "devcockpit_prepare_prompt") {
+      return Promise.resolve(adapter.preparePrompt(message.text));
+    }
+    if (message?.type === "devcockpit_commit_prepared_prompt") {
+      return Promise.resolve(
+        adapter.commitPreparedPrompt(message.text, message.baseline),
+      );
+    }
     if (message?.type === "devcockpit_send_prompt") {
       return Promise.resolve(adapter.sendPrompt(message.text));
     }
