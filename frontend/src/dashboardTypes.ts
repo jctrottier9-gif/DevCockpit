@@ -101,6 +101,7 @@ export type ParallelExecutionItem = {
     branch_last_activity_at: string
     threshold_seconds: number
     send_confirmed_at: string | null
+    deadline_at: string | null
     stale_due: boolean
     relaunch_prepared: boolean
   }
