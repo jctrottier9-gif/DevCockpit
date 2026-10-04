@@ -149,18 +149,21 @@ def record_chatgpt_send_status(
     *,
     uow_factory: UnitOfWorkFactory,
 ) -> ChatGptSendStatusResult:
-    event = ChatGptSendStatusEvent(
-        event_id=command.event_id,
-        delivery_id=command.delivery_id,
-        session=command.session,
-        state=command.state,
-        attempt_count=command.attempt_count,
-        conversation_id=command.conversation_id,
-        canonical_url=command.canonical_url,
-        error_code=command.error_code,
-        next_retry_at=command.next_retry_at,
-        occurred_at=command.occurred_at,
-    )
+    try:
+        event = ChatGptSendStatusEvent(
+            event_id=command.event_id,
+            delivery_id=command.delivery_id,
+            session=command.session,
+            state=command.state,
+            attempt_count=command.attempt_count,
+            conversation_id=command.conversation_id,
+            canonical_url=command.canonical_url,
+            error_code=command.error_code,
+            next_retry_at=command.next_retry_at,
+            occurred_at=command.occurred_at,
+        )
+    except ChatGptPromptSendError as exc:
+        raise ChatGptSendStatusError(str(exc)) from exc
     with uow_factory() as uow:
         if uow.chatgpt_prompt_sends.has_event(command.event_id):
             return ChatGptSendStatusResult.DUPLICATE
