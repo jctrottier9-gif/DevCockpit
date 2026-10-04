@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createMemoryStorage, loadClassicScripts } from "./helpers.mjs";
 
-async function setup({ initialTabs = [] } = {}) {
+async function setup({
+  initialTabs = [],
+  createdTabInitialUrl = null,
+  navigateCreatedTabTo = null,
+} = {}) {
   const storage = createMemoryStorage();
   const context = await loadClassicScripts([
     "src/routing-store.js",
@@ -18,11 +22,24 @@ async function setup({ initialTabs = [] } = {}) {
     routingStore: store,
     queryTabs: async () => tabs.map((tab) => ({ ...tab })),
     createTab: async ({ url, active }) => {
-      const tab = { id: nextId++, url, active };
+      const tab = {
+        id: nextId++,
+        url: createdTabInitialUrl ?? url,
+        requestedUrl: url,
+        active,
+      };
       tabs.push(tab);
       created.push({ ...tab });
       return { ...tab };
     },
+    sleep: async () => {
+      if (navigateCreatedTabTo && created.length > 0) {
+        const createdId = created.at(-1).id;
+        const tab = tabs.find((candidate) => candidate.id === createdId);
+        if (tab) tab.url = navigateCreatedTabTo;
+      }
+    },
+    createdTabPollDelaysMs: [0],
   });
   return { storage, context, store, router, tabs, created };
 }
@@ -67,6 +84,59 @@ test("distinct unbound sessions receive distinct dedicated provisional tabs", as
   assert.equal(created.length, 2);
   assert.equal(created[0].url, "https://chatgpt.com/");
   assert.equal(created[1].url, "https://chatgpt.com/");
+});
+
+test("provisional routing tolerates transient about:blank after tab creation", async () => {
+  const { router, created } = await setup({
+    createdTabInitialUrl: "about:blank",
+    navigateCreatedTabTo: "https://chatgpt.com/",
+  });
+  const target = await router.route({
+    session: "DevCockpit:DEV:TRANSIENT",
+    routing: null,
+  });
+  assert.equal(created[0].requestedUrl, "https://chatgpt.com/");
+  assert.equal(target.url, "https://chatgpt.com/");
+});
+
+test("bound routing tolerates transient about:blank after tab creation", async () => {
+  const { router, created } = await setup({
+    createdTabInitialUrl: "about:blank",
+    navigateCreatedTabTo: "https://chatgpt.com/c/conv-a",
+  });
+  const target = await router.route({
+    session: "DevCockpit:DEV:BOUND-TRANSIENT",
+    routing: ROUTING,
+  });
+  assert.equal(created[0].requestedUrl, "https://chatgpt.com/c/conv-a");
+  assert.equal(target.url, "https://chatgpt.com/c/conv-a");
+});
+
+test("created tab reaching an incompatible ChatGPT target still fails closed", async () => {
+  const { router } = await setup({
+    createdTabInitialUrl: "about:blank",
+    navigateCreatedTabTo: "https://chatgpt.com/c/other",
+  });
+  await assert.rejects(
+    () => router.route({
+      session: "DevCockpit:DEV:BOUND-MISMATCH",
+      routing: ROUTING,
+    }),
+    (error) => error?.code === "created_tab_target_mismatch",
+  );
+});
+
+test("created tab that never reaches ChatGPT fails with bounded navigation timeout", async () => {
+  const { router } = await setup({
+    createdTabInitialUrl: "about:blank",
+  });
+  await assert.rejects(
+    () => router.route({
+      session: "DevCockpit:DEV:TIMEOUT",
+      routing: null,
+    }),
+    (error) => error?.code === "created_tab_navigation_timeout",
+  );
 });
 
 test("restart recovers a provisional session without mixing it with another tab", async () => {

@@ -14,6 +14,7 @@ async function setup({
     ok: true,
     baseline: { user_message_count: 0, expected_text: "send me" },
   },
+  routeError = null,
 } = {}) {
   const storage = createMemoryStorage();
   let counter = 0;
@@ -65,6 +66,7 @@ async function setup({
     sendStore,
     router: {
       async route() {
+        if (routeError) throw new Error(routeError);
         return { kind: "PROVISIONAL", tabId: 7, url: "https://chatgpt.com/" };
       },
       async revalidateTarget() {
@@ -139,5 +141,19 @@ test("certain pre-barrier readiness failure is BLOCKED without DOM click", async
 
   assert.equal(result.state, "BLOCKED");
   assert.deepEqual(calls, ["devcockpit_prepare_prompt"]);
+  assert.equal((await sendStore.get(DELIVERY_ID)).state, "BLOCKED");
+});
+
+test("created-tab navigation timeout remains BLOCKED before SEND_ARMED", async () => {
+  const { coordinator, sendStore, calls, transitions } = await setup({
+    routeError: "created_tab_navigation_timeout",
+  });
+
+  const result = await coordinator.enqueue(DELIVERY_ID);
+
+  assert.equal(result.state, "BLOCKED");
+  assert.equal(result.error, "created_tab_navigation_timeout");
+  assert.deepEqual(calls, []);
+  assert.equal(transitions.includes("SEND_ARMED"), false);
   assert.equal((await sendStore.get(DELIVERY_ID)).state, "BLOCKED");
 });
