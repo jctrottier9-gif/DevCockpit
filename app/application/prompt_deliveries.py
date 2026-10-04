@@ -195,5 +195,12 @@ def acknowledge_prompt_delivery(
             return AcknowledgementResult.DUPLICATE
 
         uow.prompt_deliveries.save(delivery)
+        from app.application.chatgpt_prompt_sends import ensure_chatgpt_prompt_send_for_ack
+
+        ensure_chatgpt_prompt_send_for_ack(
+            delivery.delivery_id,
+            uow=uow,
+            now=delivery.acknowledged_at,
+        )
         uow.commit()
         return AcknowledgementResult.ACKNOWLEDGED
