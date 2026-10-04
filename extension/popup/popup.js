@@ -23,7 +23,17 @@
   };
 
   function localStatusLabel(status) {
-    return status === "SEND_REQUESTED" ? "Envoi demandé" : "En attente";
+    const labels = {
+      QUEUED: "En file",
+      ROUTING: "Routage…",
+      WAITING_READY: "ChatGPT occupé…",
+      RETRYABLE_FAILURE: "Nouvelle tentative planifiée",
+      SEND_ARMED: "Envoi armé — reprise bloquée",
+      SENT_CONFIRMED: "Envoi confirmé",
+      BLOCKED: "Action requise",
+      AMBIGUOUS: "Envoi ambigu — ne pas renvoyer",
+    };
+    return labels[status] || "En attente";
   }
 
   function showEntryError(element, message) {
@@ -31,29 +41,40 @@
     element.hidden = !message;
   }
 
-  function renderPromptQueue(queue) {
+  function renderPromptQueue(queue, sendStates) {
     queueElement.replaceChildren();
     emptyElement.hidden = queue.length !== 0;
+    const sendByDelivery = new Map(
+      sendStates.map((entry) => [entry.delivery_id, entry]),
+    );
 
     for (const entry of queue) {
       const fragment = promptTemplate.content.cloneNode(true);
       fragment.querySelector(".session").textContent = entry.session;
+      const sendState = sendByDelivery.get(entry.delivery_id) || null;
       fragment.querySelector(".local-status").textContent =
-        localStatusLabel(entry.local_status);
+        localStatusLabel(sendState?.state || entry.local_status);
       fragment.querySelector(".preview").textContent = entry.text;
       fragment.querySelector(".full-text").textContent = entry.text;
       showEntryError(fragment.querySelector(".entry-error"), entry.last_error);
 
       const sendButton = fragment.querySelector(".send");
-      if (entry.local_status === "SEND_REQUESTED") {
-        sendButton.textContent = "Réessayer";
-        sendButton.title =
-          "Une tentative précédente peut avoir atteint ChatGPT. Vérifiez la conversation avant de réessayer.";
+      sendButton.hidden = sendState?.state !== "BLOCKED";
+      sendButton.textContent = "Réessayer après correction";
+      sendButton.title =
+        "Disponible seulement après un échec certain avant SEND_ARMED.";
+      if (sendState?.state === "AMBIGUOUS") {
+        showEntryError(
+          fragment.querySelector(".entry-error"),
+          "Envoi potentiellement effectué. Vérifiez la conversation ChatGPT; aucun renvoi automatique n'est permis.",
+        );
+      } else if (sendState?.error_code) {
+        showEntryError(fragment.querySelector(".entry-error"), sendState.error_code);
       }
       sendButton.addEventListener("click", async () => {
         sendButton.disabled = true;
         const result = await browser.runtime.sendMessage({
-          type: "devcockpit_send_prompt",
+          type: "devcockpit_retry_chatgpt_send",
           deliveryId: entry.delivery_id,
         });
         if (!result?.ok && result?.error) {
@@ -182,7 +203,10 @@
     retryButton.hidden = !["DISCONNECTED", "CONFLICT"].includes(connection.status);
     socketElement.textContent = state.socketUrl || "";
 
-    renderPromptQueue(Array.isArray(state.queue) ? state.queue : []);
+    renderPromptQueue(
+      Array.isArray(state.queue) ? state.queue : [],
+      Array.isArray(state.sendStates) ? state.sendStates : [],
+    );
     renderSentPrompts(Array.isArray(state.sentPrompts) ? state.sentPrompts : []);
     renderPendingResponses(
       Array.isArray(state.pendingResponses) ? state.pendingResponses : [],
@@ -212,6 +236,7 @@
     if (
       message?.type === "devcockpit_queue_changed" ||
       message?.type === "devcockpit_connection_changed" ||
+      message?.type === "devcockpit_send_state_changed" ||
       message?.type === "devcockpit_sent_prompts_changed" ||
       message?.type === "devcockpit_response_changed"
     ) {
