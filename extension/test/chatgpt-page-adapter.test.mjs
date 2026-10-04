@@ -294,6 +294,81 @@ test("rendered Markdown user text matches the complete source prompt", async () 
   );
 });
 
+test("flattened 594C-style prompt matches by exact lexical fingerprint", async () => {
+  const context = await loadClassicScripts(
+    ["src/chatgpt-page-adapter.js"],
+    { InputEvent: FakeEvent, Event: FakeEvent },
+  );
+  const { sameRenderedPromptText, lexicalPromptFingerprint } =
+    context.DevCockpitCompanion.chatgpt;
+
+  const source = [
+    "Tu travailles sur le dépôt GitHub `tchi99/RessourcePlanner`.",
+    "",
+    "Prends en charge la tranche 594C — commandes audit concurrence et cycle de vie.",
+    "",
+    "Contexte canonique :",
+    "- Project : RessourcePlanner",
+    "- WorkItem : 594C",
+    "- Parent : #594",
+    "- Roadmap maître : #55",
+    "- Statut canonique : READY",
+    "",
+    "Travaille sur le main actuel et synchronise-toi avec le vrai main avant de commencer.",
+  ].join("\n");
+
+  const flattened = [
+    "Tu travailles sur le dépôt GitHub tchi99/RessourcePlanner.",
+    "Prends en charge la tranche 594C — commandes audit concurrence et cycle de vie.",
+    "Contexte canonique : - Project : RessourcePlanner - WorkItem : 594C - Parent : #594",
+    "- Roadmap maître : #55 - Statut canonique : READY",
+    "Travaille sur le main actuel et synchronise-toi avec le vrai main avant de commencer.",
+  ].join(" ");
+
+  assert.equal(sameRenderedPromptText(flattened, source), true);
+  assert.deepEqual(
+    Array.from(lexicalPromptFingerprint(flattened)),
+    Array.from(lexicalPromptFingerprint(source)),
+  );
+  assert.equal(
+    sameRenderedPromptText(
+      flattened.replace("Statut canonique : READY", "Statut canonique : DONE"),
+      source,
+    ),
+    false,
+  );
+});
+
+test("lexical prompt comparison remains full-content and order sensitive", async () => {
+  const context = await loadClassicScripts(
+    ["src/chatgpt-page-adapter.js"],
+    { InputEvent: FakeEvent, Event: FakeEvent },
+  );
+  const { sameRenderedPromptText } = context.DevCockpitCompanion.chatgpt;
+
+  assert.equal(
+    sameRenderedPromptText(
+      "Alpha beta gamma delta",
+      "Alpha beta gamma delta",
+    ),
+    true,
+  );
+  assert.equal(
+    sameRenderedPromptText(
+      "Alpha beta gamma",
+      "Alpha beta gamma delta",
+    ),
+    false,
+  );
+  assert.equal(
+    sameRenderedPromptText(
+      "Alpha gamma beta delta",
+      "Alpha beta gamma delta",
+    ),
+    false,
+  );
+});
+
 test("prompt inspection proves SENT for a Markdown-rendered logical user turn", async () => {
   const source = [
     "Tu travailles sur le dépôt GitHub `tchi99/RessourcePlanner`.",
