@@ -84,6 +84,29 @@
     return comparableText(left) === comparableText(right);
   }
 
+  function renderedPromptComparableText(value) {
+    let text = normalizedText(value);
+    text = text
+      .replace(/^ {0,3}\x60{3}[^\n]*$/gm, "")
+      .replace(/!\[([^\]]*)\]\([^\n)]*\)/g, "$1")
+      .replace(/\[([^\]]+)\]\([^\n)]*\)/g, "$1")
+      .replace(/\x60([^\x60\n]+)\x60/g, "$1")
+      .replace(/^ {0,3}#{1,6}\s+/gm, "")
+      .replace(/^ {0,3}>\s?/gm, "")
+      .replace(/^ {0,3}(?:[-+*•◦]|\d+[.)])\s+/gm, "")
+      .replace(/\*\*([^*\n]+)\*\*/g, "$1")
+      .replace(/__([^_\n]+)__/g, "$1")
+      .replace(/~~([^~\n]+)~~/g, "$1");
+    return comparableText(text);
+  }
+
+  function sameRenderedPromptText(renderedText, sourcePrompt) {
+    return (
+      renderedPromptComparableText(renderedText) ===
+      renderedPromptComparableText(sourcePrompt)
+    );
+  }
+
   function elementsOverlap(left, right) {
     if (!left || !right) return false;
     return Boolean(left.contains?.(right) || right.contains?.(left));
@@ -117,7 +140,9 @@
   }
 
   function userTurnMatchesText(group, text) {
-    return group.some((element) => sameText(elementText(element), text));
+    return group.some((element) =>
+      sameRenderedPromptText(elementText(element), text),
+    );
   }
 
   function elementText(element) {
@@ -477,6 +502,8 @@
     editableMode,
     comparableText,
     sameText,
+    renderedPromptComparableText,
+    sameRenderedPromptText,
     elementsOverlap,
     groupLogicalUserTurns,
     userTurnMatchesText,
