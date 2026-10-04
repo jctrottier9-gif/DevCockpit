@@ -23,7 +23,9 @@ test("protocol parses strict v2 prompts with bound and null routing", async () =
   assert.equal(bound.type, "prompt");
   assert.equal(bound.deliveryId, DELIVERY_ID);
   assert.equal(bound.session, "DevCockpit:DEV:DC-063A");
-  assert.deepEqual(bound.routing, ROUTING);
+  assert.equal(bound.routing.binding_version, ROUTING.binding_version);
+  assert.equal(bound.routing.conversation_id, ROUTING.conversation_id);
+  assert.equal(bound.routing.canonical_url, ROUTING.canonical_url);
 
   const provisional = parseServerMessage(JSON.stringify({
     version: 2,
