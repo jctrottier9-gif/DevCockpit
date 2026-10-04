@@ -589,3 +589,25 @@ test("logged-out ChatGPT page is BLOCKED before any send click", async () => {
   assert.equal(result.error, "login_required");
   assert.equal(button.clicked, false);
 });
+
+
+test("prompt inspection returns canonical identity from nested conversation route", async () => {
+  const composer = new FakeElement({
+    attributes: { contenteditable: "true", role: "textbox" },
+    text: "",
+  });
+  const user = new FakeElement({ text: "Prompt A" });
+  const { adapter } = await adapterFor(new Map([
+    ['#prompt-textarea', [composer]],
+    ['[data-message-author-role="user"]', [user]],
+  ]));
+  adapter.location = {
+    href: "https://chatgpt.com/g/g-p-project/c/abc-123?model=auto",
+  };
+
+  const result = adapter.inspectPromptDelivery("Prompt A");
+
+  assert.equal(result.ok, true);
+  assert.equal(result.state, "SENT");
+  assert.equal(result.conversationUrl, "https://chatgpt.com/c/abc-123");
+});
