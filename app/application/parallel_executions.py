@@ -60,6 +60,28 @@ class DevExecutionSlotState(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class DevInteractionSummary:
+    dispatch_id: str | None
+    dispatch_status: str | None
+    delivery_id: str | None
+    delivery_status: str | None
+    send_state: str | None
+    send_attempt_count: int | None
+    send_error_code: str | None
+    send_confirmed_at: datetime | None
+    imported_response_available: bool
+
+
+@dataclass(frozen=True, slots=True)
+class DevWatchdogSummary:
+    branch_last_activity_at: str
+    threshold_seconds: float
+    send_confirmed_at: datetime | None
+    stale_due: bool
+    relaunch_prepared: bool
+
+
+@dataclass(frozen=True, slots=True)
 class DevExecutionItem:
     scheduler: SchedulerItemProjection
     execution: ExecutionProjection
@@ -73,6 +95,8 @@ class DevExecutionItem:
     lock_conflict: ResourceLockConflict | None = None
     lock_recovery_state: str | None = None
     inhibition_reason: str | None = None
+    interaction: DevInteractionSummary | None = None
+    watchdog: DevWatchdogSummary | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +132,7 @@ def read_project_parallel_dev_executions(
     evidence_reader: ExecutionEvidenceReader,
     uow_factory: UnitOfWorkFactory,
     max_parallel_dev_executions: int,
+    dev_stale_after_seconds: float = 3600.0,
     now: datetime | None = None,
 ) -> ParallelDevExecutionProjection:
     issue, scheduler, snapshots = _read_candidate_snapshots(
@@ -128,6 +153,7 @@ def read_project_parallel_dev_executions(
             snapshots=snapshots,
             uow=uow,
             max_parallel_dev_executions=max_parallel_dev_executions,
+            dev_stale_after_seconds=dev_stale_after_seconds,
             global_inhibition=(
                 "ROADMAP_APPLICATION_ACTIVE"
                 if fence.active_application_id is not None
@@ -182,6 +208,7 @@ def evaluate_project_parallel_dev_executions(
                 snapshots=snapshots,
                 uow=uow,
                 max_parallel_dev_executions=max_parallel_dev_executions,
+                dev_stale_after_seconds=dev_stale_after_seconds,
                 global_inhibition="ROADMAP_APPLICATION_FENCE",
                 now=now,
             )
@@ -195,6 +222,7 @@ def evaluate_project_parallel_dev_executions(
                 snapshots=snapshots,
                 uow=uow,
                 max_parallel_dev_executions=max_parallel_dev_executions,
+                dev_stale_after_seconds=dev_stale_after_seconds,
                 global_inhibition="SCHEDULER_INVALID",
                 now=now,
             )
@@ -223,6 +251,7 @@ def evaluate_project_parallel_dev_executions(
             snapshots=snapshots,
             uow=uow,
             max_parallel_dev_executions=max_parallel_dev_executions,
+            dev_stale_after_seconds=dev_stale_after_seconds,
             global_inhibition=None,
             now=now,
         )
@@ -349,6 +378,7 @@ def evaluate_project_parallel_dev_executions(
             snapshots=snapshots,
             uow=uow,
             max_parallel_dev_executions=max_parallel_dev_executions,
+            dev_stale_after_seconds=dev_stale_after_seconds,
             global_inhibition=None,
             now=now,
         )
@@ -562,6 +592,133 @@ def _restore_active_execution_locks(
         )
 
 
+
+def _selected_dev_dispatch(project: Project, execution: ExecutionProjection, *, uow):
+    work_item = execution.work_item
+    if work_item is None:
+        return None
+
+    candidate_keys: list[str] = []
+    if execution.state is ExecutionState.CI_RED:
+        try:
+            candidate_keys.append(_ci_red_idempotency_key(project, execution))
+        except ValueError:
+            pass
+    elif execution.state is ExecutionState.ROADMAP_UPDATE_REQUIRED:
+        try:
+            candidate_keys.append(_roadmap_reconcile_idempotency_key(project, execution))
+        except ValueError:
+            pass
+    elif execution.state is ExecutionState.DEVELOPING:
+        try:
+            candidate_keys.append(_stale_dev_idempotency_key(project, execution))
+        except ValueError:
+            pass
+    candidate_keys.append(_initial_idempotency_key(project, work_item))
+
+    for key in candidate_keys:
+        dispatch = uow.prompt_dispatches.get_by_idempotency_key(key)
+        if dispatch is not None:
+            return dispatch
+    return None
+
+
+def _interaction_summary(
+    project: Project,
+    execution: ExecutionProjection,
+    *,
+    uow,
+) -> DevInteractionSummary | None:
+    dispatch = _selected_dev_dispatch(project, execution, uow=uow)
+    if dispatch is None:
+        return None
+
+    delivery = uow.prompt_deliveries.get_by_dispatch_id(dispatch.dispatch_id)
+    send_repository = getattr(uow, "chatgpt_prompt_sends", None)
+    prompt_send = (
+        send_repository.get(delivery.delivery_id)
+        if send_repository is not None and delivery is not None
+        else None
+    )
+
+    imported_response_available = False
+    response_repository = getattr(uow, "chatgpt_responses", None)
+    if response_repository is not None and delivery is not None:
+        imported_response_available = any(
+            response.delivery_id == delivery.delivery_id
+            for response in response_repository.list_all()
+        )
+
+    return DevInteractionSummary(
+        dispatch_id=str(dispatch.dispatch_id),
+        dispatch_status=dispatch.status.value,
+        delivery_id=str(delivery.delivery_id) if delivery is not None else None,
+        delivery_status=delivery.status.value if delivery is not None else None,
+        send_state=prompt_send.state.value if prompt_send is not None else None,
+        send_attempt_count=prompt_send.attempt_count if prompt_send is not None else None,
+        send_error_code=prompt_send.last_error_code if prompt_send is not None else None,
+        send_confirmed_at=prompt_send.confirmed_at if prompt_send is not None else None,
+        imported_response_available=imported_response_available,
+    )
+
+
+def _watchdog_summary(
+    project: Project,
+    execution: ExecutionProjection,
+    *,
+    uow,
+    now: datetime,
+    stale_after_seconds: float,
+) -> DevWatchdogSummary | None:
+    branch = execution.branch
+    if (
+        execution.state is not ExecutionState.DEVELOPING
+        or branch is None
+        or branch.last_activity_at is None
+    ):
+        return None
+
+    initial = (
+        uow.prompt_dispatches.get_by_idempotency_key(
+            _initial_idempotency_key(project, execution.work_item)
+        )
+        if execution.work_item is not None
+        else None
+    )
+    delivery = (
+        uow.prompt_deliveries.get_by_dispatch_id(initial.dispatch_id)
+        if initial is not None
+        else None
+    )
+    send_repository = getattr(uow, "chatgpt_prompt_sends", None)
+    prompt_send = (
+        send_repository.get(delivery.delivery_id)
+        if send_repository is not None and delivery is not None
+        else None
+    )
+    try:
+        stale_key = _stale_dev_idempotency_key(project, execution)
+    except ValueError:
+        relaunch_prepared = False
+    else:
+        relaunch_prepared = (
+            uow.prompt_dispatches.get_by_idempotency_key(stale_key) is not None
+        )
+
+    return DevWatchdogSummary(
+        branch_last_activity_at=branch.last_activity_at,
+        threshold_seconds=stale_after_seconds,
+        send_confirmed_at=prompt_send.confirmed_at if prompt_send is not None else None,
+        stale_due=_stale_dev_due(
+            project,
+            execution,
+            uow=uow,
+            now=now,
+            stale_after_seconds=stale_after_seconds,
+        ),
+        relaunch_prepared=relaunch_prepared,
+    )
+
 def _project_parallel_state(
     project: Project,
     *,
@@ -570,6 +727,7 @@ def _project_parallel_state(
     snapshots: tuple[_CandidateSnapshot, ...],
     uow,
     max_parallel_dev_executions: int,
+    dev_stale_after_seconds: float,
     global_inhibition: str | None,
     now: datetime,
 ) -> ParallelDevExecutionProjection:
@@ -689,6 +847,18 @@ def _project_parallel_state(
                 lock_conflict=conflict,
                 lock_recovery_state=recovery_state,
                 inhibition_reason=inhibition_reason,
+                interaction=_interaction_summary(
+                    project,
+                    execution,
+                    uow=uow,
+                ),
+                watchdog=_watchdog_summary(
+                    project,
+                    execution,
+                    uow=uow,
+                    now=now,
+                    stale_after_seconds=dev_stale_after_seconds,
+                ),
             )
         )
 
