@@ -9,10 +9,19 @@
     "composer_not_found",
     "send_button_not_found",
     "send_button_disabled",
+    "content_script_unavailable",
   ]);
 
   function errorText(error) {
     return error instanceof Error ? error.message : String(error);
+  }
+
+  function preSendErrorCode(error) {
+    const message = errorText(error);
+    if (/receiving end does not exist/i.test(message)) {
+      return "content_script_unavailable";
+    }
+    return message;
   }
 
   function canonicalConversation(rawUrl) {
@@ -176,7 +185,7 @@
             text: entry.text,
           });
         } catch (error) {
-          prepared = { ok: false, error: errorText(error) };
+          prepared = { ok: false, error: preSendErrorCode(error) };
         }
 
         if (prepared?.ok === true) break;
@@ -321,6 +330,7 @@
 
   namespace.send = {
     DEFAULT_RETRY_DELAYS_MS,
+    preSendErrorCode,
     canonicalConversation,
     PromptSendCoordinator,
   };
