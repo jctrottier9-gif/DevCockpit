@@ -237,6 +237,7 @@
           conversationUrl: conversation.canonical_url,
         });
         await queueStore.remove(entry.delivery_id);
+        void sendCoordinator.resumeSession(entry.session);
         await broadcast("devcockpit_queue_changed");
         await broadcast("devcockpit_sent_prompts_changed");
         await broadcast("devcockpit_send_state_changed");
