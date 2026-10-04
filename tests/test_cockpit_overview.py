@@ -93,6 +93,8 @@ def test_cockpit_overview_exposes_backend_derived_horizons_and_role_shell(tmp_pa
                 "slot_state": "SELECTED",
                 "execution_state": "READY",
                 "ci_state": None,
+                "watchdog_stale": False,
+                "watchdog_relaunch_prepared": False,
             },
             {
                 "work_item_id": "PAR",
@@ -100,6 +102,8 @@ def test_cockpit_overview_exposes_backend_derived_horizons_and_role_shell(tmp_pa
                 "slot_state": "SELECTED",
                 "execution_state": "READY",
                 "ci_state": None,
+                "watchdog_stale": False,
+                "watchdog_relaunch_prepared": False,
             },
         ],
     }
