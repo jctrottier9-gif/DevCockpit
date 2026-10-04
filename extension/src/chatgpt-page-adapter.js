@@ -101,7 +101,8 @@
   }
 
   function lexicalPromptFingerprint(value) {
-    const normalized = String(value ?? "")
+    const rendered = renderedPromptComparableText(value);
+    const normalized = String(rendered ?? "")
       .normalize("NFKC")
       .toLocaleLowerCase("fr-CA");
     return normalized.match(/[\p{L}\p{N}]+/gu) || [];
