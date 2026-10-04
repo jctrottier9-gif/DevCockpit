@@ -371,7 +371,7 @@ def test_upgrade_from_0003_preserves_existing_history(tmp_path):
         assert u.handoffs.list_for_work_item(PROJECT.project_id,KEY) == []
     with engine.connect() as c:
         assert c.execute(text('PRAGMA foreign_key_check')).all() == []
-        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one() == '0008_conversation_binding'
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one() == '0009_chatgpt_prompt_send'
     engine.dispose()
 
 

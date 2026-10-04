@@ -68,6 +68,7 @@ test("adapter prepares without click then confirms exact sent user message", asy
   adapter.location = { href: "https://chatgpt.com/c/confirmed" };
   adapter.sleep = async () => {
     composer.textContent = "";
+    composer.innerText = "";
     selectorMap.set('[data-message-author-role="user"]', [userMessage]);
   };
 

@@ -214,6 +214,8 @@ test("send-status outbox event replays and clears only after correlated ACK", as
     onPrompt: async () => {},
     getPendingSendStatuses: async () => [event],
     onSendStatusAck: async (eventId) => acks.push(eventId),
+    setTimeoutFn: () => 1,
+    clearTimeoutFn: () => {},
   });
 
   transport.connect();

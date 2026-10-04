@@ -213,7 +213,7 @@ def _execution_items(
                 items,
                 AttentionItem(
                     stable_key=_stable_key(project_id, "DEV", work_item.key, action_kind),
-                    level=level,
+                    level=AttentionLevel.ACTION,
                     kind=AttentionKind.CI_RED,
                     title=f"DEV · {work_item.key} · CI rouge",
                     reason="La projection d'exécution exige une correction de la CI.",
