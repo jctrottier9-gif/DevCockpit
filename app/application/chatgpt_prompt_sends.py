@@ -178,7 +178,10 @@ def record_chatgpt_send_status(
             )
 
         try:
-            changed = projection.apply_event(event)
+            changed = projection.apply_event(
+                event,
+                recorded_at=datetime.now(timezone.utc),
+            )
             if changed:
                 _promote_binding(command, uow=uow)
                 uow.chatgpt_prompt_sends.save(projection)
