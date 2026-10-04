@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -478,3 +479,106 @@ def test_superseded_prompt_is_not_sent_from_prepared_batch(tmp_path, monkeypatch
     with TestClient(application) as client, client.websocket_connect('/api/companion/ws') as ws:
         ws.send_json({'version':2, 'type':'ping'})
         assert ws.receive_json() == {'version':2, 'type':'pong'}
+
+
+def test_chatgpt_send_status_is_durable_idempotent_and_promotes_first_binding(
+    tmp_path: Path,
+) -> None:
+    application = _application(tmp_path)
+
+    with TestClient(application) as client:
+        dispatch = _create_dispatch(application, work_item="DC-063B")
+
+        with client.websocket_connect("/api/companion/ws") as websocket:
+            prompt = websocket.receive_json()
+            websocket.send_json(
+                {
+                    "version": 2,
+                    "type": "ack",
+                    "delivery_id": prompt["delivery_id"],
+                }
+            )
+
+            base = datetime.now(timezone.utc) + timedelta(seconds=1)
+            events = [
+                {
+                    "event_id": str(uuid4()),
+                    "state": "ROUTING",
+                    "attempt": 1,
+                    "conversation": None,
+                    "occurred_at": base,
+                },
+                {
+                    "event_id": str(uuid4()),
+                    "state": "SEND_ARMED",
+                    "attempt": 1,
+                    "conversation": None,
+                    "occurred_at": base + timedelta(seconds=1),
+                },
+                {
+                    "event_id": str(uuid4()),
+                    "state": "SENT_CONFIRMED",
+                    "attempt": 1,
+                    "conversation": {
+                        "conversation_id": "conversation-063b",
+                        "canonical_url": "https://chatgpt.com/c/conversation-063b",
+                    },
+                    "occurred_at": base + timedelta(seconds=2),
+                },
+            ]
+
+            for item in events:
+                wire = {
+                    "version": 2,
+                    "type": "chatgpt_send_status",
+                    "event_id": item["event_id"],
+                    "delivery_id": prompt["delivery_id"],
+                    "payload": {
+                        "session": "DevCockpit:DEV:DC-063B",
+                        "state": item["state"],
+                        "attempt": item["attempt"],
+                        "conversation": item["conversation"],
+                        "error_code": None,
+                        "next_retry_at": None,
+                        "occurred_at": item["occurred_at"].isoformat(),
+                    },
+                }
+                websocket.send_json(wire)
+                assert websocket.receive_json() == {
+                    "version": 2,
+                    "type": "chatgpt_send_status_ack",
+                    "event_id": item["event_id"],
+                }
+
+            final_wire = {
+                "version": 2,
+                "type": "chatgpt_send_status",
+                "event_id": events[-1]["event_id"],
+                "delivery_id": prompt["delivery_id"],
+                "payload": {
+                    "session": "DevCockpit:DEV:DC-063B",
+                    "state": "SENT_CONFIRMED",
+                    "attempt": 1,
+                    "conversation": {
+                        "conversation_id": "conversation-063b",
+                        "canonical_url": "https://chatgpt.com/c/conversation-063b",
+                    },
+                    "error_code": None,
+                    "next_retry_at": None,
+                    "occurred_at": events[-1]["occurred_at"].isoformat(),
+                },
+            }
+            websocket.send_json(final_wire)
+            assert websocket.receive_json()["event_id"] == events[-1]["event_id"]
+
+        with SqlAlchemyUnitOfWork(application.state.session_factory) as uow:
+            delivery = uow.prompt_deliveries.get_by_dispatch_id(dispatch.dispatch_id)
+            prompt_send = uow.chatgpt_prompt_sends.get(delivery.delivery_id)
+            binding = uow.conversation_bindings.get_by_agent_session(
+                "DevCockpit:DEV:DC-063B"
+            )
+
+            assert prompt_send.state.value == "SENT_CONFIRMED"
+            assert prompt_send.confirmed_at == events[-1]["occurred_at"]
+            assert binding.conversation_id == "conversation-063b"
+            assert binding.canonical_url == "https://chatgpt.com/c/conversation-063b"
