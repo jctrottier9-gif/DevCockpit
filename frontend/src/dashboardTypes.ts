@@ -237,6 +237,8 @@ export type CockpitOverview = {
       slot_state: string
       execution_state: string
       ci_state: string | null
+      watchdog_stale: boolean
+      watchdog_relaunch_prepared: boolean
     }[]
   }
 }
