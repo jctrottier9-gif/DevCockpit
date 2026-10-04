@@ -102,11 +102,12 @@
     _serialize(session, task) {
       const previous = this.sessionChains.get(session) || Promise.resolve();
       const current = previous.then(task, task);
-      const tracked = current.finally(() => {
+      const cleanup = () => {
         if (this.sessionChains.get(session) === tracked) {
           this.sessionChains.delete(session);
         }
-      });
+      };
+      const tracked = current.then(cleanup, cleanup);
       this.sessionChains.set(session, tracked);
       return current;
     }
