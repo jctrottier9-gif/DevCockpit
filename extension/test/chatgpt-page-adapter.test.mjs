@@ -15,14 +15,17 @@ class FakeElement {
     this.tagName = tagName;
     this.attributes = { ...attributes };
     this.disabled = disabled;
-    this.textContent = text;
-    this.innerText = text;
+    this._text = text;
     this.value = "";
     this.focused = false;
     this.clicked = false;
     this.events = [];
     this.children = new Set();
   }
+  get textContent() { return this._text; }
+  set textContent(value) { this._text = value; }
+  get innerText() { return this._text; }
+  set innerText(value) { this._text = value; }
   getAttribute(name) { return this.attributes[name] ?? null; }
   focus() { this.focused = true; }
   dispatchEvent(event) { this.events.push(event); return true; }
