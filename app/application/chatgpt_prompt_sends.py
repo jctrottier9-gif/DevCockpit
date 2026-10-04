@@ -6,13 +6,16 @@ from enum import StrEnum
 from typing import Callable, Protocol, Self
 from uuid import UUID
 
-from app.application.conversation_bindings import BindConversationCommand
 from app.domain.chatgpt_prompt_send import (
     ChatGptPromptSend,
+    ChatGptPromptSendError,
     ChatGptPromptSendState,
     ChatGptSendStatusEvent,
 )
-from app.domain.conversation_binding import ConversationBindingState
+from app.domain.conversation_binding import (
+    ConversationBindingError,
+    ConversationBindingState,
+)
 
 
 class ChatGptPromptSendRepository(Protocol):
@@ -174,10 +177,15 @@ def record_chatgpt_send_status(
                 now=delivery.acknowledged_at or delivery.updated_at,
             )
 
-        changed = projection.apply_event(event)
-        if changed:
-            _promote_binding(command, uow=uow)
-            uow.chatgpt_prompt_sends.save(projection)
+        try:
+            changed = projection.apply_event(event)
+            if changed:
+                _promote_binding(command, uow=uow)
+                uow.chatgpt_prompt_sends.save(projection)
+        except ChatGptSendStatusError:
+            raise
+        except (ChatGptPromptSendError, ConversationBindingError) as exc:
+            raise ChatGptSendStatusError(str(exc)) from exc
         uow.chatgpt_prompt_sends.add_event(event)
         uow.commit()
         return (
