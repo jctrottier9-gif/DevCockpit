@@ -149,6 +149,7 @@
           deliveryId: message.deliveryId,
           session: message.session,
           text: message.text,
+          routing: message.routing,
         });
         socket.send(buildAckMessage(message.deliveryId));
         return;

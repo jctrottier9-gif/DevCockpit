@@ -10,7 +10,7 @@ from fastapi import WebSocket
 from app.application.prompt_deliveries import OutboundPromptDelivery
 
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 MAX_INBOUND_MESSAGE_BYTES = 512 * 1024
 SINGLE_COMPANION_CLOSE_CODE = 4409
 
@@ -64,6 +64,15 @@ def build_prompt_message(delivery: OutboundPromptDelivery) -> dict[str, object]:
             "session": delivery.session,
             "text": delivery.text,
         },
+        "routing": (
+            {
+                "binding_version": delivery.routing.binding_version,
+                "conversation_id": delivery.routing.conversation_id,
+                "canonical_url": delivery.routing.canonical_url,
+            }
+            if delivery.routing is not None
+            else None
+        ),
     }
 
 

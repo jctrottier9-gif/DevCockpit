@@ -2,7 +2,7 @@
   "use strict";
 
   const namespace = (globalThis.DevCockpitCompanion ||= {});
-  const PROTOCOL_VERSION = 1;
+  const PROTOCOL_VERSION = 2;
   const MAX_MESSAGE_BYTES = 512 * 1024;
   const UUID_PATTERN =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -21,9 +21,10 @@
 
   function hasExactKeys(value, expected) {
     const keys = Object.keys(value).sort();
+    const sortedExpected = [...expected].sort();
     return (
-      keys.length === expected.length &&
-      expected.every((key, index) => key === keys[index])
+      keys.length === sortedExpected.length &&
+      sortedExpected.every((key, index) => key === keys[index])
     );
   }
 
@@ -38,6 +39,29 @@
       bytes += point <= 0x7f ? 1 : point <= 0x7ff ? 2 : point <= 0xffff ? 3 : 4;
     }
     return bytes;
+  }
+
+  function parseRoutingSnapshot(value) {
+    if (value === null) {
+      return null;
+    }
+    if (
+      !isPlainObject(value) ||
+      !hasExactKeys(value, ["binding_version", "canonical_url", "conversation_id"]) ||
+      !Number.isInteger(value.binding_version) ||
+      value.binding_version < 1 ||
+      typeof value.conversation_id !== "string" ||
+      value.conversation_id.trim() === "" ||
+      typeof value.canonical_url !== "string" ||
+      value.canonical_url.trim() === ""
+    ) {
+      throw new ProtocolError("invalid_routing");
+    }
+    return {
+      binding_version: value.binding_version,
+      conversation_id: value.conversation_id,
+      canonical_url: value.canonical_url,
+    };
   }
 
   function parseServerMessage(rawMessage) {
@@ -62,7 +86,15 @@
     }
 
     if (message.type === "prompt") {
-      if (!hasExactKeys(message, ["delivery_id", "payload", "type", "version"])) {
+      if (
+        !hasExactKeys(message, [
+          "delivery_id",
+          "payload",
+          "routing",
+          "type",
+          "version",
+        ])
+      ) {
         throw new ProtocolError("invalid_prompt");
       }
       if (!isUuid(message.delivery_id)) {
@@ -83,6 +115,7 @@
         deliveryId: message.delivery_id,
         session: message.payload.session,
         text: message.payload.text,
+        routing: parseRoutingSnapshot(message.routing),
       };
     }
 

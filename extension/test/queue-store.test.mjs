@@ -115,3 +115,20 @@ test("send-requested state persists without becoming product completion", async 
   assert.equal("status" in entry, false);
   assert.equal("work_item_status" in entry, false);
 });
+
+test("routing diagnostics do not erase SEND_REQUESTED uncertainty", async () => {
+  const storage = createMemoryStorage();
+  const { store } = await loadQueue(storage);
+  await store.acceptPrompt({
+    deliveryId: FIRST_ID,
+    session: "DevCockpit:DEV:DC-063A",
+    text: "send",
+    routing: null,
+  });
+  await store.markSendRequested(FIRST_ID);
+  await store.setError(FIRST_ID, "routing_failed");
+
+  const entry = (await store.list())[0];
+  assert.equal(entry.local_status, "SEND_REQUESTED");
+  assert.equal(entry.last_error, "routing_failed");
+});

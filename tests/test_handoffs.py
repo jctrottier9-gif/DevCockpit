@@ -335,19 +335,43 @@ def test_upgrade_from_0003_preserves_existing_history(tmp_path):
     uow = lambda: SqlAlchemyUnitOfWork(sessions)
     before = {'uow':uow}
     dispatch = source(before)
-    returned = response(before,dispatch.dispatch_id)
+    delivery_id = uuid4()
+    response_id = uuid4()
+    with engine.begin() as connection:
+        connection.execute(text("""
+            INSERT INTO prompt_deliveries (
+                delivery_id, dispatch_id, status, attempt_count,
+                last_attempt_at, acknowledged_at, created_at, updated_at
+            ) VALUES (
+                :delivery_id, :dispatch_id, 'ACKNOWLEDGED', 1,
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+            )
+        """), {
+            'delivery_id': str(delivery_id),
+            'dispatch_id': str(dispatch.dispatch_id),
+        })
+        connection.execute(text("""
+            INSERT INTO imported_chatgpt_responses (
+                response_id, delivery_id, text, imported_at
+            ) VALUES (
+                :response_id, :delivery_id, 'Recommandation ARCH', CURRENT_TIMESTAMP
+            )
+        """), {
+            'response_id': str(response_id),
+            'delivery_id': str(delivery_id),
+        })
     with uow() as u:
-        imported = u.chatgpt_responses.get(returned.response_id)
+        imported = u.chatgpt_responses.get(response_id)
     upgrade_database(settings)
     upgrade_database(settings)
     with uow() as u:
-        assert u.chatgpt_responses.get(returned.response_id).text == imported.text
-        assert u.chatgpt_responses.get(returned.response_id).imported_at == imported.imported_at
+        assert u.chatgpt_responses.get(response_id).text == imported.text
+        assert u.chatgpt_responses.get(response_id).imported_at == imported.imported_at
         assert u.prompt_dispatches.get(dispatch.dispatch_id).prompt_text == dispatch.prompt_text
         assert u.handoffs.list_for_work_item(PROJECT.project_id,KEY) == []
     with engine.connect() as c:
         assert c.execute(text('PRAGMA foreign_key_check')).all() == []
-        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one() == '0007_resource_locks'
+        assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one() == '0008_conversation_binding'
     engine.dispose()
 
 

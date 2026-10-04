@@ -37,6 +37,7 @@ from app.application.parallel_executions import (
 from app.application.projects import ProjectCatalog
 from app.application.prompt_deliveries import (
     AcknowledgementResult,
+    PromptRedeliveryBindingInvalidated,
     PromptRedeliveryDeliveryNotFound,
     PromptRedeliveryDispatchNotFound,
     PromptRedeliveryDispatchNotPrepared,
@@ -683,13 +684,15 @@ def create_app(
             PromptRedeliveryDispatchNotPrepared,
             PromptRedeliveryDeliveryNotFound,
             PromptRedeliveryRequiresAcknowledgement,
+            PromptRedeliveryBindingInvalidated,
         ) as exc:
             raise HTTPException(
                 status_code=409,
                 detail={
                     "code": exc.code,
                     "message": (
-                        "Only an acknowledged PREPARED prompt can be manually redelivered."
+                        "Only an acknowledged PREPARED prompt with a safe conversation target "
+                        "can be manually redelivered."
                     ),
                 },
             ) from exc
@@ -732,6 +735,20 @@ def create_app(
                     with uow_factory() as delivery_uow:
                         dispatch = delivery_uow.prompt_dispatches.get(delivery.dispatch_id)
                         if dispatch is None or dispatch.status != PromptDispatchStatus.PREPARED:
+                            continue
+                        binding = delivery_uow.conversation_bindings.get_by_agent_session(
+                            delivery.session
+                        )
+                        if binding is not None and binding.state.value == "INVALIDATED":
+                            continue
+                        if binding is None and delivery.routing is not None:
+                            continue
+                        if binding is not None and (
+                            delivery.routing is None
+                            or binding.version != delivery.routing.binding_version
+                            or binding.conversation_id != delivery.routing.conversation_id
+                            or binding.canonical_url != delivery.routing.canonical_url
+                        ):
                             continue
                         if not await connection_manager.send_json(build_prompt_message(delivery)):
                             raise RuntimeError("companion disconnected during prompt send")

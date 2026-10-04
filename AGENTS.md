@@ -32,7 +32,7 @@ Durable product rules:
 
 - GitHub and the canonical roadmap are authoritative for delivery state.
 - ChatGPT conversations are work surfaces, never the source of truth.
-- DevCockpit may prepare DEV prompts automatically when deterministic rules authorize them. In the currently delivered companion, the user explicitly chooses when to send them; ADR-0014 accepts automatic routing/send of an already-authorized PromptDispatch after DC-063B.
+- DevCockpit may prepare DEV prompts automatically when deterministic rules authorize them. DC-063A deterministically routes an already-authorized PromptDispatch to its exact bound conversation or a dedicated provisional tab, but the user still explicitly chooses when to send it; automatic Send remains reserved to DC-063B.
 - A READY architecture gate is never sufficient authority to create its ARCH PromptDispatch; explicit human authorization in DevCockpit is required first.
 - The Firefox extension is a thin transport/UI adapter, not a product-state authority.
 - CI, PR and merge evidence come from GitHub, not from statements made in ChatGPT.
@@ -104,7 +104,7 @@ Keep the following concepts distinct:
 - `Execution`: one attempt/run of a WorkItem by a role.
 - `AgentSession`: logical ChatGPT conversation identity, e.g. `RessourcePlanner:DEV:502A`.
 - `PromptDispatch`: a prompt prepared for delivery to the Firefox extension.
-- `ConversationBinding`: target durable mapping from one AgentSession to one opaque/canonical ChatGPT conversation identity; accepted by ADR-0014 and implemented only when DC-063A lands.
+- `ConversationBinding`: durable mapping from one AgentSession to one opaque/canonical ChatGPT conversation identity; accepted by ADR-0014 and delivered by DC-063A. Firefox tab IDs remain reconstructible local cache only.
 - `ChatGptPromptSend`: target browser-to-ChatGPT send state/projection, separate from PromptDelivery; accepted by ADR-0014 and implemented only when DC-063B lands.
 - `ExternalEvent`: an observable GitHub/CI event.
 - `Decision`: an explicit imported product/architecture decision.
@@ -137,7 +137,7 @@ DevCockpit may persist richer metadata internally, including:
 - delivery status;
 - timestamps.
 
-Do not add transport fields to the canonical outbound payload unless the extension contract is deliberately versioned. ADR-0014 accepts a protocol-v2 envelope for DC-063A/DC-063B that may add a routing snapshot while keeping the functional `session` + `text` payload unchanged; protocol v1 remains the delivered contract until that implementation exists.
+Do not add transport fields to the canonical outbound payload unless the extension contract is deliberately versioned. ADR-0014 defines the protocol-v2 envelope delivered by DC-063A: prompt messages carry an exact `routing` snapshot or `null` while the functional `session` + `text` payload remains unchanged. Protocol v1 is explicitly incompatible with the v2 companion and must not be treated as auto-send capable.
 
 Recommended logical session convention:
 
