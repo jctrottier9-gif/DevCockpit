@@ -86,6 +86,24 @@ export type ParallelExecutionItem = {
   waiting_for_capacity: boolean
   waiting_for_resource_lock: boolean
   inhibition_reason: string | null
+  interaction: null | {
+    dispatch_id: string | null
+    dispatch_status: string | null
+    delivery_id: string | null
+    delivery_status: string | null
+    send_state: string | null
+    send_attempt_count: number | null
+    send_error_code: string | null
+    send_confirmed_at: string | null
+    imported_response_available: boolean
+  }
+  watchdog: null | {
+    branch_last_activity_at: string
+    threshold_seconds: number
+    send_confirmed_at: string | null
+    stale_due: boolean
+    relaunch_prepared: boolean
+  }
   resource_locks: {
     required: { surface: string; mode: string }[]
     held: {
@@ -212,5 +230,12 @@ export type CockpitOverview = {
     active: number
     waiting_for_capacity: number
     waiting_for_resource_lock: number
+    items: {
+      work_item_id: string
+      agent_session: string
+      slot_state: string
+      execution_state: string
+      ci_state: string | null
+    }[]
   }
 }
