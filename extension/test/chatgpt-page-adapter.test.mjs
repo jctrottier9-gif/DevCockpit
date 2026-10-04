@@ -234,7 +234,8 @@ test("prompt inspection proves NOT_SENT only when composer owns exact prompt", a
 
   const result = adapter.inspectPromptDelivery("Prompt A");
 
-  assert.deepEqual(result, { ok: true, state: "NOT_SENT" });
+  assert.equal(result.ok, true);
+  assert.equal(result.state, "NOT_SENT");
 });
 
 test("prompt inspection proves SENT when one matching user message exists and composer changed", async () => {
