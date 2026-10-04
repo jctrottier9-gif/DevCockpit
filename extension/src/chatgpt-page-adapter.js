@@ -9,6 +9,10 @@
     '[data-testid="prompt-textarea"][contenteditable="true"]',
   ]);
   const SEND_BUTTON_SELECTOR = 'button[data-testid="send-button"]';
+  const LOGIN_SELECTORS = Object.freeze([
+    'button[data-testid="login-button"]',
+    'a[href="/auth/login"]',
+  ]);
   const USER_MESSAGE_SELECTOR = '[data-message-author-role="user"]';
   const ASSISTANT_RESPONSE_SELECTOR = '[data-message-author-role="assistant"]';
 
@@ -156,6 +160,9 @@
         return { ok: false, error: "prompt_empty" };
       }
       try {
+        if (uniqueMatches(this.document, LOGIN_SELECTORS).length > 0) {
+          throw new ChatGptAdapterError("login_required");
+        }
         const composer = exactComposer(this.document);
         insertIntoComposer(this.document, composer, text);
         await this.afterInput();
@@ -271,6 +278,7 @@
   namespace.chatgpt = {
     COMPOSER_SELECTORS,
     SEND_BUTTON_SELECTOR,
+    LOGIN_SELECTORS,
     USER_MESSAGE_SELECTOR,
     ASSISTANT_RESPONSE_SELECTOR,
     ChatGptAdapterError,
