@@ -31,6 +31,17 @@ _TERMINAL_STATES = frozenset(
         ChatGptPromptSendState.AMBIGUOUS,
     }
 )
+_STATE_PHASE = {
+    ChatGptPromptSendState.QUEUED: 0,
+    ChatGptPromptSendState.ROUTING: 1,
+    ChatGptPromptSendState.WAITING_READY: 2,
+    ChatGptPromptSendState.RETRYABLE_FAILURE: 2,
+    ChatGptPromptSendState.SEND_ARMED: 3,
+    ChatGptPromptSendState.BLOCKED: 4,
+    ChatGptPromptSendState.SENT_CONFIRMED: 4,
+    ChatGptPromptSendState.AMBIGUOUS: 4,
+}
+
 _ALLOWED_TRANSITIONS = {
     ChatGptPromptSendState.QUEUED: {
         ChatGptPromptSendState.ROUTING,
@@ -247,12 +258,20 @@ class ChatGptPromptSend:
     def is_terminal(self) -> bool:
         return self._state in _TERMINAL_STATES
 
-    def apply_event(self, event: ChatGptSendStatusEvent) -> bool:
+    def apply_event(
+        self,
+        event: ChatGptSendStatusEvent,
+        *,
+        recorded_at: datetime | None = None,
+    ) -> bool:
         if event.delivery_id != self._delivery_id or event.session != self._session:
             raise ChatGptPromptSendError("status event identity does not match projection")
-        if event.occurred_at < self._updated_at:
-            return False
         if event.attempt_count < self._attempt_count:
+            return False
+        if (
+            event.attempt_count == self._attempt_count
+            and _STATE_PHASE[event.state] < _STATE_PHASE[self._state]
+        ):
             return False
         if self.is_terminal:
             return False
@@ -273,15 +292,19 @@ class ChatGptPromptSend:
                 "SEND_ARMED may only confirm or become AMBIGUOUS"
             )
 
+        timestamp = _as_utc(
+            recorded_at or event.occurred_at,
+            field_name="recorded_at",
+        )
         self._state = event.state
         self._attempt_count = max(self._attempt_count, event.attempt_count)
         self._last_error_code = event.error_code
         self._next_retry_at = event.next_retry_at
         self._confirmed_at = (
-            event.occurred_at
+            timestamp
             if event.state is ChatGptPromptSendState.SENT_CONFIRMED
             else None
         )
-        self._updated_at = event.occurred_at
+        self._updated_at = timestamp
         self._last_event_id = event.event_id
         return True
