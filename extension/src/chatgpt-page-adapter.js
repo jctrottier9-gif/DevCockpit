@@ -4,9 +4,8 @@
   const namespace = (globalThis.DevCockpitCompanion ||= {});
 
   const COMPOSER_SELECTORS = Object.freeze([
-    '#prompt-textarea[contenteditable="true"]',
-    'textarea#prompt-textarea',
-    '[data-testid="prompt-textarea"][contenteditable="true"]',
+    "#prompt-textarea",
+    '[data-testid="prompt-textarea"]',
   ]);
   const SEND_BUTTON_SELECTOR = 'button[data-testid="send-button"]';
   const LOGIN_SELECTORS = Object.freeze([
@@ -56,6 +55,12 @@
     );
   }
 
+  function editableMode(element) {
+    if (!element || typeof element.getAttribute !== "function") return null;
+    const value = element.getAttribute("contenteditable");
+    return value === "true" || value === "plaintext-only" ? value : null;
+  }
+
   function insertIntoComposer(document, composer, text) {
     composer.focus();
     if (composer.tagName === "TEXTAREA") {
@@ -69,7 +74,7 @@
       if (composer.value !== text) throw new ChatGptAdapterError("composer_insert_failed");
       return;
     }
-    if (composer.getAttribute("contenteditable") === "true") {
+    if (editableMode(composer)) {
       composer.textContent = text;
       dispatchInput(document, composer, text);
       if (composer.textContent !== text) {
@@ -278,6 +283,7 @@
   namespace.chatgpt = {
     COMPOSER_SELECTORS,
     SEND_BUTTON_SELECTOR,
+    editableMode,
     LOGIN_SELECTORS,
     USER_MESSAGE_SELECTOR,
     ASSISTANT_RESPONSE_SELECTOR,

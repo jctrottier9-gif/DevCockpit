@@ -63,7 +63,8 @@ test("adapter prepares without click then confirms exact sent user message", asy
   const button = new FakeElement({ tagName: "BUTTON" });
   const userMessage = new FakeElement({ text: "Hello ChatGPT" });
   const selectorMap = new Map([
-    ['#prompt-textarea[contenteditable="true"]', [composer]],
+    ['#prompt-textarea', [composer]],
+    ['[data-testid="prompt-textarea"]', [composer]],
     ['button[data-testid="send-button"]', [button]],
     ['[data-message-author-role="user"]', []],
   ]);
@@ -88,6 +89,43 @@ test("adapter prepares without click then confirms exact sent user message", asy
   assert.equal(button.clicked, true);
 });
 
+test("adapter accepts plaintext-only canonical composer", async () => {
+  const composer = new FakeElement({
+    attributes: { contenteditable: "plaintext-only" },
+  });
+  const button = new FakeElement({ tagName: "BUTTON" });
+  const { adapter } = await adapterFor(new Map([
+    ['#prompt-textarea', [composer]],
+    ['[data-testid="prompt-textarea"]', [composer]],
+    ['button[data-testid="send-button"]', [button]],
+    ['[data-message-author-role="user"]', []],
+  ]));
+
+  const prepared = await adapter.preparePrompt("Hello plaintext composer");
+
+  assert.equal(prepared.ok, true);
+  assert.equal(composer.textContent, "Hello plaintext composer");
+  assert.equal(button.clicked, false);
+});
+
+test("canonical composer found by multiple selectors is deduplicated", async () => {
+  const composer = new FakeElement({
+    attributes: { contenteditable: "true" },
+  });
+  const button = new FakeElement({ tagName: "BUTTON" });
+  const { adapter } = await adapterFor(new Map([
+    ['#prompt-textarea', [composer]],
+    ['[data-testid="prompt-textarea"]', [composer]],
+    ['button[data-testid="send-button"]', [button]],
+    ['[data-message-author-role="user"]', []],
+  ]));
+
+  const prepared = await adapter.preparePrompt("Deduplicated composer");
+
+  assert.equal(prepared.ok, true);
+  assert.equal(button.clicked, false);
+});
+
 test("missing or ambiguous composer fails closed", async () => {
   const button = new FakeElement({ tagName: "BUTTON" });
   let value = await adapterFor(new Map([['button[data-testid="send-button"]', [button]]]));
@@ -98,7 +136,8 @@ test("missing or ambiguous composer fails closed", async () => {
   const first = new FakeElement({ attributes: { contenteditable: "true" } });
   const second = new FakeElement({ attributes: { contenteditable: "true" } });
   value = await adapterFor(new Map([
-    ['#prompt-textarea[contenteditable="true"]', [first, second]],
+    ['#prompt-textarea', [first]],
+    ['[data-testid="prompt-textarea"]', [second]],
     ['button[data-testid="send-button"]', [button]],
   ]));
   result = await value.adapter.preparePrompt("Hello");
@@ -149,7 +188,7 @@ test("logged-out ChatGPT page is BLOCKED before any send click", async () => {
   const button = new FakeElement({ tagName: "BUTTON" });
   const { adapter } = await adapterFor(new Map([
     ['button[data-testid="login-button"]', [login]],
-    ['#prompt-textarea[contenteditable="true"]', [composer]],
+    ['#prompt-textarea', [composer]],
     ['button[data-testid="send-button"]', [button]],
   ]));
 
