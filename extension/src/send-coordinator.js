@@ -4,7 +4,7 @@
   const namespace = (globalThis.DevCockpitCompanion ||= {});
   const { SEND_STATE } = namespace.sendStore;
 
-  const DEFAULT_RETRY_DELAYS_MS = Object.freeze([250, 1000, 2500]);
+  const DEFAULT_RETRY_DELAYS_MS = Object.freeze([250, 750, 1500, 2500, 4000]);
   const RETRYABLE_READY_ERRORS = new Set([
     "composer_not_found",
     "send_button_not_found",
@@ -191,7 +191,9 @@
         if (prepared?.ok === true) break;
 
         const code = prepared?.error || "chatgpt_prepare_failed";
-        const retryable = RETRYABLE_READY_ERRORS.has(code);
+        const retryable =
+          RETRYABLE_READY_ERRORS.has(code) ||
+          code.startsWith("composer_not_found:");
         if (!retryable) {
           await this._emit(
             await this.sendStore.transition({

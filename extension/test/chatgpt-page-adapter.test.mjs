@@ -11,10 +11,17 @@ class FakeEvent {
 }
 
 class FakeElement {
-  constructor({ tagName = "DIV", attributes = {}, disabled = false, text = "" } = {}) {
+  constructor({
+    tagName = "DIV",
+    attributes = {},
+    disabled = false,
+    text = "",
+    visible = true,
+  } = {}) {
     this.tagName = tagName;
     this.attributes = { ...attributes };
     this.disabled = disabled;
+    this.visible = visible;
     this._text = text;
     this.value = "";
     this.focused = false;
@@ -27,6 +34,8 @@ class FakeElement {
   get innerText() { return this._text; }
   set innerText(value) { this._text = value; }
   getAttribute(name) { return this.attributes[name] ?? null; }
+  hasAttribute(name) { return Object.prototype.hasOwnProperty.call(this.attributes, name); }
+  getClientRects() { return this.visible ? [{}] : []; }
   focus() { this.focused = true; }
   dispatchEvent(event) { this.events.push(event); return true; }
   click() { this.clicked = true; }
@@ -126,11 +135,53 @@ test("canonical composer found by multiple selectors is deduplicated", async () 
   assert.equal(button.clicked, false);
 });
 
+test("adapter accepts visible ProseMirror role textbox fallback", async () => {
+  const composer = new FakeElement({
+    attributes: { contenteditable: "true", role: "textbox" },
+  });
+  const button = new FakeElement({ tagName: "BUTTON" });
+  const { adapter } = await adapterFor(new Map([
+    ['.ProseMirror[contenteditable="true"][role="textbox"]', [composer]],
+    ['button[data-testid="send-button"]', [button]],
+    ['[data-message-author-role="user"]', []],
+  ]));
+
+  const prepared = await adapter.preparePrompt("Fallback composer");
+
+  assert.equal(prepared.ok, true);
+  assert.equal(composer.textContent, "Fallback composer");
+  assert.equal(button.clicked, false);
+});
+
+test("hidden textarea fallback is ignored in favor of visible editor", async () => {
+  const hiddenTextarea = new FakeElement({
+    tagName: "TEXTAREA",
+    attributes: { name: "prompt-textarea" },
+    visible: false,
+  });
+  const composer = new FakeElement({
+    attributes: { contenteditable: "true", role: "textbox" },
+  });
+  const button = new FakeElement({ tagName: "BUTTON" });
+  const { adapter } = await adapterFor(new Map([
+    ['textarea[name="prompt-textarea"]', [hiddenTextarea]],
+    ['.ProseMirror[contenteditable="true"][role="textbox"]', [composer]],
+    ['button[data-testid="send-button"]', [button]],
+    ['[data-message-author-role="user"]', []],
+  ]));
+
+  const prepared = await adapter.preparePrompt("Visible only");
+
+  assert.equal(prepared.ok, true);
+  assert.equal(hiddenTextarea.value, "");
+  assert.equal(composer.textContent, "Visible only");
+});
+
 test("missing or ambiguous composer fails closed", async () => {
   const button = new FakeElement({ tagName: "BUTTON" });
   let value = await adapterFor(new Map([['button[data-testid="send-button"]', [button]]]));
   let result = await value.adapter.preparePrompt("Hello");
-  assert.equal(result.error, "composer_not_found");
+  assert.match(result.error, /^composer_not_found:/);
   assert.equal(button.clicked, false);
 
   const first = new FakeElement({ attributes: { contenteditable: "true" } });
