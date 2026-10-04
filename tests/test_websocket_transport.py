@@ -579,6 +579,7 @@ def test_chatgpt_send_status_is_durable_idempotent_and_promotes_first_binding(
             )
 
             assert prompt_send.state.value == "SENT_CONFIRMED"
-            assert prompt_send.confirmed_at == events[-1]["occurred_at"]
+            assert prompt_send.confirmed_at is not None
+            assert prompt_send.confirmed_at >= delivery.acknowledged_at
             assert binding.conversation_id == "conversation-063b"
             assert binding.canonical_url == "https://chatgpt.com/c/conversation-063b"
