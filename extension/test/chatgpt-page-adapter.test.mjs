@@ -234,7 +234,7 @@ test("prompt inspection proves NOT_SENT only when composer owns exact prompt", a
     ['[data-message-author-role="user"]', []],
   ]));
 
-  const result = adapter.inspectPromptDelivery("Prompt A");
+  const result = await adapter.inspectPromptDelivery("Prompt A");
 
   assert.equal(result.ok, true);
   assert.equal(result.state, "NOT_SENT");
@@ -252,7 +252,7 @@ test("prompt inspection proves SENT when one matching user message exists and co
   ]));
   adapter.location = { href: "https://chatgpt.com/c/abc-123" };
 
-  const result = adapter.inspectPromptDelivery("Prompt A");
+  const result = await adapter.inspectPromptDelivery("Prompt A");
 
   assert.equal(result.ok, true);
   assert.equal(result.state, "SENT");
@@ -398,7 +398,7 @@ test("prompt inspection proves SENT for a Markdown-rendered logical user turn", 
   ]));
   adapter.location = { href: "https://chatgpt.com/c/abc-123" };
 
-  const result = adapter.inspectPromptDelivery(source);
+  const result = await adapter.inspectPromptDelivery(source);
 
   assert.equal(result.ok, true);
   assert.equal(result.state, "SENT");
@@ -420,7 +420,7 @@ test("nested DOM candidates for one user turn count as one SENT proof", async ()
   ]));
   adapter.location = { href: "https://chatgpt.com/c/abc-123" };
 
-  const result = adapter.inspectPromptDelivery("Prompt A");
+  const result = await adapter.inspectPromptDelivery("Prompt A");
 
   assert.equal(result.ok, true);
   assert.equal(result.state, "SENT");
@@ -438,7 +438,7 @@ test("two distinct matching user turns remain ambiguous", async () => {
     ['[data-message-author-role="user"]', [first, second]],
   ]));
 
-  const result = adapter.inspectPromptDelivery("Prompt A");
+  const result = await adapter.inspectPromptDelivery("Prompt A");
 
   assert.equal(result.ok, false);
   assert.match(result.error, /logical=2/);
@@ -489,7 +489,7 @@ test("prompt inspection stays ambiguous when composer and user turn both match",
     ['[data-message-author-role="user"]', [user]],
   ]));
 
-  const result = adapter.inspectPromptDelivery("Prompt A");
+  const result = await adapter.inspectPromptDelivery("Prompt A");
 
   assert.equal(result.ok, false);
   assert.match(result.error, /^delivery_evidence_ambiguous:/);
@@ -607,7 +607,7 @@ test("prompt inspection returns canonical identity from nested conversation rout
     href: "https://chatgpt.com/g/g-p-project/c/abc-123?model=auto",
   };
 
-  const result = adapter.inspectPromptDelivery("Prompt A");
+  const result = await adapter.inspectPromptDelivery("Prompt A");
 
   assert.equal(result.ok, true);
   assert.equal(result.state, "SENT");
@@ -643,7 +643,7 @@ test("collapsed long user turn matches using complete textContent instead of tru
   ]));
   adapter.location = { href: "https://chatgpt.com/c/dc070b" };
 
-  const result = adapter.inspectPromptDelivery(source);
+  const result = await adapter.inspectPromptDelivery(source);
 
   assert.equal(result.ok, true);
   assert.equal(result.state, "SENT");
@@ -667,7 +667,7 @@ test("collapsed prompt confirmation still rejects incomplete full DOM content", 
     ['[data-message-author-role="user"]', [user]],
   ]));
 
-  const result = adapter.inspectPromptDelivery(source);
+  const result = await adapter.inspectPromptDelivery(source);
 
   assert.equal(result.ok, false);
   assert.match(result.error, /matching=0/);
