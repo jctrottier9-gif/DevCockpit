@@ -307,3 +307,104 @@ export type RoadmapExplorerIssueDetail = {
   updated_at: string | null
 }
 
+
+
+export type ArchitectureAdrReference = {
+  adr_id: string
+  title: string
+  path: string
+  url: string
+}
+
+export type ArchitectureGatePanelItem = {
+  work_item_id: string
+  title: string
+  status: string
+  lane: string
+  parent: string
+  scheduler_state: string | null
+  scheduler_reason: string | null
+  executable: boolean
+  human_authorization_required: boolean
+  can_authorize: boolean
+  authorization: null | {
+    dispatch_id: string
+    agent_session: string
+    status: string
+    created_at: string
+  }
+  work_issue_number: number | null
+  work_issue_url: string | null
+  parent_issue_number: number | null
+  parent_issue_url: string | null
+  adrs: ArchitectureAdrReference[]
+}
+
+export type ArchitecturePanelResponse = {
+  project: Project
+  observed_at: string
+  source: {
+    status: 'available' | 'unavailable'
+    updated_at?: string | null
+    revision?: string
+    code?: string
+  }
+  gates: ArchitectureGatePanelItem[]
+  diagnostics: (Diagnostic & { work_item_id?: string | null })[]
+}
+
+export type ArchitectureAdrDetail = {
+  reference: ArchitectureAdrReference
+  content: string
+}
+
+export type ReviewJob = {
+  job_id: number
+  name: string
+  status: string
+  conclusion: string | null
+  url: string | null
+  started_at: string | null
+  completed_at: string | null
+}
+
+export type ReviewWorkflow = {
+  run_id: number
+  name: string
+  status: string
+  conclusion: string | null
+  attempt: number
+  head_sha: string
+  url: string | null
+  jobs: ReviewJob[]
+  jobs_complete: boolean
+}
+
+export type ReviewPullRequest = {
+  work_item_id: string
+  work_item_title: string
+  lane: string
+  number: number
+  title: string
+  branch: string
+  head_sha: string
+  url: string | null
+  mergeable: boolean | null
+  auto_merge_enabled: boolean
+  ci_state: string
+  workflows: ReviewWorkflow[]
+}
+
+export type ReviewPanelResponse = {
+  project: Project
+  observed_at: string
+  source: {
+    status: 'available' | 'unavailable'
+    updated_at?: string | null
+    revision?: string
+    code?: string
+  }
+  complete: boolean
+  pull_requests: ReviewPullRequest[]
+  diagnostics: (Diagnostic & { work_item_id?: string | null })[]
+}
