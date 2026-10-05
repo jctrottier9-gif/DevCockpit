@@ -314,7 +314,7 @@ def read_project_architecture_panel(
     return ArchitecturePanelProjection(
         project=project,
         observed_at=now or datetime.now(timezone.utc),
-        roadmap_updated_at=explorer.source.updated_at if hasattr(explorer, "source") else explorer.roadmap_updated_at,
+        roadmap_updated_at=explorer.roadmap_updated_at,
         revision=explorer.revision,
         gates=tuple(gates),
         diagnostics=tuple(diagnostics),
