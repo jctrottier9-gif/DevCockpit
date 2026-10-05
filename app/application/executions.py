@@ -248,6 +248,17 @@ def evaluate_project_execution(
                 ),
                 uow=uow,
             )
+        elif projection.next_action is NextAction.MERGE_PR:
+            dispatch = create_prompt_dispatch_in_uow(
+                CreatePromptDispatchCommand(
+                    project_id=project.project_id,
+                    work_item_id=work_item.key,
+                    role=PromptDispatchRole.DEV,
+                    prompt_text=build_ready_to_merge_follow_up(project, projection),
+                    idempotency_key=_ready_to_merge_idempotency_key(project, projection),
+                ),
+                uow=uow,
+            )
         elif projection.next_action is NextAction.RECONCILE_ROADMAP:
             dispatch = create_prompt_dispatch_in_uow(
                 CreatePromptDispatchCommand(
@@ -392,6 +403,47 @@ def _stale_dev_idempotency_key(
     )
 
 
+def build_ready_to_merge_follow_up(
+    project: Project,
+    projection: ExecutionProjection,
+) -> str:
+    work_item = projection.work_item
+    pull_request = projection.pull_request
+    ci = projection.ci
+    if (
+        work_item is None
+        or pull_request is None
+        or ci is None
+        or projection.state is not ExecutionState.READY_TO_MERGE
+        or projection.next_action is not NextAction.MERGE_PR
+    ):
+        raise ValueError(
+            "READY_TO_MERGE follow-up requires green mergeable PR without observed auto-merge"
+        )
+
+    github_url = pull_request.url or "non disponible"
+    return f"""La CI de la PR #{pull_request.number} pour {work_item.key} est maintenant verte et GitHub rapporte la PR comme mergeable, mais elle est toujours ouverte.
+
+Repository : {project.repository_full_name}
+WorkItem : {work_item.key} — {work_item.title}
+PR : #{pull_request.number}
+GitHub : {github_url}
+Head SHA observé : {pull_request.head_sha}
+
+Reprends la même session DEV uniquement pour finaliser le merge déjà autorisé de cette livraison.
+
+1. Vérifie sur GitHub l'état courant de la PR #{pull_request.number}, son head SHA et les validations requises.
+2. Si la PR est déjà fusionnée, ne modifie rien et ARRÊTE ce tour; DevCockpit observera le merge et préparera la réconciliation du roadmap.
+3. Si la PR est toujours ouverte, exige que le head SHA soit encore exactement {pull_request.head_sha}, que les validations requises soient vertes et que GitHub la rapporte toujours mergeable sans conflit.
+4. Si ces conditions sont satisfaites, fusionne la PR avec une méthode autorisée par le dépôt. Ne contourne aucune règle de protection, review ou CI.
+5. Ne modifie aucun fichier, ne pousse aucun commit et ne commence aucune autre tranche.
+6. Si GitHub refuse le merge, rapporte le blocage exact.
+7. Rapporte l'état final de la PR puis ARRÊTE ton tour DEV.
+
+Ne commence pas la tranche suivante et ne reste pas à poller GitHub.
+"""
+
+
 def build_roadmap_reconciliation_follow_up(
     project: Project,
     projection: ExecutionProjection,
@@ -442,6 +494,28 @@ Cette réconciliation post-merge remplace le comportement historique où le DEV 
 
 Ne commence pas le WorkItem suivant. Rapporte l'état final du roadmap puis ARRÊTE ton tour DEV.
 """
+
+
+def _ready_to_merge_idempotency_key(
+    project: Project,
+    projection: ExecutionProjection,
+) -> str:
+    work_item = projection.work_item
+    pull_request = projection.pull_request
+    if (
+        work_item is None
+        or pull_request is None
+        or projection.state is not ExecutionState.READY_TO_MERGE
+        or projection.next_action is not NextAction.MERGE_PR
+    ):
+        raise ValueError(
+            "READY_TO_MERGE idempotency requires open green mergeable PR without auto-merge"
+        )
+    return _bounded_idempotency_key(
+        "execution:"
+        f"{project.project_id}:{work_item.key}:DEV:READY_TO_MERGE:"
+        f"pr{pull_request.number}:{pull_request.head_sha}:v1"
+    )
 
 
 def _roadmap_reconcile_idempotency_key(
