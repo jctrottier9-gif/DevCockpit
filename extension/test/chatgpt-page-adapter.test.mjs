@@ -700,7 +700,10 @@ test("ambiguous inspection expands Show more before matching a collapsed long pr
     showMore.clicked = true;
     user.textContent = source;
   };
-  user.selectorMap.set('button, [role="button"]', [showMore]);
+  user.selectorMap.set(
+    '[data-testid="collapsible-user-message-toggle"], button, [role="button"], label[for]',
+    [showMore],
+  );
 
   const { adapter } = await adapterFor(new Map([
     ['#prompt-textarea', [composer]],
@@ -753,7 +756,10 @@ test("collapsed inspection finds Show more in the surrounding conversation turn"
     showMore.clicked = true;
     user.textContent = source;
   };
-  turn.selectorMap.set('button, [role="button"]', [showMore]);
+  turn.selectorMap.set(
+    '[data-testid="collapsible-user-message-toggle"], button, [role="button"], label[for]',
+    [showMore],
+  );
   user.closestMap.set('[data-testid^="conversation-turn-"]', turn);
 
   const { adapter } = await adapterFor(new Map([
