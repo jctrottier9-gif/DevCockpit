@@ -7,10 +7,11 @@
   const DEFAULT_CREATED_TAB_POLL_DELAYS_MS = Object.freeze([100, 250, 500, 1000, 2000, 3000, 3000]);
 
   class RoutingError extends Error {
-    constructor(code) {
-      super(code);
+    constructor(code, details = null) {
+      super(details ? code + ":" + details : code);
       this.name = "RoutingError";
       this.code = code;
+      this.details = details;
     }
   }
 
@@ -202,7 +203,27 @@
         cached?.kind === ROUTING_KIND.BOUND &&
         Number.isInteger(cached.tab_id)
       ) {
-        target = matches.find((tab) => tab.id === cached.tab_id) || null;
+        const cachedTab = tabs.find((tab) => tab.id === cached.tab_id) || null;
+        if (cachedTab) {
+          const cachedIdentity = conversationIdentity(cachedTab.url);
+          if (cachedIdentity && !tabIdentityMatches(cachedTab, routing)) {
+            throw new RoutingError(
+              "bound_target_changed",
+              [
+                "expected=" + routing.conversation_id,
+                "observed=" + cachedIdentity.conversationId,
+                "source=cached_tab",
+              ].join(","),
+            );
+          }
+          if (
+            tabIdentityMatches(cachedTab, routing) ||
+            cachedTab.url === "about:blank" ||
+            isSupportedChatGptUrl(cachedTab.url)
+          ) {
+            target = cachedTab;
+          }
+        }
       }
       target ||= matches[0] || null;
 
@@ -304,7 +325,15 @@
       };
 
       if (incompatible(tab)) {
-        throw new RoutingError("bound_target_changed");
+        const observed = conversationIdentity(tab.url);
+        throw new RoutingError(
+          "bound_target_changed",
+          [
+            "expected=" + normalized.conversation_id,
+            "observed=" + (observed?.conversationId || "non_conversation"),
+            "source=revalidate",
+          ].join(","),
+        );
       }
 
       for (const delay of this.createdTabPollDelaysMs) {
@@ -318,11 +347,26 @@
           return candidate;
         }
         if (incompatible(candidate)) {
-          throw new RoutingError("bound_target_changed");
+          const observed = conversationIdentity(candidate.url);
+          throw new RoutingError(
+            "bound_target_changed",
+            [
+              "expected=" + normalized.conversation_id,
+              "observed=" + (observed?.conversationId || "non_conversation"),
+              "source=revalidate",
+            ].join(","),
+          );
         }
       }
 
-      throw new RoutingError("bound_target_changed");
+      throw new RoutingError(
+        "bound_target_changed",
+        [
+          "expected=" + normalized.conversation_id,
+          "observed=non_conversation",
+          "source=timeout",
+        ].join(","),
+      );
     }
 
     async invalidate(session, reason) {
