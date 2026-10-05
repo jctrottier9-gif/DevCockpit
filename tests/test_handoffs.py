@@ -107,6 +107,33 @@ def view(env):
     return read_orchestration(PROJECT, KEY, roadmap_reader=env['roadmap'], evidence_reader=env['evidence'], uow_factory=env['uow'])
 
 
+def test_orchestration_uses_shared_interaction_state_for_open_arch_handoff(env):
+    handoff = create(env)
+
+    initial = view(env)
+    consultation = next(
+        item for item in initial["handoffs"] if item["handoff_id"] == handoff.handoff_id
+    )
+    assert consultation["indication"] == "Prompt préparé"
+    assert consultation["request_dispatch"]["interaction"]["state"] == "PROMPT_PREPARED"
+
+    outbound = prepare_prompt_deliveries_for_send(uow_factory=env["uow"])
+    delivery = next(
+        item for item in outbound if item.dispatch_id == handoff.request_dispatch_id
+    )
+    acknowledge_prompt_delivery(delivery.delivery_id, uow_factory=env["uow"])
+
+    acknowledged = view(env)
+    consultation = next(
+        item for item in acknowledged["handoffs"] if item["handoff_id"] == handoff.handoff_id
+    )
+    assert consultation["request_dispatch"]["interaction"]["state"] == "QUEUED"
+    assert consultation["request_dispatch"]["interaction"]["manual_send_required"] is True
+    assert consultation["indication"] == (
+        "Gate ARCH prête · lancement manuel dans Firefox requis"
+    )
+
+
 def test_parallel_dev_handoff_targets_selected_work_item_not_main(env):
     parallel_key = "DC-PAR"
 
