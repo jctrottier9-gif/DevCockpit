@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import re
 from urllib.parse import quote
 
@@ -125,7 +126,7 @@ class GitHubArchitectureDocumentReader:
             raise ArchitectureDocumentError("GitHub architecture document encoding is unsupported")
         try:
             content = base64.b64decode(encoded).decode("utf-8")
-        except (ValueError, UnicodeDecodeError) as exc:
+        except (binascii.Error, ValueError, UnicodeDecodeError) as exc:
             raise ArchitectureDocumentError("GitHub architecture document content is invalid") from exc
         reference = ArchitectureDocumentReference(
             adr_id=match.group(1),
