@@ -147,6 +147,7 @@ def test_arch_queued_requires_manual_launch_and_ambiguous_forbids_resend():
         uow=Uow(delivery=delivery, prompt_send=queued),
     )
     assert manual.manual_send_required
+    assert manual.automatic_resend_allowed is False
     assert interaction_indication(manual) == (
         "Gate ARCH prête · lancement manuel dans Firefox requis"
     )
