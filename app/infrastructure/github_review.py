@@ -101,33 +101,80 @@ class GitHubReviewReader:
                 pull_requests: list[ReviewPullRequestEvidence] = []
                 counts: dict[str, int] = {}
                 for work_item, summary in matches:
-                    detail_payload = self._request_json(
-                        client,
-                        f"{base_url}/pulls/{summary.number}",
-                    )
-                    detail = self._parse_pull_request(detail_payload)
-                    if not pull_request_matches_work_item(detail, work_item.key):
+                    stable_snapshot = None
+                    identity_changed = False
+                    for _snapshot_attempt in range(2):
+                        detail_payload = self._request_json(
+                            client,
+                            f"{base_url}/pulls/{summary.number}",
+                        )
+                        detail = self._parse_pull_request(detail_payload)
+                        if not pull_request_matches_work_item(detail, work_item.key):
+                            diagnostics.append(
+                                PanelDiagnostic(
+                                    "REVIEW_PR_IDENTITY_CHANGED",
+                                    f"PR #{detail.number} no longer strongly matches {work_item.key}.",
+                                    work_item.key,
+                                )
+                            )
+                            identity_changed = True
+                            break
+
+                        workflows, workflows_complete = self._read_workflows(
+                            client,
+                            base_url,
+                            detail.head_sha,
+                        )
+                        confirm_payload = self._request_json(
+                            client,
+                            f"{base_url}/pulls/{summary.number}",
+                        )
+                        confirm = self._parse_pull_request(confirm_payload)
+                        if (
+                            confirm.head_sha != detail.head_sha
+                            or not pull_request_matches_work_item(confirm, work_item.key)
+                        ):
+                            continue
+
+                        current_signature, signature_complete = self._read_workflow_signature(
+                            client,
+                            base_url,
+                            detail.head_sha,
+                        )
+                        if current_signature != self._workflow_signature(workflows):
+                            continue
+
+                        stable_snapshot = (
+                            confirm,
+                            workflows,
+                            workflows_complete and signature_complete,
+                        )
+                        break
+
+                    if identity_changed:
+                        continue
+                    if stable_snapshot is None:
+                        complete = False
                         diagnostics.append(
                             PanelDiagnostic(
-                                "REVIEW_PR_IDENTITY_CHANGED",
-                                f"PR #{detail.number} no longer strongly matches {work_item.key}.",
+                                "REVIEW_EVIDENCE_CHANGED_DURING_READ",
+                                (
+                                    f"PR #{summary.number} head or workflow attempt changed "
+                                    "while Reviewer evidence was being read."
+                                ),
                                 work_item.key,
                             )
                         )
                         continue
-                    counts[work_item.key] = counts.get(work_item.key, 0) + 1
 
-                    workflows, workflows_complete = self._read_workflows(
-                        client,
-                        base_url,
-                        detail.head_sha,
-                    )
-                    complete = complete and workflows_complete
-                    if not workflows_complete:
+                    detail, workflows, snapshot_complete = stable_snapshot
+                    counts[work_item.key] = counts.get(work_item.key, 0) + 1
+                    complete = complete and snapshot_complete
+                    if not snapshot_complete:
                         diagnostics.append(
                             PanelDiagnostic(
                                 "REVIEW_WORKFLOWS_PARTIAL",
-                                f"Workflow pagination for PR #{detail.number} is partial.",
+                                f"Workflow or job pagination for PR #{detail.number} is partial.",
                                 work_item.key,
                             )
                         )
@@ -226,6 +273,54 @@ class GitHubReviewReader:
             )
         workflows.sort(key=lambda item: (item.run_id, item.attempt), reverse=True)
         return tuple(workflows), complete
+
+    def _read_workflow_signature(
+        self,
+        client: httpx.Client,
+        base_url: str,
+        head_sha: str,
+    ) -> tuple[tuple[tuple[int, int, str, str | None, str], ...], bool]:
+        raw_runs, complete = self._paged_items(
+            client,
+            f"{base_url}/actions/runs",
+            params={"head_sha": head_sha, "event": "pull_request"},
+            payload_key="workflow_runs",
+            max_pages=10,
+        )
+        signature: list[tuple[int, int, str, str | None, str]] = []
+        for item in raw_runs:
+            if not isinstance(item, dict):
+                raise ExecutionPayloadError("GitHub workflow run must be an object")
+            run_head_sha = self._require_string(item, "head_sha", context="workflow run")
+            if run_head_sha != head_sha:
+                continue
+            run_id = item.get("id")
+            attempt = item.get("run_attempt", 1)
+            if not isinstance(run_id, int) or not isinstance(attempt, int):
+                raise ExecutionPayloadError("GitHub workflow run identity must be integer")
+            status = self._require_string(item, "status", context="workflow run")
+            conclusion = item.get("conclusion")
+            if conclusion is not None and not isinstance(conclusion, str):
+                raise ExecutionPayloadError("GitHub workflow conclusion must be text or null")
+            signature.append((run_id, attempt, status, conclusion, run_head_sha))
+        return tuple(sorted(signature)), complete
+
+    @staticmethod
+    def _workflow_signature(
+        workflows: tuple[ReviewWorkflowEvidence, ...],
+    ) -> tuple[tuple[int, int, str, str | None, str], ...]:
+        return tuple(
+            sorted(
+                (
+                    item.run_id,
+                    item.attempt,
+                    item.status,
+                    item.conclusion,
+                    item.head_sha,
+                )
+                for item in workflows
+            )
+        )
 
     def _read_attempt_jobs(
         self,
