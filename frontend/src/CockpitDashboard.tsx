@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import ContextDrawer from './ContextDrawer'
 import DevPool from './DevPool'
+import RoadmapExplorer from './RoadmapExplorer'
 import type {
   CockpitHorizonItem,
   CockpitOverview,
@@ -239,6 +240,10 @@ export default function CockpitDashboard({
         <div><dt>Surveillance</dt><dd>{selectedRole.watch_count}</dd></div>
         <div><dt>WorkItem</dt><dd>{selectedRole.primary_work_item_id ?? '—'}</dd></div>
       </dl>
+      {selectedRole.role === 'PO' && <RoadmapExplorer
+        projectId={projectId}
+        initialWorkItemId={selectedRole.primary_work_item_id}
+      />}
       {selectedRole.primary_work_item_id === overview.horizons.now?.key && <button type="button" onClick={() => { setDrawer(null); onOpenWorkItem(selectedRole.primary_work_item_id!) }}>
         Ouvrir l’Orchestration MAIN
       </button>}
