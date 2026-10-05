@@ -6,6 +6,7 @@ from hashlib import sha256
 
 from app.application.attention import AttentionProjection, read_project_attention
 from app.application.executions import ExecutionEvidenceReader
+from app.application.interaction_summaries import InteractionSummary
 from app.application.parallel_executions import (
     ParallelDevExecutionProjection,
     read_project_parallel_dev_executions,
@@ -71,6 +72,7 @@ class CockpitDevPoolItemSummary:
     slot_state: str
     execution_state: str
     ci_state: str | None
+    interaction: InteractionSummary | None
     watchdog_stale: bool
     watchdog_relaunch_prepared: bool
 
@@ -302,6 +304,7 @@ def _dev_pool_summary(
                 slot_state=item.slot_state.value,
                 execution_state=item.execution.state.value,
                 ci_state=item.execution.ci.state.value if item.execution.ci is not None else None,
+                interaction=item.interaction,
                 watchdog_stale=(
                     item.watchdog.stale_due if item.watchdog is not None else False
                 ),
