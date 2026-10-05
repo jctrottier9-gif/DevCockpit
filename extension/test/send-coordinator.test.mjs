@@ -56,6 +56,8 @@ async function setup({
 
   const calls = [];
   const transitions = [];
+  let routeCalls = 0;
+  let revalidateCalls = 0;
   const remainingPrepareErrors = [...prepareErrors];
   const originalTransition = sendStore.transition.bind(sendStore);
   sendStore.transition = async (command) => {
@@ -70,10 +72,12 @@ async function setup({
     sendStore,
     router: {
       async route() {
+        routeCalls += 1;
         if (routeError) throw new Error(routeError);
         return { kind: "PROVISIONAL", tabId: 7, url: "https://chatgpt.com/" };
       },
       async revalidateTarget() {
+        revalidateCalls += 1;
         return { id: 7, url: "https://chatgpt.com/" };
       },
     },
@@ -98,6 +102,7 @@ async function setup({
     sentPromptStore,
     calls,
     transitions,
+    routingCounts: () => ({ routeCalls, revalidateCalls }),
   };
 }
 
@@ -167,7 +172,13 @@ test("created-tab navigation timeout remains BLOCKED before SEND_ARMED", async (
 });
 
 test("transient missing content script retries before SEND_ARMED and then succeeds", async () => {
-  const { coordinator, sendStore, calls, transitions } = await setup({
+  const {
+    coordinator,
+    sendStore,
+    calls,
+    transitions,
+    routingCounts,
+  } = await setup({
     prepareErrors: [
       "Could not establish connection. Receiving end does not exist.",
     ],
@@ -182,6 +193,10 @@ test("transient missing content script retries before SEND_ARMED and then succee
     "devcockpit_prepare_prompt",
     "devcockpit_commit_prepared_prompt",
   ]);
+  assert.deepEqual(routingCounts(), {
+    routeCalls: 1,
+    revalidateCalls: 3,
+  });
   assert.ok(transitions.includes("WAITING_READY"));
   assert.ok(
     transitions.indexOf("WAITING_READY") <
@@ -361,4 +376,27 @@ test("normal confirmed send automatically schedules the next delivery in the ses
 
   assert.equal((await sendStore.get(SECOND_DELIVERY_ID)).state, "SENT_CONFIRMED");
   assert.equal((await queueStore.list()).length, 0);
+});
+
+test("multiple readiness retries keep exactly one routed target", async () => {
+  const {
+    coordinator,
+    sendStore,
+    routingCounts,
+  } = await setup({
+    prepareErrors: [
+      "Could not establish connection. Receiving end does not exist.",
+      "Could not establish connection. Receiving end does not exist.",
+    ],
+    retryDelaysMs: [0, 0],
+  });
+
+  const result = await coordinator.enqueue(DELIVERY_ID);
+
+  assert.equal(result.state, "SENT_CONFIRMED");
+  assert.deepEqual(routingCounts(), {
+    routeCalls: 1,
+    revalidateCalls: 4,
+  });
+  assert.equal((await sendStore.get(DELIVERY_ID)).state, "SENT_CONFIRMED");
 });
