@@ -267,3 +267,46 @@ test("bound routing recognizes nested project URL for the same conversation id",
   assert.equal(target.tabId, 12);
   assert.equal(created.length, 0);
 });
+
+test("provisional session reuses its dedicated tab after ChatGPT project-shell navigation", async () => {
+  const value = await setup();
+  const first = await value.router.route({
+    session: "RessourcePlanner:DEV:594D",
+    routing: null,
+  });
+  const tab = value.tabs.find((candidate) => candidate.id === first.tabId);
+  tab.url =
+    "https://chatgpt.com/g/g-p-69651c27f7b88191ac2e3eddaeeb7a39-application-planification/project";
+
+  const second = await value.router.route({
+    session: "RessourcePlanner:DEV:594D",
+    routing: null,
+  });
+
+  assert.equal(second.tabId, first.tabId);
+  assert.equal(value.created.length, 1);
+  const revalidated = await value.router.revalidateTarget({
+    session: "RessourcePlanner:DEV:594D",
+    routing: null,
+    tabId: first.tabId,
+  });
+  assert.equal(revalidated.id, first.tabId);
+});
+
+test("provisional matcher accepts project shell but rejects an existing conversation", async () => {
+  const { context } = await setup();
+  const { isProvisionalChatGptUrl } = context.DevCockpitCompanion.routing;
+
+  assert.equal(
+    isProvisionalChatGptUrl(
+      "https://chatgpt.com/g/g-p-project-slug/project",
+    ),
+    true,
+  );
+  assert.equal(
+    isProvisionalChatGptUrl(
+      "https://chatgpt.com/g/g-p-project-slug/c/conv-existing",
+    ),
+    false,
+  );
+});
