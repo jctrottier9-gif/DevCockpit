@@ -35,6 +35,20 @@ KEY | TYPE | STATUS | PARENT | LANE | TITLE
 <!-- /COCKPIT_PIPELINE_V1 -->''', '2026-10-01T12:00:00Z')
 
 
+class ParallelRoadmap:
+    def read(self, project):
+        return RoadmapIssue(
+            project.repository_full_name,
+            1,
+            """<!-- COCKPIT_PIPELINE_V3 -->
+KEY | TYPE | STATUS | PARENT | LANE | TITLE | REPLACES | DEPENDS_ON
+DC-040 | WORK | READY | #1 | MAIN | Main work | - | -
+DC-PAR | WORK | READY | #1 | PARALLEL | Parallel work | - | -
+<!-- /COCKPIT_PIPELINE_V3 -->""",
+            "2026-10-04T20:00:00Z",
+        )
+
+
 class Evidence:
     attempt = 1
     red = False
@@ -91,6 +105,72 @@ def accept(env, h, command=None):
 
 def view(env):
     return read_orchestration(PROJECT, KEY, roadmap_reader=env['roadmap'], evidence_reader=env['evidence'], uow_factory=env['uow'])
+
+
+def test_parallel_dev_handoff_targets_selected_work_item_not_main(env):
+    parallel_key = "DC-PAR"
+
+    roadmap = ParallelRoadmap()
+    parallel_source = source(env, key=parallel_key)
+
+    initial_view = read_orchestration(
+        PROJECT,
+        parallel_key,
+        roadmap_reader=roadmap,
+        evidence_reader=env["evidence"],
+        uow_factory=env["uow"],
+    )
+    assert initial_view["execution_projection"]["work_item"]["key"] == parallel_key
+    assert [item["agent_session"] for item in initial_view["dev_sources"]] == [
+        "DevCockpit:DEV:DC-PAR"
+    ]
+
+    handoff = create_handoff(
+        PROJECT,
+        parallel_key,
+        CreateHandoff(
+            uuid4(),
+            parallel_source.dispatch_id,
+            "Quelle approche parallèle ?",
+            "Contexte parallèle confirmé",
+            "JC",
+        ),
+        roadmap_reader=roadmap,
+        uow_factory=env["uow"],
+    )
+    imported = response(env, handoff.request_dispatch_id)
+    resumed = accept_decision(
+        handoff.handoff_id,
+        AcceptDecision(
+            uuid4(),
+            handoff.version,
+            imported.response_id,
+            "Poursuivre uniquement le DEV parallèle.",
+            DecisionEffect.CONTINUE_IN_SCOPE,
+            "JC",
+        ),
+        project_catalog=ProjectCatalog((PROJECT,)),
+        roadmap_reader=roadmap,
+        evidence_reader=env["evidence"],
+        uow_factory=env["uow"],
+    )
+
+    assert resumed.status == HandoffStatus.RESUME_PREPARED
+    with env["uow"]() as uow:
+        resume = uow.prompt_dispatches.get(resumed.resume_dispatch_id)
+        assert resume.work_item_id == parallel_key
+        assert resume.agent_session == "DevCockpit:DEV:DC-PAR"
+        assert uow.handoffs.list_for_work_item(PROJECT.project_id, KEY) == []
+
+    final_view = read_orchestration(
+        PROJECT,
+        parallel_key,
+        roadmap_reader=roadmap,
+        evidence_reader=env["evidence"],
+        uow_factory=env["uow"],
+    )
+    assert final_view["work_item_id"] == parallel_key
+    assert final_view["execution_projection"]["work_item"]["key"] == parallel_key
 
 
 def test_full_loop_replay_multiple_responses_and_frozen_decision(env):
@@ -373,6 +453,48 @@ def test_upgrade_from_0003_preserves_existing_history(tmp_path):
         assert c.execute(text('PRAGMA foreign_key_check')).all() == []
         assert c.execute(text('SELECT version_num FROM alembic_version')).scalar_one() == '0009_chatgpt_prompt_send'
     engine.dispose()
+
+
+def test_parallel_orchestration_api_reads_and_targets_exact_dev_work_item(env):
+    from fastapi.testclient import TestClient
+    from app.main import create_app
+
+    parallel_key = "DC-PAR"
+    parallel_source = source(env, key=parallel_key)
+    app = create_app(
+        env["settings"],
+        project_catalog=ProjectCatalog((PROJECT,)),
+        roadmap_reader=ParallelRoadmap(),
+        execution_reader=env["evidence"],
+    )
+
+    with TestClient(app) as client:
+        url = f"/api/projects/DevCockpit/work-items/{parallel_key}"
+        view = client.get(url + "/orchestration")
+        assert view.status_code == 200, view.text
+        payload = view.json()
+        assert payload["work_item_id"] == parallel_key
+        assert payload["execution_projection"]["work_item"]["key"] == parallel_key
+        assert [item["agent_session"] for item in payload["dev_sources"]] == [
+            "DevCockpit:DEV:DC-PAR"
+        ]
+
+        created = client.post(
+            url + "/handoffs",
+            json={
+                "creation_command_id": str(uuid4()),
+                "source_dispatch_id": str(parallel_source.dispatch_id),
+                "question": "Question parallèle",
+                "context": "Contexte parallèle",
+                "created_by": "JC",
+            },
+        )
+        assert created.status_code == 200, created.text
+        assert created.json()["work_item_id"] == parallel_key
+
+    with env["uow"]() as uow:
+        assert len(uow.handoffs.list_for_work_item(PROJECT.project_id, parallel_key)) == 1
+        assert uow.handoffs.list_for_work_item(PROJECT.project_id, KEY) == []
 
 
 def test_api_full_flow_and_explicit_validation(env):

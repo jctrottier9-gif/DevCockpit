@@ -65,6 +65,17 @@ class CockpitAttentionSummary:
 
 
 @dataclass(frozen=True, slots=True)
+class CockpitDevPoolItemSummary:
+    work_item_id: str
+    agent_session: str
+    slot_state: str
+    execution_state: str
+    ci_state: str | None
+    watchdog_stale: bool
+    watchdog_relaunch_prepared: bool
+
+
+@dataclass(frozen=True, slots=True)
 class CockpitDevPoolSummary:
     capacity_limit: int | None
     capacity_used: int | None
@@ -73,6 +84,7 @@ class CockpitDevPoolSummary:
     active: int
     waiting_for_capacity: int
     waiting_for_resource_lock: int
+    items: tuple[CockpitDevPoolItemSummary, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +115,7 @@ def _empty_dev_pool() -> CockpitDevPoolSummary:
         active=0,
         waiting_for_capacity=0,
         waiting_for_resource_lock=0,
+        items=(),
     )
 
 
@@ -282,6 +295,22 @@ def _dev_pool_summary(
         active=sum(item.active for item in projection.items),
         waiting_for_capacity=sum(item.waiting_for_capacity for item in projection.items),
         waiting_for_resource_lock=sum(item.waiting_for_resource_lock for item in projection.items),
+        items=tuple(
+            CockpitDevPoolItemSummary(
+                work_item_id=item.scheduler.work_item.key,
+                agent_session=item.agent_session,
+                slot_state=item.slot_state.value,
+                execution_state=item.execution.state.value,
+                ci_state=item.execution.ci.state.value if item.execution.ci is not None else None,
+                watchdog_stale=(
+                    item.watchdog.stale_due if item.watchdog is not None else False
+                ),
+                watchdog_relaunch_prepared=(
+                    item.watchdog.relaunch_prepared if item.watchdog is not None else False
+                ),
+            )
+            for item in projection.items
+        ),
     )
 
 
@@ -293,6 +322,7 @@ def read_project_cockpit_overview(
     uow_factory: UnitOfWorkFactory,
     max_parallel_dev_executions: int,
     companion_connected: bool,
+    dev_stale_after_seconds: float = 3600.0,
     now: datetime | None = None,
 ) -> CockpitOverviewProjection:
     observed_at = now or datetime.now(timezone.utc)
@@ -331,6 +361,7 @@ def read_project_cockpit_overview(
             evidence_reader=evidence_reader,
             uow_factory=uow_factory,
             max_parallel_dev_executions=max_parallel_dev_executions,
+            dev_stale_after_seconds=dev_stale_after_seconds,
             now=observed_at,
         )
     except RoadmapSourceError as exc:

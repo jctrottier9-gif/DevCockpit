@@ -14,6 +14,7 @@ def build_cockpit_router(
     evidence_reader,
     uow_factory,
     max_parallel_dev_executions: int,
+    dev_stale_after_seconds: float,
     companion_connections,
 ):
     router = APIRouter(tags=["cockpit"])
@@ -31,6 +32,7 @@ def build_cockpit_router(
             uow_factory=uow_factory,
             max_parallel_dev_executions=max_parallel_dev_executions,
             companion_connected=companion_connections.has_active_connection,
+            dev_stale_after_seconds=dev_stale_after_seconds,
         )
         return {
             "project": {

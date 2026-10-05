@@ -3,7 +3,10 @@ from dataclasses import asdict, dataclass, replace
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 import json
 
-from app.application.executions import _ci_red_idempotency_key, read_project_execution
+from app.application.executions import (
+    _ci_red_idempotency_key,
+    read_project_execution_for_work_item,
+)
 from app.application.prompt_dispatches import CreatePromptDispatchCommand, create_prompt_dispatch_in_uow
 from app.application.roadmaps import RoadmapSourceError, read_project_roadmap
 from app.domain.execution import ExecutionState
@@ -22,6 +25,7 @@ from app.domain.handoff import (
 )
 from app.domain.prompt_dispatch import PromptDispatchRole, PromptDispatchStatus, build_agent_session
 from app.domain.roadmap import WorkItemType
+from app.domain.scheduler import derive_scheduler_projection
 
 
 @dataclass(frozen=True)
@@ -104,16 +108,24 @@ def _authorized_item(project, work_item_id, roadmap_reader):
         roadmap = read_project_roadmap(project, reader=roadmap_reader)
     except RoadmapSourceError as exc:
         raise OrchestrationConflict("Canonical roadmap unavailable") from exc
-    item = roadmap.pipeline.active_ready_item
-    if (
-        not roadmap.pipeline.valid
-        or item is None
-        or item.key != work_item_id
-        or item.type != WorkItemType.WORK
-    ):
-        raise OrchestrationConflict("WorkItem is not the authorized MAIN work")
-    return roadmap, item
+    if not roadmap.pipeline.valid:
+        raise OrchestrationConflict("Canonical roadmap is invalid")
 
+    scheduler = derive_scheduler_projection(roadmap.pipeline)
+    scheduler_item = next(
+        (candidate for candidate in scheduler.items if candidate.work_item.key == work_item_id),
+        None,
+    )
+    if (
+        scheduler_item is None
+        or not scheduler_item.executable
+        or scheduler_item.work_item.type is not WorkItemType.WORK
+        or scheduler_item.expected_role != PromptDispatchRole.DEV.value
+    ):
+        raise OrchestrationConflict(
+            "WorkItem is not an authorized executable DEV target"
+        )
+    return roadmap, scheduler_item.work_item
 
 def _snapshot(project, roadmap, item, source, *, predecessor=None, context_decision=None):
     return json.dumps(
@@ -402,8 +414,9 @@ def transfer_handoff_to_po(
 
 
 def _current_resume_context(handoff, project, roadmap_reader, evidence_reader):
-    projection = read_project_execution(
+    projection = read_project_execution_for_work_item(
         project,
+        handoff.work_item_id,
         roadmap_reader=roadmap_reader,
         evidence_reader=evidence_reader,
     )
@@ -711,8 +724,9 @@ def _derived_resume_role(handoff):
 
 
 def read_orchestration(project, work_item_id, *, roadmap_reader, evidence_reader, uow_factory):
-    projection = read_project_execution(
+    projection = read_project_execution_for_work_item(
         project,
+        work_item_id,
         roadmap_reader=roadmap_reader,
         evidence_reader=evidence_reader,
     )

@@ -292,6 +292,47 @@ def _parallel_execution_item_payload(
         "waiting_for_capacity": item.waiting_for_capacity,
         "waiting_for_resource_lock": item.waiting_for_resource_lock,
         "inhibition_reason": item.inhibition_reason,
+        "interaction": (
+            {
+                "dispatch_id": item.interaction.dispatch_id,
+                "dispatch_status": item.interaction.dispatch_status,
+                "delivery_id": item.interaction.delivery_id,
+                "delivery_status": item.interaction.delivery_status,
+                "send_state": item.interaction.send_state,
+                "send_attempt_count": item.interaction.send_attempt_count,
+                "send_error_code": item.interaction.send_error_code,
+                "send_confirmed_at": (
+                    item.interaction.send_confirmed_at.isoformat()
+                    if item.interaction.send_confirmed_at is not None
+                    else None
+                ),
+                "imported_response_available": (
+                    item.interaction.imported_response_available
+                ),
+            }
+            if item.interaction is not None
+            else None
+        ),
+        "watchdog": (
+            {
+                "branch_last_activity_at": item.watchdog.branch_last_activity_at,
+                "threshold_seconds": item.watchdog.threshold_seconds,
+                "send_confirmed_at": (
+                    item.watchdog.send_confirmed_at.isoformat()
+                    if item.watchdog.send_confirmed_at is not None
+                    else None
+                ),
+                "deadline_at": (
+                    item.watchdog.deadline_at.isoformat()
+                    if item.watchdog.deadline_at is not None
+                    else None
+                ),
+                "stale_due": item.watchdog.stale_due,
+                "relaunch_prepared": item.watchdog.relaunch_prepared,
+            }
+            if item.watchdog is not None
+            else None
+        ),
         "resource_locks": {
             "required": [
                 {
@@ -499,6 +540,7 @@ def create_app(
         evidence_reader=active_execution_reader,
         uow_factory=uow_factory,
         max_parallel_dev_executions=active_settings.max_parallel_dev_executions,
+        dev_stale_after_seconds=active_settings.dev_stale_after_seconds,
         companion_connections=connection_manager,
     ))
 
@@ -564,6 +606,7 @@ def create_app(
                 evidence_reader=active_execution_reader,
                 uow_factory=uow_factory,
                 max_parallel_dev_executions=active_settings.max_parallel_dev_executions,
+                dev_stale_after_seconds=active_settings.dev_stale_after_seconds,
             )
         except RoadmapSourceError as exc:
             return JSONResponse(
