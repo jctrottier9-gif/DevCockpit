@@ -122,8 +122,54 @@
     return normalized.match(/[\p{L}\p{N}]+/gu) || [];
   }
 
+  function orderedListItemSignatures(sourcePrompt) {
+    const signatures = [];
+    for (const line of normalizeRenderedPromptSource(sourcePrompt).split("\n")) {
+      const match = line.match(/^\s*(\d+)[.)]\s+(.+)$/);
+      if (!match) continue;
+      const contentTokens = lexicalPromptFingerprint(match[2]);
+      if (contentTokens.length < 2) continue;
+      signatures.push({
+        marker: match[1],
+        start: contentTokens.slice(0, Math.min(4, contentTokens.length)),
+      });
+    }
+    return signatures;
+  }
+
+  function tokensMatchAt(tokens, index, expected) {
+    if (index < 0 || index + expected.length > tokens.length) return false;
+    return expected.every((token, offset) => tokens[index + offset] === token);
+  }
+
+  function renderedPromptFingerprint(renderedText, sourcePrompt) {
+    const observed = lexicalPromptFingerprint(renderedText);
+    const signatures = orderedListItemSignatures(sourcePrompt);
+    if (signatures.length === 0) return observed;
+
+    const projected = [];
+    let signatureIndex = 0;
+    for (let index = 0; index < observed.length; index += 1) {
+      const signature = signatures[signatureIndex] || null;
+      if (signature) {
+        if (
+          observed[index] === signature.marker &&
+          tokensMatchAt(observed, index + 1, signature.start)
+        ) {
+          signatureIndex += 1;
+          continue;
+        }
+        if (tokensMatchAt(observed, index, signature.start)) {
+          signatureIndex += 1;
+        }
+      }
+      projected.push(observed[index]);
+    }
+    return projected;
+  }
+
   function sameRenderedPromptText(renderedText, sourcePrompt) {
-    const rendered = lexicalPromptFingerprint(renderedText);
+    const rendered = renderedPromptFingerprint(renderedText, sourcePrompt);
     const source = lexicalPromptFingerprint(sourcePrompt);
     if (rendered.length !== source.length) return false;
     return rendered.every((token, index) => token === source[index]);
@@ -225,7 +271,7 @@
     groups.forEach((group, turnIndex) => {
       for (const element of group) {
         for (const candidate of userTurnTextCandidates(element)) {
-          const observed = lexicalPromptFingerprint(candidate);
+          const observed = renderedPromptFingerprint(candidate, text);
           let prefix = 0;
           const limit = Math.min(expected.length, observed.length);
           while (prefix < limit && expected[prefix] === observed[prefix]) {
@@ -703,6 +749,8 @@
     normalizeRenderedPromptSource,
     renderedPromptComparableText,
     lexicalPromptFingerprint,
+    orderedListItemSignatures,
+    renderedPromptFingerprint,
     sameRenderedPromptText,
     elementsOverlap,
     groupLogicalUserTurns,
