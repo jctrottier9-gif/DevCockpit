@@ -62,6 +62,13 @@
     return isSupportedChatGptUrl(rawUrl) && conversationIdentity(rawUrl) === null;
   }
 
+  function isLegacySyntheticConversationId(value) {
+    if (typeof value !== "string" || !value) return false;
+    let decoded = value;
+    try { decoded = decodeURIComponent(value); } catch {}
+    return decoded.toLowerCase().startsWith("local-chatgpt:");
+  }
+
   function normalizeRouting(routing) {
     if (
       !routing ||
@@ -76,6 +83,9 @@
     }
     if (routing.state === "INVALIDATED") {
       throw new RoutingError("binding_invalidated");
+    }
+    if (isLegacySyntheticConversationId(routing.conversation_id)) {
+      throw new RoutingError("legacy_synthetic_binding_unrecoverable");
     }
     const identity = conversationIdentity(routing.canonical_url);
     if (!identity || identity.conversationId !== routing.conversation_id) {
@@ -199,6 +209,7 @@
       const tabs = await this._tabs();
       const matches = tabs.filter((tab) => tabIdentityMatches(tab, routing));
       let target = null;
+      let cachedTransient = null;
       if (
         cached?.kind === ROUTING_KIND.BOUND &&
         Number.isInteger(cached.tab_id)
@@ -216,16 +227,17 @@
               ].join(","),
             );
           }
-          if (
-            tabIdentityMatches(cachedTab, routing) ||
+          if (tabIdentityMatches(cachedTab, routing)) {
+            target = cachedTab;
+          } else if (
             cachedTab.url === "about:blank" ||
             isSupportedChatGptUrl(cachedTab.url)
           ) {
-            target = cachedTab;
+            cachedTransient = cachedTab;
           }
         }
       }
-      target ||= matches[0] || null;
+      target ||= matches[0] || cachedTransient || null;
 
       if (!target) {
         const created = await this.createTab({
@@ -381,6 +393,7 @@
     isNewChatUrl,
     conversationIdentity,
     isProvisionalChatGptUrl,
+    isLegacySyntheticConversationId,
     ConversationRouter,
   };
 })();
