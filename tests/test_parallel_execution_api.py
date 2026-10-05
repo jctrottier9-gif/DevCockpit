@@ -111,10 +111,15 @@ def test_parallel_execution_api_exposes_capacity_and_is_idempotent(tmp_path):
         for item in second_payload["executions"]
         if item["active"]
     }
+    assert active["A"]["interaction"]["project_id"] == "DevCockpit"
+    assert active["A"]["interaction"]["work_item_id"] == "A"
+    assert active["A"]["interaction"]["agent_session"] == "DevCockpit:DEV:A"
     assert active["A"]["interaction"]["dispatch_status"] == "PREPARED"
     assert active["A"]["interaction"]["delivery_status"] is None
+    assert active["A"]["interaction"]["state"] == "PROMPT_PREPARED"
     assert active["A"]["interaction"]["send_state"] is None
     assert active["A"]["interaction"]["imported_response_available"] is False
+    assert active["A"]["interaction"]["imported_response_count"] == 0
     assert active["B"]["interaction"]["dispatch_status"] == "PREPARED"
 
 
