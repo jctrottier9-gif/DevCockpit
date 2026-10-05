@@ -6,6 +6,14 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
 from app.application.cockpit import read_project_cockpit_overview
+from app.application.cockpit_panels import (
+    ArchitectureAdrNotReferencedError,
+    ArchitectureDocumentError,
+    read_architecture_adr_detail,
+    read_project_architecture_panel,
+    read_project_review_panel,
+)
+from app.application.executions import ExecutionSourceError
 from app.application.roadmap_explorer import (
     RoadmapExplorerIssueError,
     RoadmapExplorerIssueNotFoundError,
@@ -22,6 +30,8 @@ def build_cockpit_router(
     roadmap_reader,
     evidence_reader,
     issue_reader,
+    architecture_document_reader,
+    review_reader,
     uow_factory,
     max_parallel_dev_executions: int,
     dev_stale_after_seconds: float,
@@ -150,5 +160,132 @@ def build_cockpit_router(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return asdict(detail)
+
+    @router.get("/api/projects/{project_id}/architecture-panel")
+    def read_architecture_panel(project_id: str):
+        active_project = project(project_id)
+        try:
+            projection = read_project_architecture_panel(
+                active_project,
+                roadmap_reader=roadmap_reader,
+                issue_reader=issue_reader,
+                document_reader=architecture_document_reader,
+                uow_factory=uow_factory,
+            )
+        except RoadmapSourceError as exc:
+            return JSONResponse(
+                status_code=502,
+                content={
+                    "project": {
+                        "project_id": active_project.project_id,
+                        "repository_full_name": active_project.repository_full_name,
+                        "roadmap_issue_number": active_project.roadmap_issue_number,
+                    },
+                    "source": {"status": "unavailable", "code": exc.code},
+                    "gates": [],
+                    "diagnostics": [],
+                },
+            )
+
+        return {
+            "project": {
+                "project_id": active_project.project_id,
+                "repository_full_name": active_project.repository_full_name,
+                "roadmap_issue_number": active_project.roadmap_issue_number,
+            },
+            "observed_at": projection.observed_at.isoformat(),
+            "source": {
+                "status": "available",
+                "updated_at": projection.roadmap_updated_at,
+                "revision": projection.revision,
+            },
+            "gates": [asdict(item) for item in projection.gates],
+            "diagnostics": [asdict(item) for item in projection.diagnostics],
+        }
+
+    @router.get(
+        "/api/projects/{project_id}/architecture-panel/gates/{work_item_id}/adrs/{adr_id}"
+    )
+    def read_architecture_adr(
+        project_id: str,
+        work_item_id: str,
+        adr_id: str,
+    ):
+        active_project = project(project_id)
+        try:
+            detail = read_architecture_adr_detail(
+                active_project,
+                work_item_id,
+                adr_id,
+                roadmap_reader=roadmap_reader,
+                issue_reader=issue_reader,
+                document_reader=architecture_document_reader,
+                uow_factory=uow_factory,
+            )
+        except ArchitectureAdrNotReferencedError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": exc.code,
+                    "message": "ADR is not explicitly referenced by this gate.",
+                },
+            ) from exc
+        except ArchitectureDocumentError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail={"code": exc.code, "message": str(exc)},
+            ) from exc
+        except RoadmapSourceError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail={"code": exc.code, "message": str(exc)},
+            ) from exc
+        return {
+            "reference": asdict(detail.reference),
+            "content": detail.content,
+        }
+
+    @router.get("/api/projects/{project_id}/review-panel")
+    def read_review_panel(project_id: str):
+        active_project = project(project_id)
+        try:
+            projection = read_project_review_panel(
+                active_project,
+                roadmap_reader=roadmap_reader,
+                review_reader=review_reader,
+            )
+        except (RoadmapSourceError, ExecutionSourceError) as exc:
+            code = getattr(exc, "code", "GITHUB_UNAVAILABLE")
+            return JSONResponse(
+                status_code=502,
+                content={
+                    "project": {
+                        "project_id": active_project.project_id,
+                        "repository_full_name": active_project.repository_full_name,
+                        "roadmap_issue_number": active_project.roadmap_issue_number,
+                    },
+                    "source": {"status": "unavailable", "code": code},
+                    "complete": False,
+                    "pull_requests": [],
+                    "diagnostics": [],
+                },
+            )
+
+        return {
+            "project": {
+                "project_id": active_project.project_id,
+                "repository_full_name": active_project.repository_full_name,
+                "roadmap_issue_number": active_project.roadmap_issue_number,
+            },
+            "observed_at": projection.observed_at.isoformat(),
+            "source": {
+                "status": "available",
+                "updated_at": projection.roadmap_updated_at,
+                "revision": projection.revision,
+            },
+            "complete": projection.complete,
+            "pull_requests": [asdict(item) for item in projection.pull_requests],
+            "diagnostics": [asdict(item) for item in projection.diagnostics],
+        }
 
     return router

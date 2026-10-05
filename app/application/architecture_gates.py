@@ -77,7 +77,10 @@ def authorize_architecture_gate(
             work_item_id=work_item.key,
             role=PromptDispatchRole.ARCH,
             prompt_text=build_architecture_gate_prompt(project, work_item),
-            idempotency_key=_authorization_idempotency_key(project, work_item),
+            idempotency_key=architecture_gate_authorization_idempotency_key(
+                project,
+                work_item.key,
+            ),
         ),
         uow_factory=uow_factory,
     )
@@ -121,8 +124,13 @@ Produis les constats architecturaux, les contraintes, les décisions ou options 
 """
 
 
-def _authorization_idempotency_key(project: Project, work_item: WorkItem) -> str:
-    raw = f"architecture-gate:{project.project_id}:{work_item.key}:ARCH:HUMAN_AUTHORIZED:v1"
+def architecture_gate_authorization_idempotency_key(
+    project: Project,
+    work_item_id: str,
+) -> str:
+    """Stable identity for the dispatch created by explicit gate authorization."""
+
+    raw = f"architecture-gate:{project.project_id}:{work_item_id}:ARCH:HUMAN_AUTHORIZED:v1"
     if len(raw) <= 200:
         return raw
     return f"architecture-gate:{sha256(raw.encode('utf-8')).hexdigest()}:v1"
