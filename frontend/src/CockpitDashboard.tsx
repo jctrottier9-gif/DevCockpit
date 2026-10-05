@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
+import ArchitecturePanel from './ArchitecturePanel'
 import ContextDrawer from './ContextDrawer'
 import DevPool from './DevPool'
 import RoadmapExplorer from './RoadmapExplorer'
+import ReviewPanel from './ReviewPanel'
 import type {
   CockpitHorizonItem,
   CockpitOverview,
@@ -244,7 +246,9 @@ export default function CockpitDashboard({
         projectId={projectId}
         initialWorkItemId={selectedRole.primary_work_item_id}
       />}
-      {selectedRole.primary_work_item_id === overview.horizons.now?.key && <button type="button" onClick={() => { setDrawer(null); onOpenWorkItem(selectedRole.primary_work_item_id!) }}>
+      {selectedRole.role === 'ARCH' && <ArchitecturePanel projectId={projectId} />}
+      {selectedRole.role === 'REVIEWER' && <ReviewPanel projectId={projectId} />}
+      {selectedRole.role === 'PO' && selectedRole.primary_work_item_id === overview.horizons.now?.key && <button type="button" onClick={() => { setDrawer(null); onOpenWorkItem(selectedRole.primary_work_item_id!) }}>
         Ouvrir l’Orchestration MAIN
       </button>}
       <button
