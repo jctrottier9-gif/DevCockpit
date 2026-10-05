@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import InteractionStatus from './InteractionStatus'
 import type { ParallelExecutionItem, ParallelExecutionsResponse } from './dashboardTypes'
 
 const actionLabels: Record<string, string> = {
@@ -22,13 +23,6 @@ function executionWaitingLabel(item: ParallelExecutionItem) {
   if (item.waiting_for_resource_lock) return 'Attente ResourceLock'
   if (item.inhibition_reason) return 'Inhibé · ' + item.inhibition_reason
   return 'Sélectionné'
-}
-
-function interactionLabel(item: ParallelExecutionItem) {
-  if (!item.interaction) return 'Aucun prompt DEV observé'
-  if (item.interaction.send_state) return item.interaction.send_state
-  if (item.interaction.delivery_status) return 'Firefox · ' + item.interaction.delivery_status
-  return 'Prompt · ' + (item.interaction.dispatch_status ?? 'observé')
 }
 
 function DevExecutionCard({
@@ -74,10 +68,10 @@ function DevExecutionCard({
         </dd>
       </div>
       <div><dt>CI</dt><dd>{item.ci?.state ?? 'non observée'}</dd></div>
-      <div><dt>Interaction</dt><dd>{interactionLabel(item)}</dd></div>
+      <div><dt>Interaction</dt><dd><InteractionStatus interaction={item.interaction} compact /></dd></div>
       <div>
         <dt>Réponse importée</dt>
-        <dd>{item.interaction?.imported_response_available ? 'Disponible' : 'Aucune'}</dd>
+        <dd>{item.interaction?.imported_response_available ? 'Disponible' : 'Aucune réponse importée'}</dd>
       </div>
     </dl>
 
