@@ -526,3 +526,21 @@ test("legacy synthetic routing fails explicitly before opening a tab when unrepa
   );
   assert.equal(value.created.length, 0);
 });
+
+
+test("manual target validation accepts only the explicitly selected ChatGPT tab", async () => {
+  const value = await setup({
+    initialTabs: [
+      { id: 42, url: "https://chatgpt.com/" },
+      { id: 43, url: "https://example.com/" },
+    ],
+  });
+
+  const selected = await value.router.revalidateManualTarget({ tabId: 42 });
+  assert.equal(selected.id, 42);
+
+  await assert.rejects(
+    () => value.router.revalidateManualTarget({ tabId: 43 }),
+    (error) => error?.code === "manual_target_not_chatgpt",
+  );
+});
