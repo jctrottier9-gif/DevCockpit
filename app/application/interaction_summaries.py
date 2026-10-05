@@ -80,12 +80,17 @@ def read_interaction_summary(dispatch: PromptDispatch, *, uow) -> InteractionSum
         and delivery is not None
         and delivery.is_acknowledged
     )
-    automatic_resend_allowed = state not in {
-        "SEND_ARMED",
-        "SENT_CONFIRMED",
-        "AMBIGUOUS",
-        RESPONSE_IMPORTED,
-    }
+    automatic_resend_allowed = (
+        dispatch.role is not PromptDispatchRole.ARCH
+        and state
+        in {
+            FIREFOX_ACKNOWLEDGED,
+            "QUEUED",
+            "ROUTING",
+            "WAITING_READY",
+            "RETRYABLE_FAILURE",
+        }
+    )
 
     latest_response = max(
         (response.imported_at for response in responses),
