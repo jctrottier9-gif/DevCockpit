@@ -12,6 +12,12 @@
     "content_script_unavailable",
   ]);
 
+  function isArchitectureSession(session) {
+    if (typeof session !== "string") return false;
+    const parts = session.split(":");
+    return parts.length === 3 && parts[1] === "ARCH" && parts[0] !== "" && parts[2] !== "";
+  }
+
   function errorText(error) {
     return error instanceof Error ? error.message : String(error);
   }
@@ -134,7 +140,7 @@
       return false;
     }
 
-    enqueue(deliveryId) {
+    enqueue(deliveryId, { manualTabId = null } = {}) {
       const existingWorker = this.deliveryWorkers.get(deliveryId);
       if (existingWorker) return existingWorker;
 
@@ -150,7 +156,10 @@
         }
 
         const prior = this.sessionChains.get(entry.session) || Promise.resolve();
-        const run = prior.then(() => this._run(entry), () => this._run(entry));
+        const run = prior.then(
+          () => this._run(entry, { manualTabId }),
+          () => this._run(entry, { manualTabId }),
+        );
         this.sessionChains.set(
           entry.session,
           run.then(() => undefined, () => undefined),
@@ -175,6 +184,9 @@
     async resumeSession(session) {
       if (typeof session !== "string" || session.trim() === "") {
         return { ok: false, error: "invalid_session" };
+      }
+      if (isArchitectureSession(session)) {
+        return { ok: false, state: SEND_STATE.QUEUED, error: "manual_arch_required" };
       }
       const queue = await this.queueStore.list();
       const entries = queue.filter((entry) => entry.session === session);
@@ -208,9 +220,12 @@
       return { ok: true, state: "EMPTY" };
     }
 
-    async _run(entry) {
+    async _run(entry, { manualTabId = null } = {}) {
       const existing = await this.sendStore.get(entry.delivery_id);
       if (!existing) return { ok: false, error: "chatgpt_send_not_found" };
+      if (isArchitectureSession(entry.session) && !Number.isInteger(manualTabId)) {
+        return { ok: false, state: SEND_STATE.QUEUED, error: "manual_arch_required" };
+      }
       if (
         [SEND_STATE.SEND_ARMED, SEND_STATE.SENT_CONFIRMED, SEND_STATE.AMBIGUOUS].includes(
           existing.state,
@@ -249,17 +264,24 @@
         );
 
         try {
-          if (!target) {
-            target = await this.router.route({
+          if (Number.isInteger(manualTabId)) {
+            target ||= { tabId: manualTabId };
+            tab = await this.router.revalidateManualTarget({
+              tabId: manualTabId,
+            });
+          } else {
+            if (!target) {
+              target = await this.router.route({
+                session: entry.session,
+                routing: entry.routing,
+              });
+            }
+            tab = await this.router.revalidateTarget({
               session: entry.session,
               routing: entry.routing,
+              tabId: target.tabId,
             });
           }
-          tab = await this.router.revalidateTarget({
-            session: entry.session,
-            routing: entry.routing,
-            tabId: target.tabId,
-          });
           prepared = await this.sendToTab(tab.id, {
             type: "devcockpit_prepare_prompt",
             text: entry.text,
@@ -308,11 +330,13 @@
       }
 
       try {
-        tab = await this.router.revalidateTarget({
-          session: entry.session,
-          routing: entry.routing,
-          tabId: target.tabId,
-        });
+        tab = Number.isInteger(manualTabId)
+          ? await this.router.revalidateManualTarget({ tabId: manualTabId })
+          : await this.router.revalidateTarget({
+              session: entry.session,
+              routing: entry.routing,
+              tabId: target.tabId,
+            });
       } catch (error) {
         const code = errorText(error);
         await this._emit(
@@ -414,6 +438,7 @@
   namespace.send = {
     DEFAULT_RETRY_DELAYS_MS,
     preSendErrorCode,
+    isArchitectureSession,
     isLegacySyntheticConversationId,
     isLegacySyntheticRouting,
     routingFromActiveConversation,
