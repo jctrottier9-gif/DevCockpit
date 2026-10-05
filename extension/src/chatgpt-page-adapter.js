@@ -204,6 +204,25 @@
     );
   }
 
+  function expandCollapsedUserTurns(groups) {
+    let clicked = false;
+    const labels = new Set(["show more", "afficher plus", "voir plus"]);
+    for (const group of groups) {
+      for (const element of group) {
+        if (typeof element?.querySelectorAll !== "function") continue;
+        for (const control of element.querySelectorAll('button, [role="button"]')) {
+          const label = comparableText(
+            control.getAttribute?.("aria-label") || elementText(control),
+          ).toLocaleLowerCase("fr-CA");
+          if (!labels.has(label)) continue;
+          control.click?.();
+          clicked = true;
+        }
+      }
+    }
+    return clicked;
+  }
+
   function elementText(element) {
     if (!element) return "";
     if (element.tagName === "TEXTAREA") return normalizedText(element.value);
@@ -471,18 +490,30 @@
       return this.commitPreparedPrompt(text, prepared.baseline);
     }
 
-    inspectPromptDelivery(text) {
+    async inspectPromptDelivery(text) {
       if (typeof text !== "string" || text.trim() === "") {
         return { ok: false, error: "prompt_empty" };
       }
-      const rawUserMessages = uniqueMatches(
+      let rawUserMessages = uniqueMatches(
         this.document,
         USER_MESSAGE_SELECTORS,
       ).filter((element) => visibleElement(this.document, element));
-      const userTurns = groupLogicalUserTurns(this.document);
-      const matchingTurns = userTurns.filter((group) =>
+      let userTurns = groupLogicalUserTurns(this.document);
+      let matchingTurns = userTurns.filter((group) =>
         userTurnMatchesText(group, text),
       );
+
+      if (matchingTurns.length === 0 && expandCollapsedUserTurns(userTurns)) {
+        await this.sleep(100);
+        rawUserMessages = uniqueMatches(
+          this.document,
+          USER_MESSAGE_SELECTORS,
+        ).filter((element) => visibleElement(this.document, element));
+        userTurns = groupLogicalUserTurns(this.document);
+        matchingTurns = userTurns.filter((group) =>
+          userTurnMatchesText(group, text),
+        );
+      }
 
       let composerMatches = false;
       try {
@@ -569,6 +600,7 @@
     authoredNodeText,
     userTurnTextCandidates,
     userTurnMatchesText,
+    expandCollapsedUserTurns,
     LOGIN_SELECTORS,
     USER_MESSAGE_SELECTORS,
     USER_MESSAGE_SELECTOR,
