@@ -43,6 +43,22 @@
     );
   }
 
+  function routingFromActiveConversation(legacyRouting, rawUrl) {
+    if (!isLegacySyntheticRouting(legacyRouting)) return null;
+    const conversation = canonicalConversation(rawUrl);
+    if (
+      !conversation ||
+      isLegacySyntheticConversationId(conversation.conversation_id)
+    ) {
+      return null;
+    }
+    return {
+      binding_version: legacyRouting.binding_version,
+      conversation_id: conversation.conversation_id,
+      canonical_url: conversation.canonical_url,
+    };
+  }
+
   function canonicalConversation(rawUrl) {
     if (typeof rawUrl !== "string" || !rawUrl) return null;
     try {
@@ -400,6 +416,7 @@
     preSendErrorCode,
     isLegacySyntheticConversationId,
     isLegacySyntheticRouting,
+    routingFromActiveConversation,
     canonicalConversation,
     PromptSendCoordinator,
   };

@@ -13,6 +13,7 @@
     canonicalConversation,
     isLegacySyntheticConversationId,
     isLegacySyntheticRouting,
+    routingFromActiveConversation,
   } = namespace.send;
   const { buildChatGptResponseMessage, ProtocolError } = namespace.protocol;
 
@@ -177,6 +178,31 @@
       throw new Error("Ouvrez la conversation ChatGPT cible dans l'onglet actif");
     }
     return tab;
+  }
+
+  async function adoptActiveConversationForLegacy(deliveryId) {
+    const queue = await queueStore.list();
+    const entry = queue.find((candidate) => candidate.delivery_id === deliveryId);
+    if (!entry) {
+      throw new Error("delivery_not_found:" + deliveryId);
+    }
+    if (!isLegacySyntheticRouting(entry.routing)) {
+      return entry;
+    }
+
+    const tab = await activeChatGptTab();
+    const repaired = routingFromActiveConversation(entry.routing, tab.url);
+    if (!repaired) {
+      throw new Error("legacy_binding_requires_active_conversation");
+    }
+
+    const updated = await queueStore.repairLegacyRouting(deliveryId, repaired);
+    await routingStore.setBound({
+      session: entry.session,
+      routing: repaired,
+      tabId: tab.id,
+    });
+    return updated;
   }
 
   async function listResponseCandidates(deliveryId) {
@@ -363,10 +389,18 @@
       message?.type === "devcockpit_retry_chatgpt_send" &&
       typeof message.deliveryId === "string"
     ) {
-      await sendStore.retryBlocked(message.deliveryId);
-      const result = await sendCoordinator.enqueue(message.deliveryId);
-      await broadcast("devcockpit_send_state_changed");
-      return result;
+      try {
+        await adoptActiveConversationForLegacy(message.deliveryId);
+        await sendStore.retryBlocked(message.deliveryId);
+        const result = await sendCoordinator.enqueue(message.deliveryId);
+        await broadcast("devcockpit_send_state_changed");
+        return result;
+      } catch (error) {
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
     }
 
     if (
