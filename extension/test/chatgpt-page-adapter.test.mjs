@@ -894,3 +894,147 @@ test("already-expanded native collapsible toggle is not clicked again", async ()
 
   assert.equal(isShowMoreControl(toggle, root), false);
 });
+
+
+test("escaped roadmap reconciliation source matches its rendered ChatGPT text", async () => {
+  const context = await loadClassicScripts(
+    ["src/chatgpt-page-adapter.js"],
+    { InputEvent: FakeEvent, Event: FakeEvent },
+  );
+  const {
+    normalizeRenderedPromptSource,
+    sameRenderedPromptText,
+    lexicalPromptFingerprint,
+  } = context.DevCockpitCompanion.chatgpt;
+
+  const escapedSource = [
+    "La livraison GitHub de DC-070B est fusionnée et les validations requises sont vertes.\\",
+    "",
+    "GitHub : https\\://github.com/jctrottier9-gif/DevCockpit/pull/79\\",
+    "1\\. Synchronise-toi avec le vrai main actuel.\\",
+    "5\\. Mets directement à jour le roadmap GitHub :\\",
+    "&#x20;  \\- marque DC-070B DONE;\\",
+    "&#32;  \\- promeus uniquement le vrai prochain WorkItem autorisé à READY.\\",
+  ].join("\n");
+
+  const rendered = [
+    "La livraison GitHub de DC-070B est fusionnée et les validations requises sont vertes.",
+    "",
+    "GitHub : https://github.com/jctrottier9-gif/DevCockpit/pull/79",
+    "1. Synchronise-toi avec le vrai main actuel.",
+    "5. Mets directement à jour le roadmap GitHub :",
+    "   - marque DC-070B DONE;",
+    "   - promeus uniquement le vrai prochain WorkItem autorisé à READY.",
+  ].join("\n");
+
+  assert.equal(
+    normalizeRenderedPromptSource(escapedSource).includes("&#x20;"),
+    false,
+  );
+  assert.equal(sameRenderedPromptText(rendered, escapedSource), true);
+  assert.deepEqual(
+    Array.from(lexicalPromptFingerprint(rendered)),
+    Array.from(lexicalPromptFingerprint(escapedSource)),
+  );
+});
+
+test("two logical user turns resolve the escaped DC-070B reconciliation against the second turn", async () => {
+  const escapedSource = [
+    "La livraison GitHub de DC-070B est fusionnée et les validations requises sont vertes.\\",
+    "Repository : jctrottier9-gif/DevCockpit\\",
+    "WorkItem : DC-070B — DEV Pool parallèle et cartes exécution\\",
+    "PR : #79\\",
+    "GitHub : https\\://github.com/jctrottier9-gif/DevCockpit/pull/79\\",
+    "Head SHA livré : d18edce91f7ae986f2a7adec98e9c1abeecb6575\\",
+    "État observé : ROADMAP_UPDATE_REQUIRED\\",
+    "1\\. Synchronise-toi avec le vrai main actuel.\\",
+    "5\\. Mets directement à jour le roadmap GitHub :\\",
+    "&#x20;  \\- marque DC-070B DONE;\\",
+    "&#x20;  \\- garde les étapes ultérieures BLOCKED.\\",
+    "8\\. Après l'édition, relis le roadmap GitHub.\\",
+  ].join("\n");
+
+  const rendered = [
+    "La livraison GitHub de DC-070B est fusionnée et les validations requises sont vertes.",
+    "Repository : jctrottier9-gif/DevCockpit",
+    "WorkItem : DC-070B — DEV Pool parallèle et cartes exécution",
+    "PR : #79",
+    "GitHub : https://github.com/jctrottier9-gif/DevCockpit/pull/79",
+    "Head SHA livré : d18edce91f7ae986f2a7adec98e9c1abeecb6575",
+    "État observé : ROADMAP_UPDATE_REQUIRED",
+    "1. Synchronise-toi avec le vrai main actuel.",
+    "5. Mets directement à jour le roadmap GitHub :",
+    "   - marque DC-070B DONE;",
+    "   - garde les étapes ultérieures BLOCKED.",
+    "8. Après l'édition, relis le roadmap GitHub.",
+  ].join("\n");
+
+  const composer = new FakeElement({
+    attributes: { contenteditable: "true", role: "textbox" },
+    text: "",
+  });
+  const firstOuter = new FakeElement({
+    text: "Tu travailles sur le dépôt GitHub jctrottier9-gif/DevCockpit. Prends en charge DC-070B.",
+  });
+  const firstInner = new FakeElement({ text: firstOuter.textContent });
+  firstOuter.children.add(firstInner);
+
+  const secondOuter = new FakeElement({ text: rendered });
+  const secondInner = new FakeElement({ text: rendered });
+  secondOuter.children.add(secondInner);
+
+  const { adapter } = await adapterFor(new Map([
+    ['#prompt-textarea', [composer]],
+    ['[data-message-author-role="user"]', [firstOuter, secondOuter]],
+    ['[data-user-message-bubble]', [firstInner, secondInner]],
+  ]));
+  adapter.location = { href: "https://chatgpt.com/c/dc070b-multiturn" };
+
+  const result = await adapter.inspectPromptDelivery(escapedSource);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.state, "SENT");
+  assert.equal(
+    result.conversationUrl,
+    "https://chatgpt.com/c/dc070b-multiturn",
+  );
+});
+
+test("multi-turn reconciliation diagnostics identify the best turn without fuzzy matching", async () => {
+  const source = [
+    "La livraison GitHub de DC-070B est fusionnée.",
+    "Repository : jctrottier9-gif/DevCockpit",
+    "WorkItem : DC-070B",
+    "1. Synchronise-toi avec le vrai main actuel.",
+    "5. marque DC-070B DONE;",
+  ].join("\n");
+  const wrongSecond = source.replace(
+    "5. marque DC-070B DONE;",
+    "5. marque DC-070B BLOCKED;",
+  );
+
+  const composer = new FakeElement({
+    attributes: { contenteditable: "true", role: "textbox" },
+    text: "",
+  });
+  const firstOuter = new FakeElement({ text: "Ancien prompt sans rapport." });
+  const firstInner = new FakeElement({ text: "Ancien prompt sans rapport." });
+  firstOuter.children.add(firstInner);
+  const secondOuter = new FakeElement({ text: wrongSecond });
+  const secondInner = new FakeElement({ text: wrongSecond });
+  secondOuter.children.add(secondInner);
+
+  const { adapter } = await adapterFor(new Map([
+    ['#prompt-textarea', [composer]],
+    ['[data-message-author-role="user"]', [firstOuter, secondOuter]],
+    ['[data-user-message-bubble]', [firstInner, secondInner]],
+  ]));
+
+  const result = await adapter.inspectPromptDelivery(source);
+
+  assert.equal(result.ok, false);
+  assert.match(result.error, /logical=2,matching=0/);
+  assert.match(result.error, /best_turn=2/);
+  assert.match(result.error, /expected=done/);
+  assert.match(result.error, /observed=blocked/);
+});
