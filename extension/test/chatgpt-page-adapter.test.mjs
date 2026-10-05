@@ -29,6 +29,7 @@ class FakeElement {
     this.events = [];
     this.children = new Set();
     this.selectorMap = new Map();
+    this.closestMap = new Map();
   }
   get textContent() { return this._text; }
   set textContent(value) { this._text = value; }
@@ -45,6 +46,7 @@ class FakeElement {
   click() { this.clicked = true; }
   contains(other) { return this.children.has(other); }
   querySelectorAll(selector) { return this.selectorMap.get(selector) || []; }
+  closest(selector) { return this.closestMap.get(selector) || null; }
 }
 
 class FakeDocument {
@@ -733,4 +735,35 @@ test("collapsed prompt inspection does not click unrelated user-turn controls", 
   assert.equal(edit.clicked, false);
   assert.equal(result.ok, false);
   assert.match(result.error, /matching=0/);
+});
+
+
+test("collapsed inspection finds Show more in the surrounding conversation turn", async () => {
+  const source = "Alpha beta gamma delta epsilon";
+  const composer = new FakeElement({
+    attributes: { contenteditable: "true", role: "textbox" },
+    text: "",
+  });
+  const user = new FakeElement({ text: "Alpha beta" });
+  const turn = new FakeElement();
+  const showMore = new FakeElement({ tagName: "BUTTON", text: "Show more" });
+  showMore.click = () => {
+    showMore.clicked = true;
+    user.textContent = source;
+  };
+  turn.selectorMap.set('button, [role="button"]', [showMore]);
+  user.closestMap.set('[data-testid^="conversation-turn-"]', turn);
+
+  const { adapter } = await adapterFor(new Map([
+    ['#prompt-textarea', [composer]],
+    ['[data-message-author-role="user"]', [user]],
+  ]));
+  adapter.location = { href: "https://chatgpt.com/c/turn-expand" };
+  adapter.sleep = async () => {};
+
+  const result = await adapter.inspectPromptDelivery(source);
+
+  assert.equal(showMore.clicked, true);
+  assert.equal(result.ok, true);
+  assert.equal(result.state, "SENT");
 });
