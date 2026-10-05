@@ -214,10 +214,12 @@
         );
 
         try {
-          target = await this.router.route({
-            session: entry.session,
-            routing: entry.routing,
-          });
+          if (!target) {
+            target = await this.router.route({
+              session: entry.session,
+              routing: entry.routing,
+            });
+          }
           tab = await this.router.revalidateTarget({
             session: entry.session,
             routing: entry.routing,
