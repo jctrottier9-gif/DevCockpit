@@ -189,3 +189,87 @@ def test_review_reader_uses_current_head_and_exact_workflow_attempt_jobs():
         path.endswith("/actions/runs/100/attempts/2/jobs")
         for path, _ in seen
     )
+
+
+
+def test_review_reader_retries_when_workflow_attempt_changes_during_read():
+    run_calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal run_calls
+        path = request.url.path
+        if path == "/repos/jctrottier9-gif/DevCockpit/pulls":
+            return httpx.Response(200, json=[pull(10, "MAIN-A", "stable-head")])
+        if path == "/repos/jctrottier9-gif/DevCockpit/pulls/10":
+            return httpx.Response(
+                200,
+                json=pull(10, "MAIN-A", "stable-head", mergeable=True),
+            )
+        if path == "/repos/jctrottier9-gif/DevCockpit/actions/runs":
+            run_calls += 1
+            attempt = 1 if run_calls == 1 else 2
+            return httpx.Response(
+                200,
+                json={
+                    "total_count": 1,
+                    "workflow_runs": [
+                        {
+                            "id": 300,
+                            "name": "CI",
+                            "status": "completed",
+                            "conclusion": "success",
+                            "run_attempt": attempt,
+                            "head_sha": "stable-head",
+                            "html_url": "https://github.example/actions/300",
+                        }
+                    ],
+                },
+            )
+        if path == "/repos/jctrottier9-gif/DevCockpit/actions/runs/300/attempts/1/jobs":
+            return httpx.Response(
+                200,
+                json={
+                    "total_count": 1,
+                    "jobs": [
+                        {
+                            "id": 31,
+                            "name": "backend",
+                            "status": "completed",
+                            "conclusion": "success",
+                            "html_url": "https://github.example/jobs/31",
+                            "started_at": None,
+                            "completed_at": None,
+                        }
+                    ],
+                },
+            )
+        if path == "/repos/jctrottier9-gif/DevCockpit/actions/runs/300/attempts/2/jobs":
+            return httpx.Response(
+                200,
+                json={
+                    "total_count": 1,
+                    "jobs": [
+                        {
+                            "id": 32,
+                            "name": "backend",
+                            "status": "completed",
+                            "conclusion": "success",
+                            "html_url": "https://github.example/jobs/32",
+                            "started_at": None,
+                            "completed_at": None,
+                        }
+                    ],
+                },
+            )
+        raise AssertionError(f"unexpected GitHub request: {request.url}")
+
+    reader = GitHubReviewReader(transport=httpx.MockTransport(handler))
+    evidence = reader.read(PROJECT, (MAIN,))
+
+    assert evidence.complete is True
+    assert len(evidence.pull_requests) == 1
+    workflow = evidence.pull_requests[0].workflows[0]
+    assert workflow.head_sha == "stable-head"
+    assert workflow.attempt == 2
+    assert workflow.jobs[0].job_id == 32
+    assert run_calls == 4
