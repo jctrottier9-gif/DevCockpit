@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import StrEnum
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 from uuid import UUID, uuid4
 
 
@@ -48,6 +48,16 @@ def _validate_conversation_id(value: str) -> str:
     ):
         raise ConversationBindingError("conversation_id must be a non-empty opaque path segment")
     return value
+
+
+def is_legacy_synthetic_conversation_id(value: str | None) -> bool:
+    if not isinstance(value, str) or not value:
+        return False
+    try:
+        decoded = unquote(value)
+    except (TypeError, ValueError):
+        decoded = value
+    return decoded.lower().startswith("local-chatgpt:")
 
 
 def normalize_chatgpt_conversation_url(
