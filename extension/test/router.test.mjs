@@ -6,6 +6,8 @@ async function setup({
   initialTabs = [],
   createdTabInitialUrl = null,
   navigateCreatedTabTo = null,
+  onSleep = null,
+  pollDelaysMs = [0],
 } = {}) {
   const storage = createMemoryStorage();
   const context = await loadClassicScripts([
@@ -33,13 +35,17 @@ async function setup({
       return { ...tab };
     },
     sleep: async () => {
+      if (onSleep) {
+        await onSleep({ tabs, created });
+        return;
+      }
       if (navigateCreatedTabTo && created.length > 0) {
         const createdId = created.at(-1).id;
         const tab = tabs.find((candidate) => candidate.id === createdId);
         if (tab) tab.url = navigateCreatedTabTo;
       }
     },
-    createdTabPollDelaysMs: [0],
+    createdTabPollDelaysMs: pollDelaysMs,
   });
   return { storage, context, store, router, tabs, created };
 }
@@ -308,5 +314,126 @@ test("provisional matcher accepts project shell but rejects an existing conversa
       "https://chatgpt.com/g/g-p-project-slug/c/conv-existing",
     ),
     false,
+  );
+});
+
+
+test("bound revalidation waits through a project shell and returns the same linked conversation", async () => {
+  let sleeps = 0;
+  const value = await setup({
+    initialTabs: [{ id: 7, url: "https://chatgpt.com/c/conv-a" }],
+    pollDelaysMs: [0, 0],
+    onSleep: async ({ tabs }) => {
+      sleeps += 1;
+      if (sleeps === 1) {
+        tabs[0].url =
+          "https://chatgpt.com/g/g-p-project-application-planification/project";
+      } else {
+        tabs[0].url =
+          "https://chatgpt.com/g/g-p-project-application-planification/c/conv-a";
+      }
+    },
+  });
+  const target = await value.router.route({
+    session: "RessourcePlanner:DEV:594D",
+    routing: ROUTING,
+  });
+  value.tabs[0].url =
+    "https://chatgpt.com/g/g-p-project-application-planification/project";
+
+  const revalidated = await value.router.revalidateTarget({
+    session: "RessourcePlanner:DEV:594D",
+    routing: ROUTING,
+    tabId: target.tabId,
+  });
+
+  assert.equal(revalidated.id, 7);
+  assert.equal(
+    revalidated.url,
+    "https://chatgpt.com/g/g-p-project-application-planification/c/conv-a",
+  );
+});
+
+test("bound revalidation fails immediately when the same tab enters another conversation", async () => {
+  let sleeps = 0;
+  const value = await setup({
+    initialTabs: [{ id: 7, url: "https://chatgpt.com/c/conv-a" }],
+    pollDelaysMs: [0, 0],
+    onSleep: async () => {
+      sleeps += 1;
+    },
+  });
+  const target = await value.router.route({
+    session: "RessourcePlanner:DEV:594D",
+    routing: ROUTING,
+  });
+  value.tabs[0].url = "https://chatgpt.com/c/other-conversation";
+
+  await assert.rejects(
+    () =>
+      value.router.revalidateTarget({
+        session: "RessourcePlanner:DEV:594D",
+        routing: ROUTING,
+        tabId: target.tabId,
+      }),
+    (error) => error?.code === "bound_target_changed",
+  );
+  assert.equal(sleeps, 0);
+});
+
+test("bound revalidation remains fail-closed when a transient project shell never resolves", async () => {
+  let sleeps = 0;
+  const value = await setup({
+    initialTabs: [{ id: 7, url: "https://chatgpt.com/c/conv-a" }],
+    pollDelaysMs: [0, 0],
+    onSleep: async () => {
+      sleeps += 1;
+    },
+  });
+  const target = await value.router.route({
+    session: "RessourcePlanner:DEV:594D",
+    routing: ROUTING,
+  });
+  value.tabs[0].url =
+    "https://chatgpt.com/g/g-p-project-application-planification/project";
+
+  await assert.rejects(
+    () =>
+      value.router.revalidateTarget({
+        session: "RessourcePlanner:DEV:594D",
+        routing: ROUTING,
+        tabId: target.tabId,
+      }),
+    (error) => error?.code === "bound_target_changed",
+  );
+  assert.equal(sleeps, 2);
+});
+
+test("bound tab creation tolerates a transient ChatGPT project shell before the linked conversation", async () => {
+  let sleeps = 0;
+  const value = await setup({
+    createdTabInitialUrl: "about:blank",
+    pollDelaysMs: [0, 0],
+    onSleep: async ({ tabs, created }) => {
+      sleeps += 1;
+      const tab = tabs.find((candidate) => candidate.id === created.at(-1)?.id);
+      if (!tab) return;
+      tab.url =
+        sleeps === 1
+          ? "https://chatgpt.com/g/g-p-project-application-planification/project"
+          : "https://chatgpt.com/g/g-p-project-application-planification/c/conv-a";
+    },
+  });
+
+  const target = await value.router.route({
+    session: "RessourcePlanner:DEV:594D",
+    routing: ROUTING,
+  });
+
+  assert.equal(target.tabId, value.created[0].id);
+  assert.equal(value.created.length, 1);
+  assert.equal(
+    target.url,
+    "https://chatgpt.com/g/g-p-project-application-planification/c/conv-a",
   );
 });
