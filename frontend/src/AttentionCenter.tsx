@@ -39,6 +39,16 @@ type AttentionResponse = {
   items: AttentionItem[]
 }
 
+function InteractionContext({ context }: { context: Record<string, unknown> | null }) {
+  const value = context?.interaction
+  if (!value || typeof value !== 'object' || typeof (value as { state?: unknown }).state !== 'string') {
+    return null
+  }
+  return <p className="attention-meta">
+    <InteractionStatus interaction={value as InteractionSummary} compact />
+  </p>
+}
+
 export default function AttentionCenter({
   projectId,
   onOpenWorkItem,
@@ -189,9 +199,7 @@ export default function AttentionCenter({
         <h3>{item.title}</h3>
         <p>{item.reason}</p>
         {item.agent_session && <p className="attention-meta">{item.agent_session}</p>}
-        {item.context?.interaction && <p className="attention-meta">
-          <InteractionStatus interaction={item.context.interaction as InteractionSummary} compact />
-        </p>}
+        <InteractionContext context={item.context} />
         {item.context && typeof item.context.surface === 'string' && <p className="attention-meta">
           Surface: {String(item.context.surface)} · mode: {String(item.context.requested_mode ?? '—')}
           {' · '}détenteur: {String(item.context.holder_work_item_id ?? '—')}
@@ -219,6 +227,7 @@ export default function AttentionCenter({
                 : <strong>{item.primary_action.label}</strong>}
           {item.primary_action.dispatch_id
             && item.context?.delivery_acknowledged === true
+            && item.context?.interaction_state === 'FIREFOX_ACKNOWLEDGED'
             && item.context?.automatic_resend_allowed === true &&
             <button
               type="button"
