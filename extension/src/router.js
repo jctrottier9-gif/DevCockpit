@@ -302,6 +302,18 @@
       };
     }
 
+    async revalidateManualTarget({ tabId }) {
+      const tabs = await this._tabs();
+      const tab = tabs.find((candidate) => candidate.id === tabId);
+      if (!tab) {
+        throw new RoutingError("target_tab_missing");
+      }
+      if (!isSupportedChatGptUrl(tab.url)) {
+        throw new RoutingError("manual_target_not_chatgpt");
+      }
+      return tab;
+    }
+
     async revalidateTarget({ session, routing, tabId }) {
       const tabs = await this._tabs();
       const tab = tabs.find((candidate) => candidate.id === tabId);
