@@ -132,3 +132,60 @@ test("routing diagnostics do not erase SEND_REQUESTED uncertainty", async () => 
   assert.equal(entry.local_status, "SEND_REQUESTED");
   assert.equal(entry.last_error, "routing_failed");
 });
+
+
+test("legacy routing can be repaired once with a real conversation at the same binding version", async () => {
+  const storage = createMemoryStorage();
+  const { store } = await loadQueue(storage);
+  const legacy = {
+    binding_version: 4,
+    conversation_id: "local-chatgpt%3Alegacy",
+    canonical_url: "https://chatgpt.com/c/local-chatgpt%3Alegacy",
+  };
+  await store.acceptPrompt({
+    deliveryId: FIRST_ID,
+    session: "RessourcePlanner:DEV:594D",
+    text: "fix CI",
+    routing: legacy,
+  });
+
+  const repaired = await store.repairLegacyRouting(FIRST_ID, {
+    binding_version: 4,
+    conversation_id: "real-594d",
+    canonical_url: "https://chatgpt.com/c/real-594d",
+  });
+
+  assert.equal(repaired.routing.conversation_id, "real-594d");
+  await assert.rejects(
+    store.repairLegacyRouting(FIRST_ID, {
+      binding_version: 4,
+      conversation_id: "other",
+      canonical_url: "https://chatgpt.com/c/other",
+    }),
+    (error) => error?.message === "routing_repair_not_legacy",
+  );
+});
+
+test("legacy routing repair rejects a different binding version", async () => {
+  const storage = createMemoryStorage();
+  const { store } = await loadQueue(storage);
+  await store.acceptPrompt({
+    deliveryId: FIRST_ID,
+    session: "RessourcePlanner:DEV:594D",
+    text: "fix CI",
+    routing: {
+      binding_version: 4,
+      conversation_id: "local-chatgpt%3Alegacy",
+      canonical_url: "https://chatgpt.com/c/local-chatgpt%3Alegacy",
+    },
+  });
+
+  await assert.rejects(
+    store.repairLegacyRouting(FIRST_ID, {
+      binding_version: 5,
+      conversation_id: "real-594d",
+      canonical_url: "https://chatgpt.com/c/real-594d",
+    }),
+    (error) => error?.message === "routing_repair_invalid",
+  );
+});
