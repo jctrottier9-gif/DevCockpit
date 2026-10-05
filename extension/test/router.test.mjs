@@ -493,7 +493,7 @@ test("bound routing prefers an exact open conversation over a cached transient p
       { id: 8, url: "https://chatgpt.com/c/conv-a" },
     ],
   });
-  await value.routingStore.setBound({
+  await value.store.setBound({
     session: "RessourcePlanner:DEV:594D",
     routing: ROUTING,
     tabId: 7,
