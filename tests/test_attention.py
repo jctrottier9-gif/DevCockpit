@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
@@ -20,10 +21,11 @@ from app.application.chatgpt_responses import (
 from app.application.handoffs import CreateHandoff, create_handoff
 from app.application.parallel_executions import evaluate_project_parallel_dev_executions
 from app.application.projects import ProjectCatalog
-from app.application.prompt_deliveries import prepare_prompt_deliveries_for_send
+from app.application.prompt_deliveries import acknowledge_prompt_delivery, prepare_prompt_deliveries_for_send
 from app.application.prompt_dispatches import CreatePromptDispatchCommand, create_prompt_dispatch
 from app.application.roadmaps import RoadmapIssue
 from app.config import Settings
+from app.domain.chatgpt_prompt_send import ChatGptPromptSend, ChatGptPromptSendState
 from app.domain.execution import (
     ExecutionEvidence,
     PullRequestEvidence,
@@ -181,6 +183,29 @@ def import_response_for(app, dispatch, *, text="Returned response"):
     return import_chatgpt_response(command, uow_factory=app.state.uow_factory)
 
 
+def set_send_state(app, dispatch, state: ChatGptPromptSendState):
+    outbound = prepare_prompt_deliveries_for_send(uow_factory=app.state.uow_factory)
+    delivery = next(item for item in outbound if item.dispatch_id == dispatch.dispatch_id)
+    acknowledge_prompt_delivery(delivery.delivery_id, uow_factory=app.state.uow_factory)
+    now = datetime.now(timezone.utc)
+    with app.state.uow_factory() as uow:
+        uow.chatgpt_prompt_sends.save(
+            ChatGptPromptSend.rehydrate(
+                delivery_id=delivery.delivery_id,
+                session=delivery.session,
+                state=state,
+                attempt_count=1,
+                last_error_code=None,
+                next_retry_at=None,
+                confirmed_at=now if state is ChatGptPromptSendState.SENT_CONFIRMED else None,
+                updated_at=now,
+                last_event_id=None,
+            )
+        )
+        uow.commit()
+    return delivery
+
+
 def test_clear_is_explicit_when_no_signal_exists(tmp_path):
     app = application(tmp_path)
 
@@ -222,6 +247,43 @@ def test_prepared_prompt_is_actionable_and_transport_only_alerts_when_it_blocks(
     assert blocked.kind is AttentionKind.TRANSPORT_BLOCKED
     assert blocked.primary_action.kind == "CONNECT_COMPANION"
     assert blocked.context["transport_connected"] is False
+
+
+def test_sent_confirmed_is_watch_with_no_imported_response_claim(tmp_path):
+    app = application(tmp_path)
+    dispatch = prepared_prompt(app)
+    delivery = set_send_state(app, dispatch, ChatGptPromptSendState.SENT_CONFIRMED)
+
+    result = projection(app, companion_connected=True)
+
+    assert result.state is AttentionState.WATCH
+    assert result.action_count == 0
+    assert result.watch_count == 1
+    item = result.items[0]
+    assert item.level is AttentionLevel.WATCH
+    assert item.kind is AttentionKind.CHATGPT_SEND
+    assert item.primary_action.kind == "WAIT_IMPORTED_RESPONSE"
+    assert item.context["delivery_id"] == str(delivery.delivery_id)
+    assert item.context["interaction_state"] == "SENT_CONFIRMED"
+    assert item.context["imported_response_available"] is False
+    assert "Aucune réponse" in item.primary_action.label
+
+
+def test_ambiguous_send_is_action_and_never_allows_resend(tmp_path):
+    app = application(tmp_path)
+    dispatch = prepared_prompt(app)
+    set_send_state(app, dispatch, ChatGptPromptSendState.AMBIGUOUS)
+
+    result = projection(app, companion_connected=True)
+
+    assert result.state is AttentionState.ACTION
+    item = result.items[0]
+    assert item.level is AttentionLevel.ACTION
+    assert item.kind is AttentionKind.CHATGPT_SEND
+    assert item.primary_action.kind == "RECONCILE_CHATGPT_SEND"
+    assert item.context["interaction_state"] == "AMBIGUOUS"
+    assert item.context["automatic_resend_allowed"] is False
+    assert "aucun renvoi automatique" in item.reason
 
 
 def test_disconnected_companion_without_ready_prompt_does_not_create_noise(tmp_path):
