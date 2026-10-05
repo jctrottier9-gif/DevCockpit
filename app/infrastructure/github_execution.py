@@ -172,7 +172,14 @@ class GitHubExecutionReader:
         mergeable = payload.get("mergeable") if isinstance(payload, dict) else None
         if mergeable is not None and not isinstance(mergeable, bool):
             raise ExecutionPayloadError("GitHub pull-request mergeable must be boolean or null")
-        return replace(detail, mergeable=mergeable)
+        auto_merge = payload.get("auto_merge") if isinstance(payload, dict) else None
+        if auto_merge is not None and not isinstance(auto_merge, dict):
+            raise ExecutionPayloadError("GitHub pull-request auto_merge must be an object or null")
+        return replace(
+            detail,
+            mergeable=mergeable,
+            auto_merge_enabled=auto_merge is not None,
+        )
 
     def _read_candidate_branches(
         self,
@@ -369,6 +376,9 @@ class GitHubExecutionReader:
         mergeable = payload.get("mergeable")
         if mergeable is not None and not isinstance(mergeable, bool):
             mergeable = None
+        auto_merge = payload.get("auto_merge")
+        if auto_merge is not None and not isinstance(auto_merge, dict):
+            raise ExecutionPayloadError("GitHub pull-request auto_merge must be an object or null")
         return PullRequestEvidence(
             number=number,
             title=title,
@@ -378,6 +388,7 @@ class GitHubExecutionReader:
             state=state,
             merged=merged_at is not None,
             mergeable=mergeable,
+            auto_merge_enabled=auto_merge is not None,
             url=url,
             updated_at=updated_at,
             merged_at=merged_at,
