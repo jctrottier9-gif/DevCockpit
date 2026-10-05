@@ -18,6 +18,7 @@ async function setup({
   routeError = null,
   prepareErrors = [],
   retryDelaysMs = [],
+  session = SESSION,
 } = {}) {
   const storage = createMemoryStorage();
   let counter = 0;
@@ -48,11 +49,11 @@ async function setup({
   });
   await queueStore.acceptPrompt({
     deliveryId: DELIVERY_ID,
-    session: SESSION,
+    session,
     text: "send me",
     routing: null,
   });
-  await sendStore.ensureQueued({ deliveryId: DELIVERY_ID, session: SESSION });
+  await sendStore.ensureQueued({ deliveryId: DELIVERY_ID, session });
 
   const calls = [];
   const transitions = [];
@@ -79,6 +80,10 @@ async function setup({
       async revalidateTarget() {
         revalidateCalls += 1;
         return { id: 7, url: "https://chatgpt.com/" };
+      },
+      async revalidateManualTarget({ tabId }) {
+        revalidateCalls += 1;
+        return { id: tabId, url: "https://chatgpt.com/" };
       },
     },
     sendToTab: async (_tabId, message) => {
@@ -448,4 +453,69 @@ test("explicit legacy repair adopts only a real active ChatGPT conversation", as
     ),
     null,
   );
+});
+
+
+test("ARCH delivery never auto-sends and requires the manual companion action", async () => {
+  const { coordinator, sendStore, calls, routingCounts } = await setup({
+    session: "DevCockpit:ARCH:ASTRA-101",
+  });
+
+  const result = await coordinator.enqueue(DELIVERY_ID);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.state, "QUEUED");
+  assert.equal(result.error, "manual_arch_required");
+  assert.deepEqual(calls, []);
+  assert.deepEqual(routingCounts(), { routeCalls: 0, revalidateCalls: 0 });
+  assert.equal((await sendStore.get(DELIVERY_ID)).state, "QUEUED");
+});
+
+test("manual ARCH launch sends only to the explicitly selected active tab", async () => {
+  const { coordinator, sendStore, queueStore, calls, routingCounts } = await setup({
+    session: "DevCockpit:ARCH:ASTRA-101",
+    commitResponse: {
+      ok: true,
+      conversationUrl: "https://chatgpt.com/c/astra-work-conversation",
+    },
+  });
+
+  const result = await coordinator.enqueue(DELIVERY_ID, { manualTabId: 42 });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.state, "SENT_CONFIRMED");
+  assert.deepEqual(calls, [
+    "devcockpit_prepare_prompt",
+    "devcockpit_commit_prepared_prompt",
+  ]);
+  assert.deepEqual(routingCounts(), { routeCalls: 0, revalidateCalls: 2 });
+  assert.equal((await sendStore.get(DELIVERY_ID)).state, "SENT_CONFIRMED");
+  assert.equal((await queueStore.list()).length, 0);
+});
+
+test("resumeSession never bypasses manual ARCH policy", async () => {
+  const { coordinator, sendStore, calls } = await setup({
+    session: "DevCockpit:ARCH:ASTRA-101",
+  });
+
+  const result = await coordinator.resumeSession("DevCockpit:ARCH:ASTRA-101");
+
+  assert.equal(result.ok, false);
+  assert.equal(result.state, "QUEUED");
+  assert.equal(result.error, "manual_arch_required");
+  assert.deepEqual(calls, []);
+  assert.equal((await sendStore.get(DELIVERY_ID)).state, "QUEUED");
+});
+
+test("architecture session detection is exact and does not affect DEV or PO", async () => {
+  const context = await loadClassicScripts(
+    ["src/send-coordinator.js"],
+    {},
+  );
+  const { isArchitectureSession } = context.DevCockpitCompanion.send;
+
+  assert.equal(isArchitectureSession("DevCockpit:ARCH:ASTRA-101"), true);
+  assert.equal(isArchitectureSession("DevCockpit:DEV:DC-070D"), false);
+  assert.equal(isArchitectureSession("DevCockpit:PO:DC-070D"), false);
+  assert.equal(isArchitectureSession("DevCockpit:ARCHIVE:ASTRA-101"), false);
 });
