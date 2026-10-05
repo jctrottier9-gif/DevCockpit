@@ -147,9 +147,60 @@
     return groups;
   }
 
+  function authoredNodeText(node) {
+    if (!node) return "";
+    if (typeof node.cloneNode !== "function") {
+      return normalizedText(node.textContent);
+    }
+    const clone = node.cloneNode(true);
+    if (typeof clone.querySelectorAll === "function") {
+      for (const control of clone.querySelectorAll(
+        'button, [role="button"], [aria-hidden="true"]',
+      )) {
+        control.remove?.();
+      }
+      for (const block of clone.querySelectorAll("p, li, pre, br")) {
+        block.append?.("\n");
+      }
+    }
+    return normalizedText(clone.textContent);
+  }
+
+  function userTurnTextCandidates(element) {
+    const values = new Set();
+    const add = (value) => {
+      const normalized = normalizedText(value);
+      if (normalized) values.add(normalized);
+    };
+
+    add(elementText(element));
+    add(authoredNodeText(element));
+
+    if (typeof element?.querySelectorAll === "function") {
+      const targets = [
+        ...element.querySelectorAll(
+          '[data-search-result-target], .whitespace-pre-wrap, .markdown',
+        ),
+      ];
+      for (const target of targets) {
+        const nested = targets.some(
+          (other) =>
+            other !== target &&
+            other.contains?.(target),
+        );
+        if (nested) continue;
+        add(elementText(target));
+        add(authoredNodeText(target));
+      }
+    }
+    return [...values];
+  }
+
   function userTurnMatchesText(group, text) {
     return group.some((element) =>
-      sameRenderedPromptText(elementText(element), text),
+      userTurnTextCandidates(element).some((candidate) =>
+        sameRenderedPromptText(candidate, text),
+      ),
     );
   }
 
@@ -515,6 +566,8 @@
     sameRenderedPromptText,
     elementsOverlap,
     groupLogicalUserTurns,
+    authoredNodeText,
+    userTurnTextCandidates,
     userTurnMatchesText,
     LOGIN_SELECTORS,
     USER_MESSAGE_SELECTORS,

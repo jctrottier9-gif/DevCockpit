@@ -147,7 +147,7 @@
       if (created.url && matchesTarget(created)) {
         return created;
       }
-      if (created.url && isSupportedChatGptUrl(created.url)) {
+      if (created.url && conversationIdentity(created.url)) {
         throw new RoutingError("created_tab_target_mismatch");
       }
 
@@ -161,7 +161,7 @@
         if (matchesTarget(candidate)) {
           return candidate;
         }
-        if (candidate.url && isSupportedChatGptUrl(candidate.url)) {
+        if (candidate.url && conversationIdentity(candidate.url)) {
           throw new RoutingError("created_tab_target_mismatch");
         }
       }
@@ -289,10 +289,40 @@
       }
 
       const normalized = normalizeRouting(routing);
-      if (!tabIdentityMatches(tab, normalized)) {
+      if (tabIdentityMatches(tab, normalized)) {
+        return tab;
+      }
+
+      const incompatible = (candidate) => {
+        const identity = conversationIdentity(candidate?.url);
+        if (identity) return !tabIdentityMatches(candidate, normalized);
+        return Boolean(
+          candidate?.url &&
+          candidate.url !== "about:blank" &&
+          !isSupportedChatGptUrl(candidate.url)
+        );
+      };
+
+      if (incompatible(tab)) {
         throw new RoutingError("bound_target_changed");
       }
-      return tab;
+
+      for (const delay of this.createdTabPollDelaysMs) {
+        await this.sleep(delay);
+        const refreshedTabs = await this._tabs();
+        const candidate = refreshedTabs.find((item) => item.id === tabId);
+        if (!candidate) {
+          throw new RoutingError("target_tab_missing");
+        }
+        if (tabIdentityMatches(candidate, normalized)) {
+          return candidate;
+        }
+        if (incompatible(candidate)) {
+          throw new RoutingError("bound_target_changed");
+        }
+      }
+
+      throw new RoutingError("bound_target_changed");
     }
 
     async invalidate(session, reason) {

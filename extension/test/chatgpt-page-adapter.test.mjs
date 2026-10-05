@@ -611,3 +611,62 @@ test("prompt inspection returns canonical identity from nested conversation rout
   assert.equal(result.state, "SENT");
   assert.equal(result.conversationUrl, "https://chatgpt.com/c/abc-123");
 });
+
+
+test("collapsed long user turn matches using complete textContent instead of truncated innerText", async () => {
+  const source = [
+    "La livraison GitHub de DC-070B est fusionnée et les validations requises sont vertes.",
+    "Repository : jctrottier9-gif/DevCockpit",
+    "WorkItem : DC-070B",
+    "Roadmap maître : #1",
+    "État observé : ROADMAP_UPDATE_REQUIRED",
+    "Reprends la même session DEV pour effectuer uniquement la réconciliation post-merge du roadmap.",
+  ].join("\n");
+  const truncated =
+    "La livraison GitHub de DC-070B est fusionnée et les validations requises sont vertes. Repository : jctrottier9-gif/DevCockpit WorkItem : DC-070B";
+
+  const composer = new FakeElement({
+    attributes: { contenteditable: "true", role: "textbox" },
+    text: "",
+  });
+  const user = new FakeElement({ text: source });
+  Object.defineProperty(user, "innerText", {
+    configurable: true,
+    get: () => truncated,
+  });
+
+  const { adapter } = await adapterFor(new Map([
+    ['#prompt-textarea', [composer]],
+    ['[data-message-author-role="user"]', [user]],
+  ]));
+  adapter.location = { href: "https://chatgpt.com/c/dc070b" };
+
+  const result = adapter.inspectPromptDelivery(source);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.state, "SENT");
+  assert.equal(result.conversationUrl, "https://chatgpt.com/c/dc070b");
+});
+
+test("collapsed prompt confirmation still rejects incomplete full DOM content", async () => {
+  const source = "Alpha beta gamma delta epsilon zeta";
+  const composer = new FakeElement({
+    attributes: { contenteditable: "true", role: "textbox" },
+    text: "",
+  });
+  const user = new FakeElement({ text: "Alpha beta gamma" });
+  Object.defineProperty(user, "innerText", {
+    configurable: true,
+    get: () => "Alpha beta",
+  });
+
+  const { adapter } = await adapterFor(new Map([
+    ['#prompt-textarea', [composer]],
+    ['[data-message-author-role="user"]', [user]],
+  ]));
+
+  const result = adapter.inspectPromptDelivery(source);
+
+  assert.equal(result.ok, false);
+  assert.match(result.error, /matching=0/);
+});
