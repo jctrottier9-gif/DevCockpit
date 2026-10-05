@@ -53,6 +53,13 @@
     return JSON.stringify(normalizeRouting(left)) === JSON.stringify(normalizeRouting(right));
   }
 
+  function legacySyntheticConversationId(value) {
+    if (typeof value !== "string" || !value) return false;
+    let decoded = value;
+    try { decoded = decodeURIComponent(value); } catch {}
+    return decoded.toLowerCase().startsWith("local-chatgpt:");
+  }
+
   function validateEntry(entry) {
     if (
       !entry ||
@@ -142,6 +149,30 @@
         queue.push(entry);
         await this._saveUnsafe(queue);
         return { kind: "accepted", entry: clone(entry) };
+      });
+    }
+
+    async repairLegacyRouting(deliveryId, routing) {
+      const normalizedRouting = normalizeRouting(routing);
+      return this._mutate(async () => {
+        const queue = await this._loadUnsafe();
+        const entry = queue.find((item) => item.delivery_id === deliveryId);
+        if (!entry) {
+          throw new QueueStorageError(`delivery_not_found:${deliveryId}`);
+        }
+        if (!legacySyntheticConversationId(entry.routing?.conversation_id)) {
+          throw new QueueStorageError("routing_repair_not_legacy");
+        }
+        if (
+          !normalizedRouting ||
+          legacySyntheticConversationId(normalizedRouting.conversation_id) ||
+          normalizedRouting.binding_version !== entry.routing.binding_version
+        ) {
+          throw new QueueStorageError("routing_repair_invalid");
+        }
+        entry.routing = normalizedRouting;
+        await this._saveUnsafe(queue);
+        return clone(entry);
       });
     }
 
