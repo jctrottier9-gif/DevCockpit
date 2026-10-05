@@ -69,6 +69,7 @@ class PullRequestEvidence:
     state: str
     merged: bool
     mergeable: bool | None
+    auto_merge_enabled: bool = False
     url: str | None = None
     updated_at: str | None = None
     merged_at: str | None = None
@@ -251,7 +252,11 @@ def derive_execution_projection(
             return ExecutionProjection(
                 work_item=work_item,
                 state=ExecutionState.READY_TO_MERGE,
-                next_action=NextAction.MERGE_PR,
+                next_action=(
+                    NextAction.WAIT
+                    if pull_request.auto_merge_enabled
+                    else NextAction.MERGE_PR
+                ),
                 branch=_branch_for(evidence.branches, pull_request.branch),
                 pull_request=pull_request,
                 ci=ci,
