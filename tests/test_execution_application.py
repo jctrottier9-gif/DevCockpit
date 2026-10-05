@@ -121,6 +121,18 @@ def open_pr() -> PullRequestEvidence:
     )
 
 
+def green_run() -> WorkflowRunEvidence:
+    return WorkflowRunEvidence(
+        run_id=456,
+        name="CI",
+        status="completed",
+        conclusion="success",
+        attempt=1,
+        head_sha="abc123",
+        url="https://github.example/actions/456",
+    )
+
+
 def red_run(*, attempt: int = 1) -> WorkflowRunEvidence:
     return WorkflowRunEvidence(
         run_id=123,
@@ -215,6 +227,81 @@ def test_distinct_ci_attempt_can_create_a_new_follow_up_in_same_session() -> Non
     assert first.dispatch.dispatch_id != second.dispatch.dispatch_id
     assert first.dispatch.agent_session == second.dispatch.agent_session
     assert len(repository.by_key) == 2
+
+
+def test_ready_to_merge_creates_one_idempotent_same_session_follow_up() -> None:
+    repository = InMemoryDispatchRepository()
+    evidence = ExecutionEvidence(
+        default_branch="main",
+        pull_requests=(
+            PullRequestEvidence(
+                number=22,
+                title="DC-021 — Projection d'exécution, CI et follow-up DEV",
+                body="",
+                branch="dc-021-execution-ci",
+                head_sha="abc123",
+                state="open",
+                merged=False,
+                mergeable=True,
+                auto_merge_enabled=False,
+                url="https://github.example/pr/22",
+                updated_at="2026-10-01T12:00:00Z",
+            ),
+        ),
+        workflow_runs=(green_run(),),
+    )
+    kwargs = {
+        "roadmap_reader": RoadmapReader(),
+        "evidence_reader": EvidenceReader(evidence),
+        "uow_factory": uow_factory(repository),
+    }
+
+    first = evaluate_project_execution(PROJECT, **kwargs)
+    second = evaluate_project_execution(PROJECT, **kwargs)
+
+    assert first.projection.state is ExecutionState.READY_TO_MERGE
+    assert first.dispatch is not None
+    assert second.dispatch is not None
+    assert first.dispatch.dispatch_id == second.dispatch.dispatch_id
+    assert first.dispatch.agent_session == "DevCockpit:DEV:DC-021"
+    assert "toujours ouverte" in first.dispatch.prompt_text
+    assert "Head SHA observé : abc123" in first.dispatch.prompt_text
+    assert "fusionne la PR avec une méthode autorisée par le dépôt" in first.dispatch.prompt_text
+    assert "Ne modifie aucun fichier" in first.dispatch.prompt_text
+    assert len(repository.by_key) == 1
+
+
+def test_ready_to_merge_with_auto_merge_armed_creates_no_dispatch() -> None:
+    repository = InMemoryDispatchRepository()
+    result = evaluate_project_execution(
+        PROJECT,
+        roadmap_reader=RoadmapReader(),
+        evidence_reader=EvidenceReader(
+            ExecutionEvidence(
+                default_branch="main",
+                pull_requests=(
+                    PullRequestEvidence(
+                        number=22,
+                        title="DC-021 — Projection d'exécution, CI et follow-up DEV",
+                        body="",
+                        branch="dc-021-execution-ci",
+                        head_sha="abc123",
+                        state="open",
+                        merged=False,
+                        mergeable=True,
+                        auto_merge_enabled=True,
+                        url="https://github.example/pr/22",
+                    ),
+                ),
+                workflow_runs=(green_run(),),
+            )
+        ),
+        uow_factory=uow_factory(repository),
+    )
+
+    assert result.projection.state is ExecutionState.READY_TO_MERGE
+    assert result.dispatch is None
+    assert repository.by_key == {}
 
 
 def test_github_source_failure_fails_closed_without_dispatch() -> None:
