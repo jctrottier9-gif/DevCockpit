@@ -57,6 +57,10 @@
     };
   }
 
+  function isProvisionalChatGptUrl(rawUrl) {
+    return isSupportedChatGptUrl(rawUrl) && conversationIdentity(rawUrl) === null;
+  }
+
   function normalizeRouting(routing) {
     if (
       !routing ||
@@ -238,7 +242,8 @@
       const tabs = await this._tabs();
       if (cached?.kind === ROUTING_KIND.PROVISIONAL && Number.isInteger(cached.tab_id)) {
         const existing = tabs.find(
-          (tab) => tab.id === cached.tab_id && isNewChatUrl(tab.url),
+          (tab) =>
+            tab.id === cached.tab_id && isProvisionalChatGptUrl(tab.url),
         );
         if (existing) {
           return {
@@ -253,7 +258,7 @@
       const created = await this.createTab({ url: NEW_CHAT_URL, active: false });
       const target = await this._awaitCreatedTabTarget(
         created,
-        (tab) => isNewChatUrl(tab.url),
+        (tab) => isProvisionalChatGptUrl(tab.url),
       );
       await this.routingStore.setProvisional(session, target.id);
       return {
@@ -276,7 +281,7 @@
         if (
           cached?.kind !== ROUTING_KIND.PROVISIONAL ||
           cached.tab_id !== tabId ||
-          !isNewChatUrl(tab.url)
+          !isProvisionalChatGptUrl(tab.url)
         ) {
           throw new RoutingError("provisional_target_changed");
         }
@@ -301,6 +306,7 @@
     isSupportedChatGptUrl,
     isNewChatUrl,
     conversationIdentity,
+    isProvisionalChatGptUrl,
     ConversationRouter,
   };
 })();
