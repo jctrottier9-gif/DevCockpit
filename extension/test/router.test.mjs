@@ -437,3 +437,50 @@ test("bound tab creation tolerates a transient ChatGPT project shell before the 
     "https://chatgpt.com/g/g-p-project-application-planification/c/conv-a",
   );
 });
+
+
+test("bound routing prefers cached tab on transient project shell instead of creating another tab", async () => {
+  const value = await setup({
+    initialTabs: [{ id: 7, url: "https://chatgpt.com/c/conv-a" }],
+  });
+  const first = await value.router.route({
+    session: "RessourcePlanner:DEV:594D",
+    routing: ROUTING,
+  });
+  assert.equal(first.tabId, 7);
+  value.tabs[0].url =
+    "https://chatgpt.com/g/g-p-project-application-planification/project";
+
+  const second = await value.router.route({
+    session: "RessourcePlanner:DEV:594D",
+    routing: ROUTING,
+  });
+
+  assert.equal(second.tabId, 7);
+  assert.equal(value.created.length, 0);
+  assert.match(second.url, /application-planification\/project$/);
+});
+
+test("bound routing fails closed on cached tab in another conversation without creating a new tab", async () => {
+  const value = await setup({
+    initialTabs: [{ id: 7, url: "https://chatgpt.com/c/conv-a" }],
+  });
+  await value.router.route({
+    session: "RessourcePlanner:DEV:594D",
+    routing: ROUTING,
+  });
+  value.tabs[0].url = "https://chatgpt.com/c/other-conversation";
+
+  await assert.rejects(
+    () =>
+      value.router.route({
+        session: "RessourcePlanner:DEV:594D",
+        routing: ROUTING,
+      }),
+    (error) =>
+      error?.code === "bound_target_changed" &&
+      /expected=conv-a/.test(error.message) &&
+      /observed=other-conversation/.test(error.message),
+  );
+  assert.equal(value.created.length, 0);
+});

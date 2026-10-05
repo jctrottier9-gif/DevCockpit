@@ -28,6 +28,7 @@ class FakeElement {
     this.clicked = false;
     this.events = [];
     this.children = new Set();
+    this.selectorMap = new Map();
   }
   get textContent() { return this._text; }
   set textContent(value) { this._text = value; }
@@ -43,6 +44,7 @@ class FakeElement {
   dispatchEvent(event) { this.events.push(event); return true; }
   click() { this.clicked = true; }
   contains(other) { return this.children.has(other); }
+  querySelectorAll(selector) { return this.selectorMap.get(selector) || []; }
 }
 
 class FakeDocument {
@@ -232,7 +234,7 @@ test("prompt inspection proves NOT_SENT only when composer owns exact prompt", a
     ['[data-message-author-role="user"]', []],
   ]));
 
-  const result = adapter.inspectPromptDelivery("Prompt A");
+  const result = await adapter.inspectPromptDelivery("Prompt A");
 
   assert.equal(result.ok, true);
   assert.equal(result.state, "NOT_SENT");
@@ -250,7 +252,7 @@ test("prompt inspection proves SENT when one matching user message exists and co
   ]));
   adapter.location = { href: "https://chatgpt.com/c/abc-123" };
 
-  const result = adapter.inspectPromptDelivery("Prompt A");
+  const result = await adapter.inspectPromptDelivery("Prompt A");
 
   assert.equal(result.ok, true);
   assert.equal(result.state, "SENT");
@@ -396,7 +398,7 @@ test("prompt inspection proves SENT for a Markdown-rendered logical user turn", 
   ]));
   adapter.location = { href: "https://chatgpt.com/c/abc-123" };
 
-  const result = adapter.inspectPromptDelivery(source);
+  const result = await adapter.inspectPromptDelivery(source);
 
   assert.equal(result.ok, true);
   assert.equal(result.state, "SENT");
@@ -418,7 +420,7 @@ test("nested DOM candidates for one user turn count as one SENT proof", async ()
   ]));
   adapter.location = { href: "https://chatgpt.com/c/abc-123" };
 
-  const result = adapter.inspectPromptDelivery("Prompt A");
+  const result = await adapter.inspectPromptDelivery("Prompt A");
 
   assert.equal(result.ok, true);
   assert.equal(result.state, "SENT");
@@ -436,7 +438,7 @@ test("two distinct matching user turns remain ambiguous", async () => {
     ['[data-message-author-role="user"]', [first, second]],
   ]));
 
-  const result = adapter.inspectPromptDelivery("Prompt A");
+  const result = await adapter.inspectPromptDelivery("Prompt A");
 
   assert.equal(result.ok, false);
   assert.match(result.error, /logical=2/);
@@ -487,7 +489,7 @@ test("prompt inspection stays ambiguous when composer and user turn both match",
     ['[data-message-author-role="user"]', [user]],
   ]));
 
-  const result = adapter.inspectPromptDelivery("Prompt A");
+  const result = await adapter.inspectPromptDelivery("Prompt A");
 
   assert.equal(result.ok, false);
   assert.match(result.error, /^delivery_evidence_ambiguous:/);
@@ -605,7 +607,7 @@ test("prompt inspection returns canonical identity from nested conversation rout
     href: "https://chatgpt.com/g/g-p-project/c/abc-123?model=auto",
   };
 
-  const result = adapter.inspectPromptDelivery("Prompt A");
+  const result = await adapter.inspectPromptDelivery("Prompt A");
 
   assert.equal(result.ok, true);
   assert.equal(result.state, "SENT");
@@ -641,7 +643,7 @@ test("collapsed long user turn matches using complete textContent instead of tru
   ]));
   adapter.location = { href: "https://chatgpt.com/c/dc070b" };
 
-  const result = adapter.inspectPromptDelivery(source);
+  const result = await adapter.inspectPromptDelivery(source);
 
   assert.equal(result.ok, true);
   assert.equal(result.state, "SENT");
@@ -665,8 +667,70 @@ test("collapsed prompt confirmation still rejects incomplete full DOM content", 
     ['[data-message-author-role="user"]', [user]],
   ]));
 
-  const result = adapter.inspectPromptDelivery(source);
+  const result = await adapter.inspectPromptDelivery(source);
 
+  assert.equal(result.ok, false);
+  assert.match(result.error, /matching=0/);
+});
+
+
+test("ambiguous inspection expands Show more before matching a collapsed long prompt", async () => {
+  const source = [
+    "La livraison GitHub de DC-070B est fusionnée et les validations requises sont vertes.",
+    "Repository : jctrottier9-gif/DevCockpit",
+    "WorkItem : DC-070B",
+    "Roadmap maître : #1",
+    "État observé : ROADMAP_UPDATE_REQUIRED",
+    "Reprends la même session DEV pour effectuer uniquement la réconciliation post-merge du roadmap.",
+  ].join("\n");
+  const prefix =
+    "La livraison GitHub de DC-070B est fusionnée et les validations requises sont vertes.";
+
+  const composer = new FakeElement({
+    attributes: { contenteditable: "true", role: "textbox" },
+    text: "",
+  });
+  const user = new FakeElement({ text: prefix });
+  const showMore = new FakeElement({ tagName: "BUTTON", text: "Show more" });
+  showMore.click = () => {
+    showMore.clicked = true;
+    user.textContent = source;
+  };
+  user.selectorMap.set('button, [role="button"]', [showMore]);
+
+  const { adapter } = await adapterFor(new Map([
+    ['#prompt-textarea', [composer]],
+    ['[data-message-author-role="user"]', [user]],
+  ]));
+  adapter.location = { href: "https://chatgpt.com/c/dc070b" };
+  adapter.sleep = async () => {};
+
+  const result = await adapter.inspectPromptDelivery(source);
+
+  assert.equal(showMore.clicked, true);
+  assert.equal(result.ok, true);
+  assert.equal(result.state, "SENT");
+});
+
+test("collapsed prompt inspection does not click unrelated user-turn controls", async () => {
+  const source = "Alpha beta gamma delta";
+  const composer = new FakeElement({
+    attributes: { contenteditable: "true", role: "textbox" },
+    text: "",
+  });
+  const user = new FakeElement({ text: "Alpha beta" });
+  const edit = new FakeElement({ tagName: "BUTTON", text: "Edit message" });
+  user.selectorMap.set('button, [role="button"]', [edit]);
+
+  const { adapter } = await adapterFor(new Map([
+    ['#prompt-textarea', [composer]],
+    ['[data-message-author-role="user"]', [user]],
+  ]));
+  adapter.sleep = async () => {};
+
+  const result = await adapter.inspectPromptDelivery(source);
+
+  assert.equal(edit.clicked, false);
   assert.equal(result.ok, false);
   assert.match(result.error, /matching=0/);
 });
