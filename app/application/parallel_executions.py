@@ -17,6 +17,7 @@ from app.application.executions import (
     build_roadmap_reconciliation_follow_up,
     build_stale_dev_follow_up,
 )
+from app.application.interaction_summaries import InteractionSummary, read_interaction_summary
 from app.application.prompt_dispatches import (
     CreatePromptDispatchCommand,
     UnitOfWorkFactory,
@@ -59,17 +60,7 @@ class DevExecutionSlotState(StrEnum):
     INHIBITED = "INHIBITED"
 
 
-@dataclass(frozen=True, slots=True)
-class DevInteractionSummary:
-    dispatch_id: str | None
-    dispatch_status: str | None
-    delivery_id: str | None
-    delivery_status: str | None
-    send_state: str | None
-    send_attempt_count: int | None
-    send_error_code: str | None
-    send_confirmed_at: datetime | None
-    imported_response_available: bool
+DevInteractionSummary = InteractionSummary
 
 
 @dataclass(frozen=True, slots=True)
@@ -645,34 +636,7 @@ def _interaction_summary(
     dispatch = _selected_dev_dispatch(project, execution, uow=uow)
     if dispatch is None:
         return None
-
-    delivery = uow.prompt_deliveries.get_by_dispatch_id(dispatch.dispatch_id)
-    send_repository = getattr(uow, "chatgpt_prompt_sends", None)
-    prompt_send = (
-        send_repository.get(delivery.delivery_id)
-        if send_repository is not None and delivery is not None
-        else None
-    )
-
-    imported_response_available = False
-    response_repository = getattr(uow, "chatgpt_responses", None)
-    if response_repository is not None and delivery is not None:
-        imported_response_available = any(
-            response.delivery_id == delivery.delivery_id
-            for response in response_repository.list_all()
-        )
-
-    return DevInteractionSummary(
-        dispatch_id=str(dispatch.dispatch_id),
-        dispatch_status=dispatch.status.value,
-        delivery_id=str(delivery.delivery_id) if delivery is not None else None,
-        delivery_status=delivery.status.value if delivery is not None else None,
-        send_state=prompt_send.state.value if prompt_send is not None else None,
-        send_attempt_count=prompt_send.attempt_count if prompt_send is not None else None,
-        send_error_code=prompt_send.last_error_code if prompt_send is not None else None,
-        send_confirmed_at=prompt_send.confirmed_at if prompt_send is not None else None,
-        imported_response_available=imported_response_available,
-    )
+    return read_interaction_summary(dispatch, uow=uow)
 
 
 def _watchdog_summary(
