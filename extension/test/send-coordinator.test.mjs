@@ -509,7 +509,7 @@ test("resumeSession never bypasses manual ARCH policy", async () => {
 
 test("architecture session detection is exact and does not affect DEV or PO", async () => {
   const context = await loadClassicScripts(
-    ["src/send-coordinator.js"],
+    ["src/send-store.js", "src/send-coordinator.js"],
     {},
   );
   const { isArchitectureSession } = context.DevCockpitCompanion.send;
