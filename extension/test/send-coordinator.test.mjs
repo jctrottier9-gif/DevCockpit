@@ -400,3 +400,52 @@ test("multiple readiness retries keep exactly one routed target", async () => {
   });
   assert.equal((await sendStore.get(DELIVERY_ID)).state, "SENT_CONFIRMED");
 });
+
+
+test("explicit legacy repair adopts only a real active ChatGPT conversation", async () => {
+  const context = await loadClassicScripts(
+    [
+      "src/queue-store.js",
+      "src/response-store.js",
+      "src/send-store.js",
+      "src/send-coordinator.js",
+    ],
+    {},
+  );
+  const { routingFromActiveConversation } = context.DevCockpitCompanion.send;
+  const legacy = {
+    binding_version: 3,
+    conversation_id: "local-chatgpt%3Alegacy-id",
+    canonical_url: "https://chatgpt.com/c/local-chatgpt%3Alegacy-id",
+  };
+
+  const repaired = routingFromActiveConversation(
+    legacy,
+    "https://chatgpt.com/g/g-p-project/c/real-conversation?model=auto",
+  );
+  assert.equal(repaired.binding_version, 3);
+  assert.equal(repaired.conversation_id, "real-conversation");
+  assert.equal(
+    repaired.canonical_url,
+    "https://chatgpt.com/c/real-conversation",
+  );
+
+  assert.equal(
+    routingFromActiveConversation(
+      legacy,
+      "https://chatgpt.com/g/g-p-project/project",
+    ),
+    null,
+  );
+  assert.equal(
+    routingFromActiveConversation(
+      {
+        binding_version: 3,
+        conversation_id: "already-real",
+        canonical_url: "https://chatgpt.com/c/already-real",
+      },
+      "https://chatgpt.com/c/other",
+    ),
+    null,
+  );
+});
