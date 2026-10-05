@@ -8,7 +8,12 @@
   const { ConversationRoutingStore } = namespace.routingStore;
   const { ConversationRouter, isSupportedChatGptUrl } = namespace.routing;
   const { CompanionTransport, CONNECTION_STATUS } = namespace.transport;
-  const { PromptSendCoordinator, canonicalConversation } = namespace.send;
+  const {
+    PromptSendCoordinator,
+    canonicalConversation,
+    isLegacySyntheticConversationId,
+    isLegacySyntheticRouting,
+  } = namespace.send;
   const { buildChatGptResponseMessage, ProtocolError } = namespace.protocol;
 
   const SOCKET_URL = "ws://127.0.0.1:8000/api/companion/ws";
@@ -44,8 +49,14 @@
     url: SOCKET_URL,
     webSocketFactory: (url) => new WebSocket(url),
     onPrompt: async (prompt) => {
-      await queueStore.acceptPrompt(prompt);
-      const sendState = await sendStore.ensureQueued(prompt);
+      let routing = prompt.routing;
+      if (isLegacySyntheticRouting(routing)) {
+        const recovered = await recoveredRoutingForLegacy(prompt.session, routing);
+        if (recovered) routing = recovered;
+      }
+      const acceptedPrompt = { ...prompt, routing };
+      await queueStore.acceptPrompt(acceptedPrompt);
+      const sendState = await sendStore.ensureQueued(acceptedPrompt);
       if (sendState.state === SEND_STATE.SENT_CONFIRMED) {
         await queueStore.remove(prompt.deliveryId);
       }
@@ -90,6 +101,28 @@
     emitStatus: (event) => transport.sendPendingSendStatus(event),
   });
 
+  async function recoveredRoutingForLegacy(session, routing) {
+    if (!isLegacySyntheticRouting(routing)) return routing;
+    const sent = await sentPromptStore.list();
+    const candidates = sent
+      .filter((entry) => entry.session === session && entry.conversation_url)
+      .sort((left, right) => String(right.sent_at).localeCompare(String(left.sent_at)));
+    for (const context of candidates) {
+      const conversation = canonicalConversation(context.conversation_url);
+      if (
+        conversation &&
+        !isLegacySyntheticConversationId(conversation.conversation_id)
+      ) {
+        return {
+          binding_version: routing.binding_version,
+          conversation_id: conversation.conversation_id,
+          canonical_url: conversation.canonical_url,
+        };
+      }
+    }
+    return null;
+  }
+
   async function recoverPersistedSends() {
     const ambiguousEvents = await sendStore.recoverInterruptedArmedSends();
     for (const event of ambiguousEvents) {
@@ -97,7 +130,14 @@
     }
 
     const queue = await queueStore.list();
-    for (const entry of queue) {
+    for (const originalEntry of queue) {
+      let entry = originalEntry;
+      if (isLegacySyntheticRouting(entry.routing)) {
+        const recovered = await recoveredRoutingForLegacy(entry.session, entry.routing);
+        if (recovered) {
+          entry = await queueStore.repairLegacyRouting(entry.delivery_id, recovered);
+        }
+      }
       await sendStore.ensureQueued({
         deliveryId: entry.delivery_id,
         session: entry.session,

@@ -20,6 +20,13 @@
     return JSON.parse(JSON.stringify(value));
   }
 
+  function legacySyntheticConversationId(value) {
+    if (typeof value !== "string" || !value) return false;
+    let decoded = value;
+    try { decoded = decodeURIComponent(value); } catch {}
+    return decoded.toLowerCase().startsWith("local-chatgpt:");
+  }
+
   function validateEntry(entry) {
     if (
       !entry ||
@@ -119,7 +126,8 @@
           (
             existing.conversation_id !== routing.conversation_id ||
             existing.canonical_url !== routing.canonical_url
-          )
+          ) &&
+          !legacySyntheticConversationId(existing.conversation_id)
         ) {
           throw new RoutingStorageError("binding_snapshot_conflict");
         }

@@ -24,6 +24,25 @@
     return message;
   }
 
+  function isLegacySyntheticConversationId(value) {
+    if (typeof value !== "string" || value === "") return false;
+    let decoded = value;
+    try {
+      decoded = decodeURIComponent(value);
+    } catch {
+      // Keep the original value for malformed legacy data.
+    }
+    return decoded.toLowerCase().startsWith("local-chatgpt:");
+  }
+
+  function isLegacySyntheticRouting(routing) {
+    return Boolean(
+      routing &&
+      typeof routing === "object" &&
+      isLegacySyntheticConversationId(routing.conversation_id)
+    );
+  }
+
   function canonicalConversation(rawUrl) {
     if (typeof rawUrl !== "string" || !rawUrl) return null;
     try {
@@ -379,6 +398,8 @@
   namespace.send = {
     DEFAULT_RETRY_DELAYS_MS,
     preSendErrorCode,
+    isLegacySyntheticConversationId,
+    isLegacySyntheticRouting,
     canonicalConversation,
     PromptSendCoordinator,
   };

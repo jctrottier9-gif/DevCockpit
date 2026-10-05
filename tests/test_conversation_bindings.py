@@ -7,6 +7,11 @@ from alembic import command
 from sqlalchemy import inspect, text
 from sqlalchemy.exc import IntegrityError
 
+from app.application.chatgpt_prompt_sends import (
+    ChatGptSendBindingConflict,
+    RecordChatGptSendStatusCommand,
+    _promote_binding,
+)
 from app.application.conversation_bindings import (
     BindConversationCommand,
     ConversationBindingInvalidatedError,
@@ -16,10 +21,12 @@ from app.application.conversation_bindings import (
     invalidate_conversation_binding,
 )
 from app.config import Settings
+from app.domain.chatgpt_prompt_send import ChatGptPromptSendState
 from app.domain.conversation_binding import (
     ConversationBinding,
     ConversationBindingError,
     ConversationBindingState,
+    is_legacy_synthetic_conversation_id,
     normalize_chatgpt_conversation_url,
 )
 from app.infrastructure.database import build_alembic_config, build_engine, build_session_factory, upgrade_database
@@ -199,3 +206,72 @@ def test_database_enforces_unique_session_and_conversation(tmp_path: Path) -> No
                 uow.commit()
     finally:
         engine.dispose()
+
+
+def test_legacy_synthetic_conversation_id_recognizes_encoded_and_plain_forms() -> None:
+    assert is_legacy_synthetic_conversation_id("local-chatgpt:abc")
+    assert is_legacy_synthetic_conversation_id("local-chatgpt%3Aabc")
+    assert is_legacy_synthetic_conversation_id("LOCAL-CHATGPT%3aABC")
+    assert not is_legacy_synthetic_conversation_id("real-conversation")
+
+
+def test_confirmed_real_send_rebinds_legacy_synthetic_binding(tmp_path: Path) -> None:
+    _, engine, session_factory = _persistence(tmp_path)
+    factory = lambda: SqlAlchemyUnitOfWork(session_factory)
+    bind_conversation(
+        BindConversationCommand(
+            agent_session="DevCockpit:DEV:DC-LEGACY",
+            conversation_id="local-chatgpt%3Alegacy-id",
+            canonical_url="https://chatgpt.com/c/local-chatgpt%3Alegacy-id",
+        ),
+        uow_factory=factory,
+        now=NOW,
+    )
+    command = RecordChatGptSendStatusCommand(
+        event_id=uuid4(),
+        delivery_id=uuid4(),
+        session="DevCockpit:DEV:DC-LEGACY",
+        state=ChatGptPromptSendState.SENT_CONFIRMED,
+        attempt_count=1,
+        conversation_id="real-conversation",
+        canonical_url="https://chatgpt.com/c/real-conversation",
+        error_code=None,
+        next_retry_at=None,
+        occurred_at=NOW,
+    )
+
+    with factory() as uow:
+        _promote_binding(command, uow=uow, recorded_at=NOW + timedelta(minutes=1))
+        uow.commit()
+
+    snapshot = conversation_routing_snapshot(
+        "DevCockpit:DEV:DC-LEGACY",
+        uow_factory=factory,
+    )
+    assert snapshot is not None
+    assert snapshot.conversation_id == "real-conversation"
+    assert snapshot.canonical_url == "https://chatgpt.com/c/real-conversation"
+    assert snapshot.binding_version == 2
+    engine.dispose()
+
+
+def test_synthetic_confirmed_send_is_never_promoted(tmp_path: Path) -> None:
+    _, engine, session_factory = _persistence(tmp_path)
+    factory = lambda: SqlAlchemyUnitOfWork(session_factory)
+    command = RecordChatGptSendStatusCommand(
+        event_id=uuid4(),
+        delivery_id=uuid4(),
+        session="DevCockpit:DEV:DC-LEGACY",
+        state=ChatGptPromptSendState.SENT_CONFIRMED,
+        attempt_count=1,
+        conversation_id="local-chatgpt%3Asynthetic",
+        canonical_url="https://chatgpt.com/c/local-chatgpt%3Asynthetic",
+        error_code=None,
+        next_retry_at=None,
+        occurred_at=NOW,
+    )
+
+    with factory() as uow:
+        with pytest.raises(ChatGptSendBindingConflict):
+            _promote_binding(command, uow=uow, recorded_at=NOW)
+    engine.dispose()

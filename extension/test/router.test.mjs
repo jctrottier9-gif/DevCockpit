@@ -484,3 +484,45 @@ test("bound routing fails closed on cached tab in another conversation without c
   );
   assert.equal(value.created.length, 0);
 });
+
+
+test("bound routing prefers an exact open conversation over a cached transient project tab", async () => {
+  const value = await setup({
+    initialTabs: [
+      { id: 7, url: "https://chatgpt.com/g/g-p-project/project" },
+      { id: 8, url: "https://chatgpt.com/c/conv-a" },
+    ],
+  });
+  await value.store.setBound({
+    session: "RessourcePlanner:DEV:594D",
+    routing: ROUTING,
+    tabId: 7,
+  });
+
+  const target = await value.router.route({
+    session: "RessourcePlanner:DEV:594D",
+    routing: ROUTING,
+  });
+
+  assert.equal(target.tabId, 8);
+  assert.equal(value.created.length, 0);
+});
+
+test("legacy synthetic routing fails explicitly before opening a tab when unrepaired", async () => {
+  const value = await setup();
+  const legacy = {
+    binding_version: 1,
+    conversation_id: "local-chatgpt%3Alegacy",
+    canonical_url: "https://chatgpt.com/c/local-chatgpt%3Alegacy",
+  };
+
+  await assert.rejects(
+    () =>
+      value.router.route({
+        session: "RessourcePlanner:DEV:594D",
+        routing: legacy,
+      }),
+    (error) => error?.code === "legacy_synthetic_binding_unrecoverable",
+  );
+  assert.equal(value.created.length, 0);
+});

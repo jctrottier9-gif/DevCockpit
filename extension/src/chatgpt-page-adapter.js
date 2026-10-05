@@ -204,19 +204,36 @@
     );
   }
 
+  function userTurnControlScopes(element) {
+    const scopes = [element];
+    if (typeof element?.closest === "function") {
+      for (const selector of ['[data-testid^="conversation-turn-"]', "article"]) {
+        const scope = element.closest(selector);
+        if (scope && !scopes.includes(scope)) scopes.push(scope);
+      }
+    }
+    return scopes;
+  }
+
   function expandCollapsedUserTurns(groups) {
     let clicked = false;
     const labels = new Set(["show more", "afficher plus", "voir plus"]);
+    const visited = new Set();
     for (const group of groups) {
       for (const element of group) {
-        if (typeof element?.querySelectorAll !== "function") continue;
-        for (const control of element.querySelectorAll('button, [role="button"]')) {
-          const label = comparableText(
-            control.getAttribute?.("aria-label") || elementText(control),
-          ).toLocaleLowerCase("fr-CA");
-          if (!labels.has(label)) continue;
-          control.click?.();
-          clicked = true;
+        for (const scope of userTurnControlScopes(element)) {
+          if (!scope || visited.has(scope) || typeof scope.querySelectorAll !== "function") {
+            continue;
+          }
+          visited.add(scope);
+          for (const control of scope.querySelectorAll('button, [role="button"]')) {
+            const label = comparableText(
+              control.getAttribute?.("aria-label") || elementText(control),
+            ).toLocaleLowerCase("fr-CA");
+            if (!labels.has(label)) continue;
+            control.click?.();
+            clicked = true;
+          }
         }
       }
     }
@@ -600,6 +617,7 @@
     authoredNodeText,
     userTurnTextCandidates,
     userTurnMatchesText,
+    userTurnControlScopes,
     expandCollapsedUserTurns,
     LOGIN_SELECTORS,
     USER_MESSAGE_SELECTORS,
