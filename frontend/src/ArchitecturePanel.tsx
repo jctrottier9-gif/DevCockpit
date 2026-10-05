@@ -139,7 +139,7 @@ export default function ArchitecturePanel({ projectId }: { projectId: string }) 
 
           {gate.human_authorization_required && <div className="architecture-authorization">
             <strong>Autorisation humaine requise</strong>
-            <p>La gate READY est éligible seulement. La consultation de ce panneau ne crée aucun prompt.</p>
+            <p>La gate READY est éligible seulement. La consultation de ce panneau ne crée aucun prompt; après autorisation, le lancement ASTRA reste manuel dans le companion sur un onglet ChatGPT déjà en Work mode.</p>
             <button
               type="button"
               disabled={!gate.can_authorize || authorizing === gate.work_item_id}
@@ -150,7 +150,7 @@ export default function ArchitecturePanel({ projectId }: { projectId: string }) 
           </div>}
 
           {gate.authorization && <p className="drawer-note">
-            PromptDispatch d’autorisation corrélé : {gate.authorization.agent_session} · {gate.authorization.status}
+            PromptDispatch d’autorisation corrélé : {gate.authorization.agent_session} · {gate.authorization.status}. Lancement ASTRA manuel dans le companion (onglet Work mode).
           </p>}
 
           <div className="github-links">
