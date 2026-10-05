@@ -727,3 +727,165 @@ details { margin: 1rem 0; }
 .state-badge--waiting_for_capacity,
 .state-badge--waiting_for_resource_lock { border-color: #dbc27b; background: #fff9e8; color: #74580c; }
 .state-badge--inhibited { border-color: #d7dde7; background: #f6f8fb; color: #536074; }
+
+/* DC-070C Product Owner Roadmap Explorer */
+.roadmap-explorer {
+  display: grid;
+  gap: .85rem;
+  margin: 1rem 0;
+  padding-top: 1rem;
+  border-top: 1px solid #e3e7ee;
+}
+.roadmap-explorer-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: .8rem;
+}
+.roadmap-explorer-header h3,
+.roadmap-explorer-detail h4 {
+  margin: .15rem 0;
+}
+.roadmap-explorer-header p {
+  margin: .35rem 0 0;
+  color: #687386;
+  font-size: .84rem;
+}
+.roadmap-explorer-warning {
+  padding: .75rem;
+  border: 1px solid #e8c88c;
+  border-radius: 9px;
+  background: #fff9ec;
+  color: #74580c;
+}
+.roadmap-explorer-diagnostics {
+  padding: .7rem .8rem;
+  border: 1px solid #e4c6c9;
+  border-radius: 9px;
+  background: #fff7f8;
+}
+.roadmap-explorer-diagnostics ul {
+  margin-bottom: 0;
+  padding-left: 1.2rem;
+}
+.roadmap-explorer-sections {
+  display: grid;
+  gap: .55rem;
+}
+.roadmap-explorer-section {
+  margin: 0;
+  padding: .55rem .7rem;
+  border: 1px solid #dfe4ec;
+  border-radius: 10px;
+  background: #fbfcfd;
+}
+.roadmap-explorer-section > summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  cursor: pointer;
+}
+.roadmap-explorer-list {
+  display: grid;
+  gap: .45rem;
+  margin-top: .55rem;
+}
+.roadmap-explorer-item {
+  display: grid;
+  gap: .25rem;
+  width: 100%;
+  margin: 0;
+  padding: .65rem;
+  border: 1px solid #e2e7ee;
+  border-radius: 8px;
+  background: #fff;
+  text-align: left;
+}
+.roadmap-explorer-item:hover,
+.roadmap-explorer-item:focus-visible,
+.roadmap-explorer-item--selected {
+  border-color: #9db6d6;
+  background: #f0f6ff;
+}
+.roadmap-explorer-item__heading {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .4rem .65rem;
+  align-items: center;
+}
+.roadmap-explorer-item__heading span,
+.roadmap-explorer-item small {
+  color: #687386;
+  font-size: .74rem;
+}
+.roadmap-explorer-detail {
+  padding: .8rem;
+  border: 1px solid #dfe4ec;
+  border-radius: 10px;
+  background: #fff;
+}
+.roadmap-explorer-detail__heading {
+  display: flex;
+  justify-content: space-between;
+  gap: .75rem;
+  align-items: flex-start;
+}
+.roadmap-explorer-detail__heading > span {
+  color: #687386;
+  font-size: .78rem;
+}
+.roadmap-issue-links {
+  display: grid;
+  gap: .65rem;
+  margin-top: .8rem;
+}
+.roadmap-issue-links > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .45rem;
+  align-items: center;
+  padding: .6rem;
+  border-radius: 8px;
+  background: #f6f8fb;
+}
+.roadmap-issue-links > div > span {
+  min-width: 7.5rem;
+  color: #687386;
+  font-size: .78rem;
+}
+.roadmap-issue-links button {
+  margin: 0;
+  padding: .4rem .6rem;
+}
+.roadmap-issue-detail {
+  margin: 0;
+  padding: .75rem;
+  border: 1px solid #dfe4ec;
+  border-radius: 10px;
+  background: #fff;
+}
+.roadmap-issue-detail > summary {
+  display: flex;
+  justify-content: space-between;
+  gap: .75rem;
+  cursor: pointer;
+}
+.roadmap-issue-detail__meta {
+  display: flex;
+  justify-content: space-between;
+  gap: .75rem;
+  margin-top: .7rem;
+  color: #687386;
+  font-size: .78rem;
+}
+.roadmap-issue-body {
+  max-height: 24rem;
+  margin: .8rem 0 0;
+  overflow: auto;
+  padding: .75rem;
+  border-radius: 8px;
+  background: #f6f8fb;
+  font-size: .78rem;
+  line-height: 1.45;
+}
+

@@ -242,3 +242,68 @@ export type CockpitOverview = {
     }[]
   }
 }
+
+export type RoadmapExplorerIssueReference = {
+  number: number
+  url: string
+}
+
+export type RoadmapExplorerItem = {
+  key: string
+  title: string
+  type: string
+  status: string
+  lane: string
+  parent: string
+  replaces: string | null
+  depends_on: string[]
+  unsatisfied_dependencies: string[]
+  scheduler_state: string | null
+  scheduler_reason: string | null
+  expected_role: string | null
+  next_action: string | null
+  executable: boolean
+  work_issue: RoadmapExplorerIssueReference | null
+  parent_issue: RoadmapExplorerIssueReference
+}
+
+export type RoadmapExplorerResponse = {
+  project: Project
+  observed_at: string
+  source: {
+    status: 'available'
+    issue_number: number
+    url: string
+    updated_at: string | null
+    revision: string
+  }
+  pipeline: {
+    valid: boolean
+    version: number | null
+    diagnostics: Diagnostic[]
+  }
+  scheduler: {
+    valid: boolean
+    diagnostics: Diagnostic[]
+  }
+  issue_mapping_diagnostics: (Diagnostic & { work_item_key?: string | null })[]
+  horizons: {
+    now: string | null
+    parallel: string[]
+    next: string | null
+    later: string[]
+    history: string[]
+  }
+  items: RoadmapExplorerItem[]
+}
+
+export type RoadmapExplorerIssueDetail = {
+  repository_full_name: string
+  number: number
+  title: string
+  body: string
+  state: string
+  url: string
+  updated_at: string | null
+}
+
