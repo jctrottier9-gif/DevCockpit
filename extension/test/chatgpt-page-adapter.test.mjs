@@ -30,6 +30,7 @@ class FakeElement {
     this.children = new Set();
     this.selectorMap = new Map();
     this.closestMap = new Map();
+    this.checked = false;
   }
   get textContent() { return this._text; }
   set textContent(value) { this._text = value; }
@@ -46,6 +47,7 @@ class FakeElement {
   click() { this.clicked = true; }
   contains(other) { return this.children.has(other); }
   querySelectorAll(selector) { return this.selectorMap.get(selector) || []; }
+  querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
   closest(selector) { return this.closestMap.get(selector) || null; }
 }
 
@@ -766,4 +768,123 @@ test("collapsed inspection finds Show more in the surrounding conversation turn"
   assert.equal(showMore.clicked, true);
   assert.equal(result.ok, true);
   assert.equal(result.state, "SENT");
+});
+
+
+test("native collapsible user-message label expands even when text is concatenated", async () => {
+  const source = [
+    "La livraison GitHub de DC-070B est fusionnée et les validations requises sont vertes.",
+    "Repository : jctrottier9-gif/DevCockpit",
+    "WorkItem : DC-070B",
+    "Roadmap maître : #1",
+    "État observé : ROADMAP_UPDATE_REQUIRED",
+    "Reprends la même session DEV pour effectuer uniquement la réconciliation post-merge du roadmap.",
+  ].join("\n");
+
+  const composer = new FakeElement({
+    attributes: { contenteditable: "true", role: "textbox" },
+    text: "",
+  });
+  const user = new FakeElement({ text: "La livraison GitHub de DC-070B est fusionnée" });
+  const root = new FakeElement({
+    attributes: { "data-testid": "collapsible-user-message-root" },
+  });
+  const content = new FakeElement({
+    attributes: { "data-testid": "collapsible-user-message-content" },
+    text: "La livraison GitHub de DC-070B est fusionnée",
+  });
+  const checkbox = new FakeElement({
+    tagName: "INPUT",
+    attributes: { "data-testid": "collapsible-user-message-toggle-checkbox" },
+  });
+  const toggle = new FakeElement({
+    tagName: "LABEL",
+    attributes: { "data-testid": "collapsible-user-message-toggle", for: "more" },
+    text: "Show moreShow less",
+  });
+
+  toggle.closestMap.set('[data-testid="collapsible-user-message-root"]', root);
+  root.selectorMap.set(
+    '[data-testid="collapsible-user-message-toggle-checkbox"]',
+    [checkbox],
+  );
+  user.selectorMap.set(
+    '[data-testid="collapsible-user-message-toggle"], button, [role="button"], label[for]',
+    [toggle],
+  );
+  user.selectorMap.set(
+    '[data-testid="collapsible-user-message-content"], [data-search-result-target], .whitespace-pre-wrap, .markdown',
+    [content],
+  );
+  toggle.click = () => {
+    toggle.clicked = true;
+    checkbox.checked = true;
+    content.textContent = source;
+    user.textContent = source;
+  };
+
+  const { adapter } = await adapterFor(new Map([
+    ['#prompt-textarea', [composer]],
+    ['[data-message-author-role="user"]', [user]],
+  ]));
+  adapter.location = { href: "https://chatgpt.com/c/dc070b" };
+  adapter.sleep = async () => {};
+
+  const result = await adapter.inspectPromptDelivery(source);
+
+  assert.equal(toggle.clicked, true);
+  assert.equal(checkbox.checked, true);
+  assert.equal(result.ok, true);
+  assert.equal(result.state, "SENT");
+});
+
+test("native collapsible content is preferred as a complete user-turn candidate", async () => {
+  const source = "Alpha beta gamma delta epsilon";
+  const composer = new FakeElement({
+    attributes: { contenteditable: "true", role: "textbox" },
+    text: "",
+  });
+  const user = new FakeElement({ text: "Alpha beta Show more" });
+  const content = new FakeElement({
+    attributes: { "data-testid": "collapsible-user-message-content" },
+    text: source,
+  });
+  user.selectorMap.set(
+    '[data-testid="collapsible-user-message-content"], [data-search-result-target], .whitespace-pre-wrap, .markdown',
+    [content],
+  );
+
+  const { adapter } = await adapterFor(new Map([
+    ['#prompt-textarea', [composer]],
+    ['[data-message-author-role="user"]', [user]],
+  ]));
+  adapter.location = { href: "https://chatgpt.com/c/native-content" };
+
+  const result = await adapter.inspectPromptDelivery(source);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.state, "SENT");
+});
+
+test("already-expanded native collapsible toggle is not clicked again", async () => {
+  const context = await loadClassicScripts(
+    ["src/chatgpt-page-adapter.js"],
+    { InputEvent: FakeEvent, Event: FakeEvent },
+  );
+  const { isShowMoreControl } = context.DevCockpitCompanion.chatgpt;
+  const root = new FakeElement();
+  const checkbox = new FakeElement();
+  checkbox.checked = true;
+  root.selectorMap.set(
+    '[data-testid="collapsible-user-message-toggle-checkbox"]',
+    [checkbox],
+  );
+  const toggle = new FakeElement({
+    tagName: "LABEL",
+    attributes: { "data-testid": "collapsible-user-message-toggle" },
+    text: "Show moreShow less",
+  });
+  toggle.closestMap.set('[data-testid="collapsible-user-message-root"]', root);
+
+  assert.equal(isShowMoreControl(toggle, root), false);
 });
