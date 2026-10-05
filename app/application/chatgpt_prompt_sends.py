@@ -15,6 +15,7 @@ from app.domain.chatgpt_prompt_send import (
 from app.domain.conversation_binding import (
     ConversationBindingError,
     ConversationBindingState,
+    is_legacy_synthetic_conversation_id,
 )
 
 
@@ -117,6 +118,11 @@ def _promote_binding(
     ):
         return
 
+    if is_legacy_synthetic_conversation_id(command.conversation_id):
+        raise ChatGptSendBindingConflict(
+            f"Synthetic ChatGPT conversation identity cannot be promoted for {command.session}"
+        )
+
     current = uow.conversation_bindings.get_by_agent_session(command.session)
     if current is None:
         from app.domain.conversation_binding import ConversationBinding
@@ -136,12 +142,21 @@ def _promote_binding(
             f"Cannot confirm send against invalidated binding for {command.session}"
         )
     if (
-        current.conversation_id != command.conversation_id
-        or current.canonical_url != command.canonical_url
+        current.conversation_id == command.conversation_id
+        and current.canonical_url == command.canonical_url
     ):
-        raise ChatGptSendBindingConflict(
-            f"Confirmed conversation differs from durable binding for {command.session}"
+        return
+    if is_legacy_synthetic_conversation_id(current.conversation_id):
+        current.rebind(
+            conversation_id=command.conversation_id,
+            canonical_url=command.canonical_url,
+            now=recorded_at,
         )
+        uow.conversation_bindings.save(current)
+        return
+    raise ChatGptSendBindingConflict(
+        f"Confirmed conversation differs from durable binding for {command.session}"
+    )
 
 
 def record_chatgpt_send_status(
