@@ -1038,3 +1038,144 @@ test("multi-turn reconciliation diagnostics identify the best turn without fuzzy
   assert.match(result.error, /expected=done/);
   assert.match(result.error, /observed=blocked/);
 });
+
+
+test("flattened ordered-list markers are removed only when they match known source item starts", async () => {
+  const context = await loadClassicScripts(
+    ["src/chatgpt-page-adapter.js"],
+    { InputEvent: FakeEvent, Event: FakeEvent },
+  );
+  const {
+    sameRenderedPromptText,
+    renderedPromptFingerprint,
+    lexicalPromptFingerprint,
+  } = context.DevCockpitCompanion.chatgpt;
+
+  const source = [
+    "La livraison GitHub de DC-070B est fusionnée et les validations requises sont vertes.",
+    "PR : #79",
+    "Version métier : 1.0",
+    "1. Synchronise-toi avec le vrai main actuel.",
+    "2. Relis AGENTS.md et le roadmap maître #1.",
+    "3. Vérifie sur GitHub que la PR #79 est réellement fusionnée.",
+    "4. Relis immédiatement la version courante du roadmap.",
+    "5. Mets directement à jour le roadmap GitHub.",
+    "6. Ne change pas le scope ni l'ordre.",
+    "7. Si le prochain WorkItem est une ARCHITECTURE_GATE, rends-le READY.",
+    "8. Après l'édition, relis le roadmap GitHub.",
+  ].join("\n");
+
+  const flattened = [
+    "La livraison GitHub de DC-070B est fusionnée et les validations requises sont vertes.",
+    "PR : #79",
+    "Version métier : 1.0",
+    "1 Synchronise-toi avec le vrai main actuel.",
+    "2 Relis AGENTS.md et le roadmap maître #1.",
+    "3 Vérifie sur GitHub que la PR #79 est réellement fusionnée.",
+    "4 Relis immédiatement la version courante du roadmap.",
+    "5 Mets directement à jour le roadmap GitHub.",
+    "6 Ne change pas le scope ni l'ordre.",
+    "7 Si le prochain WorkItem est une ARCHITECTURE_GATE, rends-le READY.",
+    "8 Après l'édition, relis le roadmap GitHub.",
+  ].join(" ");
+
+  assert.equal(sameRenderedPromptText(flattened, source), true);
+  assert.deepEqual(
+    Array.from(renderedPromptFingerprint(flattened, source)),
+    Array.from(lexicalPromptFingerprint(source)),
+  );
+  assert.equal(
+    renderedPromptFingerprint(flattened, source).includes("79"),
+    true,
+  );
+  assert.equal(
+    renderedPromptFingerprint(flattened, source).includes("1"),
+    true,
+    "the business version 1.0 remains significant",
+  );
+});
+
+test("flattened ordered-list normalization still rejects changed item content", async () => {
+  const context = await loadClassicScripts(
+    ["src/chatgpt-page-adapter.js"],
+    { InputEvent: FakeEvent, Event: FakeEvent },
+  );
+  const { sameRenderedPromptText } = context.DevCockpitCompanion.chatgpt;
+  const source = [
+    "1. Synchronise-toi avec le vrai main actuel.",
+    "2. Relis AGENTS.md et le roadmap maître #1.",
+  ].join("\n");
+  const changed =
+    "1 Synchronise-toi avec le faux main actuel. 2 Relis AGENTS.md et le roadmap maître #1.";
+
+  assert.equal(sameRenderedPromptText(changed, source), false);
+});
+
+test("two-turn DC-070B inspection accepts flattened ordered-list markers only in the matching second turn", async () => {
+  const source = [
+    "La livraison GitHub de DC-070B est fusionnée et les validations requises sont vertes.",
+    "Repository : jctrottier9-gif/DevCockpit",
+    "WorkItem : DC-070B — DEV Pool parallèle et cartes exécution",
+    "PR : #79",
+    "Head SHA livré : d18edce91f7ae986f2a7adec98e9c1abeecb6575",
+    "Merged at : 2026-10-05T00:03:34Z",
+    "État observé : ROADMAP_UPDATE_REQUIRED",
+    "Reprends la même session DEV pour effectuer uniquement la réconciliation post-merge du roadmap.",
+    "1. Synchronise-toi avec le vrai main actuel.",
+    "2. Relis AGENTS.md et le roadmap maître #1, y compris son bloc canonique présent.",
+    "3. Vérifie sur GitHub que la PR #79 est réellement fusionnée.",
+    "4. Relis immédiatement la version courante du roadmap.",
+    "5. Mets directement à jour le roadmap GitHub.",
+    "6. Ne change pas le scope, l'ordre ou les dépendances.",
+    "7. Si le prochain WorkItem est une ARCHITECTURE_GATE, rends-le READY uniquement.",
+    "8. Après l'édition, relis le roadmap GitHub.",
+  ].join("\n");
+
+  const flattened = [
+    "La livraison GitHub de DC-070B est fusionnée et les validations requises sont vertes.",
+    "Repository : jctrottier9-gif/DevCockpit",
+    "WorkItem : DC-070B — DEV Pool parallèle et cartes exécution",
+    "PR : #79",
+    "Head SHA livré : d18edce91f7ae986f2a7adec98e9c1abeecb6575",
+    "Merged at : 2026-10-05T00:03:34Z",
+    "État observé : ROADMAP_UPDATE_REQUIRED",
+    "Reprends la même session DEV pour effectuer uniquement la réconciliation post-merge du roadmap.",
+    "1 Synchronise-toi avec le vrai main actuel.",
+    "2 Relis AGENTS.md et le roadmap maître #1, y compris son bloc canonique présent.",
+    "3 Vérifie sur GitHub que la PR #79 est réellement fusionnée.",
+    "4 Relis immédiatement la version courante du roadmap.",
+    "5 Mets directement à jour le roadmap GitHub.",
+    "6 Ne change pas le scope, l'ordre ou les dépendances.",
+    "7 Si le prochain WorkItem est une ARCHITECTURE_GATE, rends-le READY uniquement.",
+    "8 Après l'édition, relis le roadmap GitHub.",
+  ].join(" ");
+
+  const composer = new FakeElement({
+    attributes: { contenteditable: "true", role: "textbox" },
+    text: "",
+  });
+  const firstOuter = new FakeElement({
+    text: "Tu travailles sur le dépôt GitHub jctrottier9-gif/DevCockpit. Prends en charge DC-070B.",
+  });
+  const firstInner = new FakeElement({ text: firstOuter.textContent });
+  firstOuter.children.add(firstInner);
+  const secondOuter = new FakeElement({ text: flattened });
+  const secondInner = new FakeElement({ text: flattened });
+  secondOuter.children.add(secondInner);
+
+  const { adapter } = await adapterFor(new Map([
+    ['#prompt-textarea', [composer]],
+    ['[data-message-author-role="user"]', [firstOuter, secondOuter]],
+    ['[data-user-message-bubble]', [firstInner, secondInner]],
+  ]));
+  adapter.location = { href: "https://chatgpt.com/c/dc070b-flattened-list" };
+
+  const result = await adapter.inspectPromptDelivery(source);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.state, "SENT");
+  assert.equal(
+    result.conversationUrl,
+    "https://chatgpt.com/c/dc070b-flattened-list",
+  );
+});
