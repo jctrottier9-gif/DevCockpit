@@ -5,7 +5,7 @@ from enum import StrEnum
 from typing import Any
 
 from app.application.handoffs import read_orchestration
-from app.application.interaction_summaries import read_interaction_summary
+from app.application.interaction_summaries import interaction_indication, read_interaction_summary
 from app.application.parallel_executions import (
     ParallelDevExecutionProjection,
     read_project_parallel_dev_executions,
@@ -611,7 +611,7 @@ def _prompt_items(
                     if is_ci_red
                     else f"DEV · {dispatch.work_item_id} · réconciliation roadmap prête"
                     if is_roadmap_reconcile
-                    else f"{role} · {dispatch.work_item_id} · prompt prêt"
+                    else f"{role} · {dispatch.work_item_id} · {interaction_indication(interaction)}"
                 ),
                 reason=reason,
                 project_id=project_id,
