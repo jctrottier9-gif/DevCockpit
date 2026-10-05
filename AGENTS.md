@@ -32,8 +32,8 @@ Durable product rules:
 
 - GitHub and the canonical roadmap are authoritative for delivery state.
 - ChatGPT conversations are work surfaces, never the source of truth.
-- DevCockpit may prepare DEV prompts automatically when deterministic rules authorize them. DC-063A deterministically routes an already-authorized PromptDispatch to its exact bound conversation or a dedicated provisional tab; DC-063B automatically sends that already-authorized dispatch with per-session FIFO, durable SEND_ARMED, targeted confirmation and fail-stop recovery.
-- A READY architecture gate is never sufficient authority to create its ARCH PromptDispatch; explicit human authorization in DevCockpit is required first.
+- DevCockpit may prepare DEV prompts automatically when deterministic rules authorize them. DC-063A deterministically routes an already-authorized non-ARCH PromptDispatch to its exact bound conversation or a dedicated provisional tab; DC-063B automatically sends that already-authorized non-ARCH dispatch with per-session FIFO, durable SEND_ARMED, targeted confirmation and fail-stop recovery.
+- A READY architecture gate is never sufficient authority to create its ARCH PromptDispatch; explicit human authorization in DevCockpit is required first. Even after authorization, ARCH/ASTRA PromptDispatch records are manual-only in the Firefox companion: the user must select an active ChatGPT conversation already placed in Work mode and launch the gate explicitly from the extension.
 - The Firefox extension is a thin transport/UI adapter, not a product-state authority.
 - CI, PR and merge evidence come from GitHub, not from statements made in ChatGPT.
 - Orchestration rules should be deterministic whenever practical.
@@ -164,7 +164,8 @@ The Firefox extension should remain deliberately small:
 - maintain the WebSocket connection;
 - receive prompt payloads;
 - show a queue;
-- automatically route and send only already-authorized PromptDispatch records, using exact ConversationBinding identity or one dedicated provisional tab, per-session serialization and fail-stop send idempotence from ADR-0014;
+- automatically route and send only already-authorized non-ARCH PromptDispatch records, using exact ConversationBinding identity or one dedicated provisional tab, per-session serialization and fail-stop send idempotence from ADR-0014;
+- keep every ARCH/ASTRA PromptDispatch manual-only after delivery to Firefox: no automatic tab creation, routing, recovery send or resume is permitted; the human selects an active ChatGPT tab in Work mode and explicitly launches the gate from the extension;
 - persist SEND_ARMED before the irreversible ChatGPT click, require targeted SENT_CONFIRMED evidence, and never auto-resend an AMBIGUOUS send;
 - allow the user to explicitly return the selected ChatGPT response to DevCockpit; response return remains manual even after automatic send.
 
@@ -231,7 +232,7 @@ May:
 
 Architecture gates should precede dependent implementation slices when the roadmap requires them.
 
-A READY architecture gate is an eligibility signal, not execution authority. The ARCH prompt requires an explicit human authorization action in DevCockpit; polling, dependency satisfaction, CI state and roadmap refresh must never substitute for that authorization.
+A READY architecture gate is an eligibility signal, not execution authority. The ARCH prompt requires an explicit human authorization action in DevCockpit; polling, dependency satisfaction, CI state and roadmap refresh must never substitute for that authorization. Authorization prepares the ARCH PromptDispatch but does not auto-send it: ARCH/ASTRA execution requires a second explicit human action in the Firefox companion against an active ChatGPT Work-mode tab.
 
 ### Developer
 
