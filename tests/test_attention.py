@@ -266,7 +266,7 @@ def test_sent_confirmed_is_watch_with_no_imported_response_claim(tmp_path):
     assert item.context["delivery_id"] == str(delivery.delivery_id)
     assert item.context["interaction_state"] == "SENT_CONFIRMED"
     assert item.context["imported_response_available"] is False
-    assert "Aucune réponse" in item.primary_action.label
+    assert item.primary_action.label == "Ouvrir l'orchestration · aucune réponse importée"
 
 
 def test_ambiguous_send_is_action_and_never_allows_resend(tmp_path):
