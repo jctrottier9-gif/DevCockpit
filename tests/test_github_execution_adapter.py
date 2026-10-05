@@ -33,6 +33,7 @@ def pull_payload(
     state: str = "open",
     merged_at=None,
     mergeable=None,
+    auto_merge=None,
 ):
     return {
         "number": number,
@@ -43,6 +44,7 @@ def pull_payload(
         "updated_at": "2026-10-01T12:00:00Z",
         "html_url": f"https://github.example/pr/{number}",
         "mergeable": mergeable,
+        "auto_merge": auto_merge,
         "head": {"ref": branch, "sha": sha},
     }
 
@@ -97,6 +99,53 @@ def test_reads_current_pr_head_ci_and_failed_jobs() -> None:
     assert projection.ci is not None
     assert projection.ci.failed_jobs == ("backend / pytest",)
     assert "/repos/jctrottier9-gif/DevCockpit/branches" not in seen
+
+
+def test_reads_auto_merge_state_from_pull_request_detail() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/repos/jctrottier9-gif/DevCockpit":
+            return httpx.Response(200, json={"default_branch": "main"})
+        if path == "/repos/jctrottier9-gif/DevCockpit/pulls":
+            return httpx.Response(200, json=[pull_payload()])
+        if path == "/repos/jctrottier9-gif/DevCockpit/pulls/22":
+            return httpx.Response(
+                200,
+                json=pull_payload(
+                    mergeable=True,
+                    auto_merge={
+                        "enabled_by": {"login": "jctrottier9-gif"},
+                        "merge_method": "SQUASH",
+                    },
+                ),
+            )
+        if path == "/repos/jctrottier9-gif/DevCockpit/actions/runs":
+            return httpx.Response(
+                200,
+                json={
+                    "workflow_runs": [
+                        {
+                            "id": 456,
+                            "name": "CI",
+                            "status": "completed",
+                            "conclusion": "success",
+                            "run_attempt": 1,
+                            "head_sha": "abc123",
+                            "html_url": "https://github.example/actions/456",
+                        }
+                    ]
+                },
+            )
+        raise AssertionError(f"unexpected GitHub request: {request.url}")
+
+    evidence = reader_for(handler).read(PROJECT, WORK_ITEM)
+
+    assert len(evidence.pull_requests) == 1
+    assert evidence.pull_requests[0].mergeable is True
+    assert evidence.pull_requests[0].auto_merge_enabled is True
+    projection = derive_execution_projection(WORK_ITEM, evidence)
+    assert projection.state is ExecutionState.READY_TO_MERGE
+    assert projection.next_action.value == "WAIT"
 
 
 def test_branch_is_developing_only_when_compare_reports_ahead() -> None:
