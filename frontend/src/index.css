@@ -889,3 +889,173 @@ details { margin: 1rem 0; }
   line-height: 1.45;
 }
 
+
+
+/* DC-070D Architect and Reviewer detail panels */
+.role-detail-panel {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.role-detail-heading,
+.role-detail-card__heading,
+.workflow-heading,
+.adr-row,
+.job-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.role-detail-heading h3 {
+  margin: 0.15rem 0 0;
+}
+
+.role-detail-heading small,
+.role-detail-card__heading span,
+.workflow-heading span,
+.workflow-head,
+.job-row small {
+  color: #687386;
+}
+
+.role-detail-list,
+.workflow-list,
+.job-list,
+.adr-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.role-detail-card,
+.workflow-card,
+.adr-detail {
+  padding: 1rem;
+  border: 1px solid #dfe4ec;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.role-detail-card__heading > div,
+.workflow-heading > div,
+.job-row > span {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.architecture-authorization {
+  margin: 1rem 0;
+  padding: 0.85rem;
+  border: 1px solid #d8b45c;
+  border-radius: 10px;
+  background: #fffaf0;
+}
+
+.architecture-authorization p {
+  margin: 0.35rem 0;
+}
+
+.github-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 0.75rem 0;
+}
+
+.adr-list {
+  margin-top: 1rem;
+}
+
+.adr-row {
+  align-items: center;
+  padding: 0.55rem 0;
+  border-top: 1px solid #edf0f4;
+}
+
+.adr-row > span:last-child {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.adr-detail pre {
+  max-height: 32rem;
+  overflow: auto;
+  margin: 1rem 0 0;
+  padding: 0.85rem;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.panel-error,
+.panel-diagnostics {
+  color: #8a2432;
+}
+
+.panel-diagnostics {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.review-pr code,
+.workflow-card code {
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+.workflow-card {
+  background: #f8fafc;
+}
+
+.workflow-head {
+  margin: 0.55rem 0;
+  font-size: 0.82rem;
+}
+
+.job-row {
+  align-items: center;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid #dfe4ec;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.job-state {
+  white-space: nowrap;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.job-row--failure,
+.job-row--timed_out,
+.job-row--cancelled,
+.job-state--failure,
+.state-badge--red {
+  border-color: #d7a0a7;
+}
+
+.job-row--in_progress,
+.job-row--queued,
+.job-state--in_progress,
+.state-badge--running {
+  border-color: #d8b45c;
+}
+
+.job-row--success,
+.job-state--success,
+.state-badge--green {
+  border-color: #9fc8aa;
+}
+
+@media (max-width: 700px) {
+  .role-detail-heading,
+  .role-detail-card__heading,
+  .workflow-heading,
+  .adr-row,
+  .job-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
