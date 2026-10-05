@@ -33,6 +33,7 @@ def pr(
     merged: bool = False,
     mergeable: bool | None = None,
     merged_at: str | None = None,
+    auto_merge_enabled: bool = False,
 ) -> PullRequestEvidence:
     return PullRequestEvidence(
         number=number,
@@ -43,6 +44,7 @@ def pr(
         state=state,
         merged=merged,
         mergeable=mergeable,
+        auto_merge_enabled=auto_merge_enabled,
         url=f"https://github.example/pr/{number}",
         updated_at="2026-10-01T12:00:00Z",
         merged_at=merged_at,
@@ -165,6 +167,20 @@ def test_green_mergeable_pr_is_ready_to_merge() -> None:
 
     assert projection.state is ExecutionState.READY_TO_MERGE
     assert projection.next_action is NextAction.MERGE_PR
+
+
+def test_green_mergeable_pr_with_auto_merge_armed_waits_without_follow_up() -> None:
+    projection = derive_execution_projection(
+        WORK_ITEM,
+        ExecutionEvidence(
+            default_branch="main",
+            pull_requests=(pr(mergeable=True, auto_merge_enabled=True),),
+            workflow_runs=(run(conclusion="success"),),
+        ),
+    )
+
+    assert projection.state is ExecutionState.READY_TO_MERGE
+    assert projection.next_action is NextAction.WAIT
 
 
 def test_merged_green_pr_while_roadmap_ready_requires_reconciliation() -> None:
