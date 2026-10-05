@@ -28,12 +28,16 @@ For an ARCHITECTURE_GATE:
 ~~~text
 human authorization in DevCockpit
         ↓
-PromptDispatch
+PromptDispatch ARCH
         ↓
-automatic companion routing/send
+Firefox queue
+        ↓
+human selects ChatGPT Work-mode tab
+        ↓
+explicit companion launch
 ~~~
 
-The final arrow becomes available only after DC-063B. Automatic browser transport never substitutes for the human authorization before creation of the ARCH PromptDispatch.
+ARCH is a deliberate exception to automatic routing/send. The browser must never create a tab, route, recover or resume-send an ARCH/ASTRA dispatch automatically. The explicit companion launch still uses SEND_ARMED, targeted confirmation, idempotency and ConversationBinding promotion. Automatic browser transport never substitutes for either human action.
 
 The Firefox companion is never authoritative for roadmap, scheduler, WorkItem state, CI, ResourceLocks, PO/ARCH decisions or delivery state.
 
@@ -484,3 +488,26 @@ DC-063B owns:
 - Unknown post-click outcomes stop automatic progress instead of risking duplicate prompts.
 - Protocol v1 remains valid for the currently delivered manual path until the v2 implementation is introduced deliberately.
 - The explicit ChatGPT response-return model remains unchanged.
+
+
+## Amendment — 2026-10-05 — ARCH/ASTRA remains manual to preserve ChatGPT Work mode
+
+The original automatic-send decision is narrowed for the `ARCH` role because ChatGPT's Chat/Work mode is UI state outside DevCockpit's protocol and authority boundary.
+
+Accepted rule:
+
+~~~text
+DEV / PO
+→ automatic routing + automatic send remain allowed
+
+ARCH / ASTRA
+→ PromptDispatch and PromptDelivery remain normal
+→ automatic routing/send/recovery/resume forbidden
+→ extension displays an explicit manual launch action
+→ user selects an active ChatGPT tab already configured in Work mode
+→ the manual click executes the existing SEND_ARMED + confirmation pipeline
+~~~
+
+No protocol-v2 field is added. The role is already deterministic in `AgentSession = <project>:<role>:<work-item>`.
+
+The extension must not attempt to infer, toggle or persist ChatGPT's Chat/Work UI mode. That remains an explicit human choice for architecture gates. This avoids making brittle DOM state part of DevCockpit's transport contract and prevents ARCH requirements from changing the automatic transport semantics of DEV/PO sessions.
