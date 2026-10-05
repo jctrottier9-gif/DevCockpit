@@ -84,8 +84,22 @@
     return comparableText(left) === comparableText(right);
   }
 
+  const MARKDOWN_ESCAPABLE_PUNCTUATION =
+    "!\\\"#$%&'()*+,-./:;<=>?@[\\\\]^_\`{|}~";
+
+  function normalizeRenderedPromptSource(value) {
+    let text = normalizedText(value)
+      .replace(/(?:&#x0*20;|&#0*32;|&nbsp;)/gi, " ")
+      .replace(/\\\\\n/g, "\n");
+
+    text = text.replace(/\\\\(.)/g, (match, character) =>
+      MARKDOWN_ESCAPABLE_PUNCTUATION.includes(character) ? character : match,
+    );
+    return text;
+  }
+
   function renderedPromptComparableText(value) {
-    let text = normalizedText(value);
+    let text = normalizeRenderedPromptSource(value);
     text = text
       .replace(/^ {0,3}\x60{3}[^\n]*$/gm, "")
       .replace(/!\[([^\]]*)\]\([^\n)]*\)/g, "$1")
@@ -202,6 +216,56 @@
         sameRenderedPromptText(candidate, text),
       ),
     );
+  }
+
+  function promptMismatchDiagnostics(groups, text) {
+    const expected = lexicalPromptFingerprint(text);
+    let best = null;
+
+    groups.forEach((group, turnIndex) => {
+      for (const element of group) {
+        for (const candidate of userTurnTextCandidates(element)) {
+          const observed = lexicalPromptFingerprint(candidate);
+          let prefix = 0;
+          const limit = Math.min(expected.length, observed.length);
+          while (prefix < limit && expected[prefix] === observed[prefix]) {
+            prefix += 1;
+          }
+          const score = {
+            turnIndex,
+            prefix,
+            observedLength: observed.length,
+            expectedToken: expected[prefix] || "eof",
+            observedToken: observed[prefix] || "eof",
+          };
+          if (
+            best === null ||
+            score.prefix > best.prefix ||
+            (
+              score.prefix === best.prefix &&
+              Math.abs(score.observedLength - expected.length) <
+                Math.abs(best.observedLength - expected.length)
+            )
+          ) {
+            best = score;
+          }
+        }
+      }
+    });
+
+    if (best === null) {
+      return "best_turn=0,prefix=0,source_tokens=" + expected.length;
+    }
+    const safeToken = (value) =>
+      String(value).slice(0, 24).replace(/[^\p{L}\p{N}_-]/gu, "_");
+    return [
+      "best_turn=" + (best.turnIndex + 1),
+      "prefix=" + best.prefix,
+      "source_tokens=" + expected.length,
+      "observed_tokens=" + best.observedLength,
+      "expected=" + safeToken(best.expectedToken),
+      "observed=" + safeToken(best.observedToken),
+    ].join(",");
   }
 
   function userTurnControlScopes(element) {
@@ -595,6 +659,7 @@
             "raw=" + rawUserMessages.length,
             "logical=" + userTurns.length,
             "matching=" + matchingTurns.length,
+            promptMismatchDiagnostics(userTurns, text),
           ].join(","),
       };
     }
@@ -635,6 +700,7 @@
     editableMode,
     comparableText,
     sameText,
+    normalizeRenderedPromptSource,
     renderedPromptComparableText,
     lexicalPromptFingerprint,
     sameRenderedPromptText,
@@ -643,6 +709,7 @@
     authoredNodeText,
     userTurnTextCandidates,
     userTurnMatchesText,
+    promptMismatchDiagnostics,
     userTurnControlScopes,
     isShowMoreControl,
     expandCollapsedUserTurns,
