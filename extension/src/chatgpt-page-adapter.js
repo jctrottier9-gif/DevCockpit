@@ -85,14 +85,14 @@
   }
 
   const MARKDOWN_ESCAPABLE_PUNCTUATION =
-    "!\\\"#$%&'()*+,-./:;<=>?@[\\\\]^_\`{|}~";
+    "!\\\"#$%&'()*+,-./:;<=>?@[\\\\]^_`{|}~";
 
   function normalizeRenderedPromptSource(value) {
     let text = normalizedText(value)
       .replace(/(?:&#x0*20;|&#0*32;|&nbsp;)/gi, " ")
-      .replace(/\\\\\n/g, "\n");
+      .replace(/\\\n/g, "\n");
 
-    text = text.replace(/\\\\(.)/g, (match, character) =>
+    text = text.replace(/\\(.)/g, (match, character) =>
       MARKDOWN_ESCAPABLE_PUNCTUATION.includes(character) ? character : match,
     );
     return text;
