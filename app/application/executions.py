@@ -422,7 +422,7 @@ def build_ready_to_merge_follow_up(
         )
 
     github_url = pull_request.url or "non disponible"
-    return f"""La CI de la PR #{pull_request.number} pour {work_item.key} est maintenant verte et GitHub rapporte la PR comme mergeable, mais l'auto-merge n'est pas observé armé.
+    return f"""La CI de la PR #{pull_request.number} pour {work_item.key} est maintenant verte et GitHub rapporte la PR comme mergeable, mais elle est toujours ouverte.
 
 Repository : {project.repository_full_name}
 WorkItem : {work_item.key} — {work_item.title}
@@ -430,14 +430,15 @@ PR : #{pull_request.number}
 GitHub : {github_url}
 Head SHA observé : {pull_request.head_sha}
 
-Reprends la même session DEV uniquement pour finaliser le handoff de merge.
+Reprends la même session DEV uniquement pour finaliser le merge déjà autorisé de cette livraison.
 
-1. Vérifie sur GitHub l'état courant de la PR #{pull_request.number} et son head SHA.
+1. Vérifie sur GitHub l'état courant de la PR #{pull_request.number}, son head SHA et les validations requises.
 2. Si la PR est déjà fusionnée, ne modifie rien et ARRÊTE ce tour; DevCockpit observera le merge et préparera la réconciliation du roadmap.
-3. Si la PR est toujours ouverte, que le head SHA est toujours {pull_request.head_sha}, que les validations requises sont vertes et que GitHub permet l'auto-merge, active l'auto-merge.
-4. Ne modifie aucun fichier, ne pousse aucun commit et ne fais pas de merge manuel pour contourner les règles du dépôt.
-5. Si GitHub refuse encore l'auto-merge, rapporte le blocage exact.
-6. Rapporte l'état final de l'auto-merge puis ARRÊTE ton tour DEV.
+3. Si la PR est toujours ouverte, exige que le head SHA soit encore exactement {pull_request.head_sha}, que les validations requises soient vertes et que GitHub la rapporte toujours mergeable sans conflit.
+4. Si ces conditions sont satisfaites, fusionne la PR avec une méthode autorisée par le dépôt. Ne contourne aucune règle de protection, review ou CI.
+5. Ne modifie aucun fichier, ne pousse aucun commit et ne commence aucune autre tranche.
+6. Si GitHub refuse le merge, rapporte le blocage exact.
+7. Rapporte l'état final de la PR puis ARRÊTE ton tour DEV.
 
 Ne commence pas la tranche suivante et ne reste pas à poller GitHub.
 """
