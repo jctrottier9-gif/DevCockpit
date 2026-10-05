@@ -36,6 +36,12 @@
     return labels[status] || "En attente";
   }
 
+  function isArchitectureSession(session) {
+    if (typeof session !== "string") return false;
+    const parts = session.split(":");
+    return parts.length === 3 && parts[1] === "ARCH";
+  }
+
   function showEntryError(element, message) {
     element.textContent = message || "";
     element.hidden = !message;
@@ -60,29 +66,53 @@
       showEntryError(entryError, entry.last_error);
 
       const sendButton = fragment.querySelector(".send");
+      const architecture = isArchitectureSession(entry.session);
       const ambiguous = sendState?.state === "AMBIGUOUS";
       const blocked = sendState?.state === "BLOCKED";
-      sendButton.hidden = !ambiguous && !blocked;
-      sendButton.textContent = ambiguous
-        ? "Vérifier l'envoi"
-        : "Réessayer après correction";
-      sendButton.title = ambiguous
-        ? "Vérifie le DOM ChatGPT sans renvoyer automatiquement."
-        : "Disponible seulement après un échec certain avant SEND_ARMED.";
+      const manualArchReady =
+        architecture &&
+        !ambiguous &&
+        (!sendState || sendState.state === "QUEUED" || blocked);
+
+      sendButton.hidden = !ambiguous && !blocked && !manualArchReady;
+      if (ambiguous) {
+        sendButton.textContent = "Vérifier l'envoi";
+        sendButton.title = "Vérifie le DOM ChatGPT sans renvoyer automatiquement.";
+      } else if (manualArchReady) {
+        sendButton.textContent = blocked
+          ? "Réessayer ASTRA dans l'onglet actif (Work)"
+          : "Lancer ASTRA dans l'onglet actif (Work)";
+        sendButton.title =
+          "Ouvrez ou sélectionnez d'abord la conversation ChatGPT en Work mode. DevCockpit n'ouvre ni ne choisit automatiquement le mode pour une gate ARCH.";
+      } else {
+        sendButton.textContent = "Réessayer après correction";
+        sendButton.title =
+          "Disponible seulement après un échec certain avant SEND_ARMED.";
+      }
+
       if (ambiguous) {
         showEntryError(
           entryError,
           "Envoi potentiellement effectué. Vérifiez l’état dans l’onglet ChatGPT; aucun renvoi automatique n’est permis.",
         );
+      } else if (manualArchReady && !sendState?.error_code) {
+        showEntryError(
+          entryError,
+          "Gate ASTRA manuelle : ouvrez/sélectionnez l’onglet ChatGPT en Work mode, puis lancez la gate ici. Les prompts ARCH ne sont jamais envoyés automatiquement.",
+        );
       } else if (sendState?.error_code) {
         showEntryError(entryError, sendState.error_code);
       }
+
       sendButton.addEventListener("click", async () => {
         sendButton.disabled = true;
+        const type = ambiguous
+          ? "devcockpit_resolve_ambiguous_send"
+          : manualArchReady
+            ? "devcockpit_send_arch_manually"
+            : "devcockpit_retry_chatgpt_send";
         const result = await browser.runtime.sendMessage({
-          type: ambiguous
-            ? "devcockpit_resolve_ambiguous_send"
-            : "devcockpit_retry_chatgpt_send",
+          type,
           deliveryId: entry.delivery_id,
         });
         if (!result?.ok && result?.error) {
