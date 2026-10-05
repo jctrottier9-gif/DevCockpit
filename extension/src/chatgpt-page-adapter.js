@@ -179,7 +179,7 @@
     if (typeof element?.querySelectorAll === "function") {
       const targets = [
         ...element.querySelectorAll(
-          '[data-search-result-target], .whitespace-pre-wrap, .markdown',
+          '[data-testid="collapsible-user-message-content"], [data-search-result-target], .whitespace-pre-wrap, .markdown',
         ),
       ];
       for (const target of targets) {
@@ -215,10 +215,39 @@
     return scopes;
   }
 
+  function isShowMoreControl(control, scope) {
+    if (!control) return false;
+    const testId = control.getAttribute?.("data-testid") || "";
+    const label = comparableText(
+      control.getAttribute?.("aria-label") || elementText(control),
+    ).toLocaleLowerCase("fr-CA");
+    const showMore =
+      label.includes("show more") ||
+      label.includes("afficher plus") ||
+      label.includes("voir plus");
+
+    if (testId === "collapsible-user-message-toggle") {
+      const root = control.closest?.(
+        '[data-testid="collapsible-user-message-root"]',
+      ) || scope;
+      const checkbox = root?.querySelector?.(
+        '[data-testid="collapsible-user-message-toggle-checkbox"]',
+      );
+      if (checkbox?.checked === true) return false;
+      return showMore || label === "";
+    }
+    return showMore;
+  }
+
   function expandCollapsedUserTurns(groups) {
     let clicked = false;
-    const labels = new Set(["show more", "afficher plus", "voir plus"]);
     const visited = new Set();
+    const selector = [
+      '[data-testid="collapsible-user-message-toggle"]',
+      'button',
+      '[role="button"]',
+      'label[for]',
+    ].join(", ");
     for (const group of groups) {
       for (const element of group) {
         for (const scope of userTurnControlScopes(element)) {
@@ -226,11 +255,8 @@
             continue;
           }
           visited.add(scope);
-          for (const control of scope.querySelectorAll('button, [role="button"]')) {
-            const label = comparableText(
-              control.getAttribute?.("aria-label") || elementText(control),
-            ).toLocaleLowerCase("fr-CA");
-            if (!labels.has(label)) continue;
+          for (const control of scope.querySelectorAll(selector)) {
+            if (!isShowMoreControl(control, scope)) continue;
             control.click?.();
             clicked = true;
           }
@@ -618,6 +644,7 @@
     userTurnTextCandidates,
     userTurnMatchesText,
     userTurnControlScopes,
+    isShowMoreControl,
     expandCollapsedUserTurns,
     LOGIN_SELECTORS,
     USER_MESSAGE_SELECTORS,
