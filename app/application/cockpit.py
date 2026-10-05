@@ -218,7 +218,9 @@ def _role_summaries(
     )
     arch_detail = (
         f"Gate {arch_work_item} requiert une intervention."
-        if arch_work_item is not None
+        if arch_actions and arch_work_item is not None
+        else f"Gate {arch_work_item} sous surveillance."
+        if arch_watches and arch_work_item is not None
         else "Aucune intervention Architecte signalée par l’Attention Center."
     )
 
