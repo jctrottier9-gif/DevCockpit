@@ -14,6 +14,7 @@
     isLegacySyntheticConversationId,
     isLegacySyntheticRouting,
     routingFromActiveConversation,
+    isArchitectureSession,
   } = namespace.send;
   const { buildChatGptResponseMessage, ProtocolError } = namespace.protocol;
 
@@ -64,6 +65,11 @@
       await broadcast("devcockpit_queue_changed");
     },
     onPromptAccepted: async (prompt) => {
+      if (isArchitectureSession(prompt.session)) {
+        await broadcast("devcockpit_queue_changed");
+        await broadcast("devcockpit_send_state_changed");
+        return;
+      }
       void sendCoordinator.enqueue(prompt.deliveryId).then(async () => {
         await broadcast("devcockpit_queue_changed");
         await broadcast("devcockpit_sent_prompts_changed");
@@ -163,7 +169,9 @@
           SEND_STATE.RETRYABLE_FAILURE,
         ].includes(state.state)
       ) {
-        void sendCoordinator.enqueue(entry.delivery_id);
+        if (!isArchitectureSession(entry.session)) {
+          void sendCoordinator.enqueue(entry.delivery_id);
+        }
       }
     }
   }
@@ -383,6 +391,56 @@
     if (message?.type === "devcockpit_retry_connection") {
       transport.retry();
       return { ok: true };
+    }
+
+    if (
+      message?.type === "devcockpit_send_arch_manually" &&
+      typeof message.deliveryId === "string"
+    ) {
+      try {
+        const queue = await queueStore.list();
+        const entry = queue.find(
+          (candidate) => candidate.delivery_id === message.deliveryId,
+        );
+        if (!entry) {
+          return { ok: false, error: "delivery_not_found:" + message.deliveryId };
+        }
+        if (!isArchitectureSession(entry.session)) {
+          return { ok: false, error: "manual_arch_only" };
+        }
+
+        const tab = await activeChatGptTab();
+        if (entry.routing) {
+          const activeConversation = canonicalConversation(tab.url);
+          if (
+            !activeConversation ||
+            activeConversation.canonical_url !== entry.routing.canonical_url
+          ) {
+            return { ok: false, error: "manual_arch_wrong_conversation" };
+          }
+        }
+
+        const current = await sendStore.get(entry.delivery_id);
+        if (current?.state === SEND_STATE.BLOCKED) {
+          await sendStore.retryBlocked(entry.delivery_id);
+        }
+        if (current?.state === SEND_STATE.AMBIGUOUS) {
+          return { ok: false, error: "manual_arch_send_ambiguous_verify_first" };
+        }
+
+        const result = await sendCoordinator.enqueue(entry.delivery_id, {
+          manualTabId: tab.id,
+        });
+        await broadcast("devcockpit_queue_changed");
+        await broadcast("devcockpit_sent_prompts_changed");
+        await broadcast("devcockpit_send_state_changed");
+        return result;
+      } catch (error) {
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
     }
 
     if (
