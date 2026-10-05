@@ -148,7 +148,9 @@ export default function RoadmapExplorer({
   useEffect(() => () => issueControllerRef.current?.abort(), [])
 
   const itemByKey = useMemo(
-    () => new Map(explorer?.items.map(item => [item.key, item]) ?? []),
+    () => new Map<string, RoadmapExplorerItem>(
+      explorer?.items.map(item => [item.key, item] as const) ?? [],
+    ),
     [explorer],
   )
   const selectedItem = selectedKey ? itemByKey.get(selectedKey) ?? null : null
