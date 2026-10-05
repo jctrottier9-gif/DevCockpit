@@ -492,7 +492,7 @@ def _prompt_items(
             level = AttentionLevel.WATCH
             primary_action = AttentionAction(
                 kind="WAIT_IMPORTED_RESPONSE",
-                label="Aucune réponse importée",
+                label="Ouvrir l'orchestration · aucune réponse importée",
                 target="orchestration",
                 work_item_id=dispatch.work_item_id,
                 dispatch_id=str(dispatch.dispatch_id),
