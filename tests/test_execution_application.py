@@ -264,8 +264,9 @@ def test_ready_to_merge_creates_one_idempotent_same_session_follow_up() -> None:
     assert second.dispatch is not None
     assert first.dispatch.dispatch_id == second.dispatch.dispatch_id
     assert first.dispatch.agent_session == "DevCockpit:DEV:DC-021"
-    assert "auto-merge n'est pas observé armé" in first.dispatch.prompt_text
+    assert "toujours ouverte" in first.dispatch.prompt_text
     assert "Head SHA observé : abc123" in first.dispatch.prompt_text
+    assert "fusionne la PR avec une méthode autorisée par le dépôt" in first.dispatch.prompt_text
     assert "Ne modifie aucun fichier" in first.dispatch.prompt_text
     assert len(repository.by_key) == 1
 
