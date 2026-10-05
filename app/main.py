@@ -297,10 +297,20 @@ def _parallel_execution_item_payload(
         "inhibition_reason": item.inhibition_reason,
         "interaction": (
             {
+                "project_id": item.interaction.project_id,
+                "work_item_id": item.interaction.work_item_id,
+                "role": item.interaction.role,
+                "agent_session": item.interaction.agent_session,
                 "dispatch_id": item.interaction.dispatch_id,
                 "dispatch_status": item.interaction.dispatch_status,
                 "delivery_id": item.interaction.delivery_id,
                 "delivery_status": item.interaction.delivery_status,
+                "delivery_acknowledged_at": (
+                    item.interaction.delivery_acknowledged_at.isoformat()
+                    if item.interaction.delivery_acknowledged_at is not None
+                    else None
+                ),
+                "state": item.interaction.state,
                 "send_state": item.interaction.send_state,
                 "send_attempt_count": item.interaction.send_attempt_count,
                 "send_error_code": item.interaction.send_error_code,
@@ -312,6 +322,14 @@ def _parallel_execution_item_payload(
                 "imported_response_available": (
                     item.interaction.imported_response_available
                 ),
+                "imported_response_count": item.interaction.imported_response_count,
+                "latest_imported_response_at": (
+                    item.interaction.latest_imported_response_at.isoformat()
+                    if item.interaction.latest_imported_response_at is not None
+                    else None
+                ),
+                "manual_send_required": item.interaction.manual_send_required,
+                "automatic_resend_allowed": item.interaction.automatic_resend_allowed,
             }
             if item.interaction is not None
             else None
