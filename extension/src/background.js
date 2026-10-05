@@ -169,9 +169,20 @@
           SEND_STATE.RETRYABLE_FAILURE,
         ].includes(state.state)
       ) {
-        if (!isArchitectureSession(entry.session)) {
-          void sendCoordinator.enqueue(entry.delivery_id);
+        if (isArchitectureSession(entry.session)) {
+          if (state.state !== SEND_STATE.QUEUED) {
+            const reset = await sendStore.transition({
+              deliveryId: entry.delivery_id,
+              session: entry.session,
+              state: SEND_STATE.QUEUED,
+              attempt: state.attempt,
+              errorCode: null,
+            });
+            transport.sendPendingSendStatus(reset.event);
+          }
+          continue;
         }
+        void sendCoordinator.enqueue(entry.delivery_id);
       }
     }
   }
