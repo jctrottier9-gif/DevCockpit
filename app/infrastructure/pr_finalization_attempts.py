@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Integer, String, Text, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.domain.pr_finalization import (
@@ -42,6 +42,26 @@ class SqlAlchemyPullRequestFinalizationAttemptRepository:
     ) -> PullRequestFinalizationAttempt | None:
         record = self._session.get(PullRequestFinalizationAttemptRecord, idempotency_key)
         return _domain(record) if record is not None else None
+
+    def list_for_pr(
+        self,
+        project_id: str,
+        work_item_id: str,
+        pr_number: int,
+    ) -> tuple[PullRequestFinalizationAttempt, ...]:
+        records = self._session.scalars(
+            select(PullRequestFinalizationAttemptRecord)
+            .where(
+                PullRequestFinalizationAttemptRecord.project_id == project_id,
+                PullRequestFinalizationAttemptRecord.work_item_id == work_item_id,
+                PullRequestFinalizationAttemptRecord.pr_number == pr_number,
+            )
+            .order_by(
+                PullRequestFinalizationAttemptRecord.updated_at.desc(),
+                PullRequestFinalizationAttemptRecord.idempotency_key,
+            )
+        ).all()
+        return tuple(_domain(record) for record in records)
 
     def add(self, attempt: PullRequestFinalizationAttempt) -> None:
         self._session.add(_record(attempt))
