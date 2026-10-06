@@ -172,6 +172,7 @@ class ReviewPullRequestEvidence:
     updated_at: str | None = None
     github_watchdog: GitHubWaitWatchdog | None = None
     mergeable_state: str | None = None
+    next_action: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
