@@ -388,7 +388,8 @@ def _review_execution_projection(
     if projected is None:
         if (
             pull_request.ci_state == "GREEN"
-            and pull_request.finalization_state == "WAIT_AUTO_MERGE"
+            and pull_request.auto_merge_enabled
+            and (pull_request.behind_by or 0) == 0
         ):
             projected = (ExecutionState.READY_TO_MERGE, NextAction.WAIT_AUTO_MERGE)
         else:
