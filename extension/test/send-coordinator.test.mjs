@@ -19,6 +19,8 @@ async function setup({
   prepareErrors = [],
   retryDelaysMs = [],
   session = SESSION,
+  routing = null,
+  targetUrl = "https://chatgpt.com/",
 } = {}) {
   const storage = createMemoryStorage();
   let counter = 0;
@@ -51,7 +53,7 @@ async function setup({
     deliveryId: DELIVERY_ID,
     session,
     text: "send me",
-    routing: null,
+    routing,
   });
   await sendStore.ensureQueued({ deliveryId: DELIVERY_ID, session });
 
@@ -75,11 +77,15 @@ async function setup({
       async route() {
         routeCalls += 1;
         if (routeError) throw new Error(routeError);
-        return { kind: "PROVISIONAL", tabId: 7, url: "https://chatgpt.com/" };
+        return {
+          kind: routing ? "BOUND" : "PROVISIONAL",
+          tabId: 7,
+          url: targetUrl,
+        };
       },
       async revalidateTarget() {
         revalidateCalls += 1;
-        return { id: 7, url: "https://chatgpt.com/" };
+        return { id: 7, url: targetUrl };
       },
       async revalidateManualTarget({ tabId }) {
         revalidateCalls += 1;
