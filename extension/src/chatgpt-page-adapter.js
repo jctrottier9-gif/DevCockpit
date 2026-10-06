@@ -657,6 +657,8 @@
               ? error.code
               : "chatgpt_adapter_failed",
           ambiguous: clicked,
+          conversationUrl:
+            clicked ? canonicalConversationUrl(this.location?.href) || null : null,
         };
       }
     }
