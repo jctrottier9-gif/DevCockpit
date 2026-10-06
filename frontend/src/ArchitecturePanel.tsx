@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useCockpitRefreshVersion } from './CockpitRefreshContext'
 import type {
   ArchitectureAdrDetail,
   ArchitectureGatePanelItem,
@@ -6,6 +7,7 @@ import type {
 } from './dashboardTypes'
 
 export default function ArchitecturePanel({ projectId }: { projectId: string }) {
+  const refreshVersion = useCockpitRefreshVersion()
   const [panel, setPanel] = useState<ArchitecturePanelResponse | null>(null)
   const [error, setError] = useState('')
   const [authorizing, setAuthorizing] = useState('')
@@ -31,8 +33,6 @@ export default function ArchitecturePanel({ projectId }: { projectId: string }) 
 
   useEffect(() => {
     const controller = new AbortController()
-    setPanel(null)
-    setAdrDetail(null)
     setError('')
     void loadPanel(controller.signal).catch(caught => {
       if (caught instanceof DOMException && caught.name === 'AbortError') return
@@ -42,7 +42,7 @@ export default function ArchitecturePanel({ projectId }: { projectId: string }) 
       generationRef.current += 1
       controller.abort()
     }
-  }, [projectId])
+  }, [projectId, refreshVersion])
 
   async function authorize(gate: ArchitectureGatePanelItem) {
     if (!gate.can_authorize) return
