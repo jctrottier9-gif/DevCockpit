@@ -283,6 +283,6 @@ def test_merge_refusal_is_persisted_and_not_retried(tmp_path):
         second = evaluate(reader, finalizer, factory)
         assert second.projection.items[0].execution.state is ExecutionState.MERGE_BLOCKED
         assert second.dispatches == ()
-        assert finalizer.merge_calls == [(71, "head-1")]
+        assert finalizer.merge_calls == [(71, "head-1", "base-1")]
     finally:
         engine.dispose()
