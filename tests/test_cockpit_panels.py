@@ -317,3 +317,4 @@ def test_review_panel_preserves_work_item_pr_head_run_attempt_and_jobs(tmp_path)
     assert payload["pull_requests"][0]["auto_merge_enabled"] is True
     assert payload["pull_requests"][1]["base_sha"] == "base-par"
     assert payload["pull_requests"][1]["mergeable_state"] == "behind"
+    assert payload["pull_requests"][1]["next_action"] is None
