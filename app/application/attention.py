@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from enum import StrEnum
 from typing import Any
 
 from app.application.handoffs import read_orchestration
+from app.application.interaction_summaries import interaction_indication, read_interaction_summary
 from app.application.parallel_executions import (
     ParallelDevExecutionProjection,
     read_project_parallel_dev_executions,
@@ -421,10 +422,7 @@ def _prompt_items(
             continue
         with uow_factory() as uow:
             delivery = uow.prompt_deliveries.get_by_dispatch_id(dispatch.dispatch_id)
-            send_projection = None
-            send_repository = getattr(uow, "chatgpt_prompt_sends", None)
-            if delivery is not None and send_repository is not None:
-                send_projection = send_repository.get(delivery.delivery_id)
+            interaction = read_interaction_summary(dispatch, uow=uow)
         if delivery is not None and delivery.delivery_id in responded_delivery_ids:
             continue
 
@@ -453,20 +451,14 @@ def _prompt_items(
             and (delivery is None or not delivery.is_acknowledged)
         )
         level = AttentionLevel.ACTION
-        if (
-            send_projection is not None
-            and send_projection.state.value == "SENT_CONFIRMED"
-        ):
-            continue
-        if (
-            send_projection is not None
-            and send_projection.state.value in {"AMBIGUOUS", "BLOCKED"}
-        ):
+        send_state = interaction.send_state
+
+        if send_state in {"AMBIGUOUS", "BLOCKED"}:
             primary_action = AttentionAction(
                 kind="RECONCILE_CHATGPT_SEND",
                 label=(
                     "Vérifier l'envoi ChatGPT avant toute reprise"
-                    if send_projection.state.value == "AMBIGUOUS"
+                    if send_state == "AMBIGUOUS"
                     else "Corriger le blocage d'envoi ChatGPT"
                 ),
                 target="companion",
@@ -477,28 +469,65 @@ def _prompt_items(
             reason = (
                 "L'envoi a franchi SEND_ARMED mais sa confirmation est incertaine; "
                 "aucun renvoi automatique n'est permis."
-                if send_projection.state.value == "AMBIGUOUS"
-                else "L'envoi automatique est bloqué avant la barrière irréversible."
+                if send_state == "AMBIGUOUS"
+                else "L'envoi ChatGPT est bloqué avant la barrière irréversible."
             )
             action_kind = "RECONCILE_CHATGPT_SEND"
-        elif (
-            send_projection is not None
-            and delivery is not None
-            and delivery.is_acknowledged
-        ):
-            level = AttentionLevel.WATCH
+        elif interaction.manual_send_required:
             primary_action = AttentionAction(
-                kind="WAIT_CHATGPT_SEND",
-                label="Suivre l'envoi automatique ChatGPT",
+                kind="LAUNCH_ARCH_MANUALLY",
+                label="Lancer ASTRA manuellement dans Firefox",
                 target="companion",
                 work_item_id=dispatch.work_item_id,
                 dispatch_id=str(dispatch.dispatch_id),
             )
             kind = AttentionKind.CHATGPT_SEND
             reason = (
-                f"Envoi automatique en cours: {send_projection.state.value}. "
-                "Aucune action humaine n'est requise tant qu'il n'est pas bloqué ou ambigu."
+                "Le prompt ARCH est reçu par Firefox. La gate reste manuelle: "
+                "sélectionner une conversation ChatGPT déjà placée en Work mode et la lancer "
+                "explicitement depuis l'extension."
             )
+            action_kind = "LAUNCH_ARCH_MANUALLY"
+        elif send_state == "SENT_CONFIRMED":
+            level = AttentionLevel.WATCH
+            primary_action = AttentionAction(
+                kind="WAIT_IMPORTED_RESPONSE",
+                label="Ouvrir l'orchestration · aucune réponse importée",
+                target="orchestration",
+                work_item_id=dispatch.work_item_id,
+                dispatch_id=str(dispatch.dispatch_id),
+            )
+            kind = AttentionKind.CHATGPT_SEND
+            reason = (
+                "L'envoi ChatGPT est confirmé. Aucune réponse n'a encore été importée; "
+                "cela ne prouve ni génération en cours ni fin du travail."
+            )
+            action_kind = "WAIT_IMPORTED_RESPONSE"
+        elif send_state is not None and delivery is not None and delivery.is_acknowledged:
+            level = AttentionLevel.WATCH
+            primary_action = AttentionAction(
+                kind="WAIT_CHATGPT_SEND",
+                label="Suivre l'état d'envoi ChatGPT",
+                target="companion",
+                work_item_id=dispatch.work_item_id,
+                dispatch_id=str(dispatch.dispatch_id),
+            )
+            kind = AttentionKind.CHATGPT_SEND
+            if send_state == "SEND_ARMED":
+                reason = (
+                    "L'envoi est armé et attend une confirmation ciblée; aucun second envoi "
+                    "ne doit être déclenché pendant cette phase."
+                )
+            elif send_state == "RETRYABLE_FAILURE":
+                reason = (
+                    "Un échec certain avant SEND_ARMED est observé; la reprise automatique "
+                    "reste bornée par le companion."
+                )
+            else:
+                reason = (
+                    f"État d'envoi ChatGPT observé: {send_state}. "
+                    "Aucune action humaine n'est requise tant qu'il n'est pas bloqué ou ambigu."
+                )
             action_kind = "WAIT_CHATGPT_SEND"
         elif blocked_by_transport:
             primary_action = AttentionAction(
@@ -517,11 +546,11 @@ def _prompt_items(
             primary_action = AttentionAction(
                 kind=action_kind,
                 label=(
-                    "Ouvrir la PR et envoyer le prompt correctif"
+                    "Ouvrir la PR et suivre le prompt correctif"
                     if is_ci_red
-                    else "Ouvrir l'orchestration et envoyer la réconciliation"
+                    else "Ouvrir l'orchestration et suivre la réconciliation"
                     if is_roadmap_reconcile
-                    else f"Ouvrir l'orchestration et envoyer le prompt {role}"
+                    else f"Ouvrir l'orchestration et suivre le prompt {role}"
                 ),
                 target=(
                     "pull_request"
@@ -553,9 +582,10 @@ def _prompt_items(
                     "il mettra directement le roadmap GitHub à jour sans confirmation humaine."
                     if is_roadmap_reconcile
                     else (
-                        "Le prompt est déjà accepté dans la file Firefox et attend l'envoi explicite."
+                        "Le prompt est reçu par Firefox; aucun état ChatGPT plus avancé "
+                        "n'est encore observé."
                         if delivery is not None and delivery.is_acknowledged
-                        else "Le PromptDispatch est préparé et peut être livré puis envoyé explicitement."
+                        else "Le PromptDispatch est préparé et attend sa livraison au companion Firefox."
                     )
                 )
             )
@@ -574,14 +604,14 @@ def _prompt_items(
                     dispatch.work_item_id,
                     action_kind,
                 ),
-                level=AttentionLevel.ACTION,
+                level=level,
                 kind=kind,
                 title=(
                     f"DEV · {dispatch.work_item_id} · CI rouge"
                     if is_ci_red
                     else f"DEV · {dispatch.work_item_id} · réconciliation roadmap prête"
                     if is_roadmap_reconcile
-                    else f"{role} · {dispatch.work_item_id} · prompt prêt"
+                    else f"{role} · {dispatch.work_item_id} · {interaction_indication(interaction)}"
                 ),
                 reason=reason,
                 project_id=project_id,
@@ -605,21 +635,14 @@ def _prompt_items(
                         delivery.is_acknowledged if delivery is not None else False
                     ),
                     "transport_connected": companion_connected,
-                    "chatgpt_send_state": (
-                        send_projection.state.value
-                        if send_projection is not None
-                        else None
-                    ),
-                    "chatgpt_send_attempt": (
-                        send_projection.attempt_count
-                        if send_projection is not None
-                        else None
-                    ),
-                    "chatgpt_send_error": (
-                        send_projection.last_error_code
-                        if send_projection is not None
-                        else None
-                    ),
+                    "interaction": asdict(interaction),
+                    "interaction_state": interaction.state,
+                    "chatgpt_send_state": interaction.send_state,
+                    "chatgpt_send_attempt": interaction.send_attempt_count,
+                    "chatgpt_send_error": interaction.send_error_code,
+                    "manual_send_required": interaction.manual_send_required,
+                    "automatic_resend_allowed": interaction.automatic_resend_allowed,
+                    "imported_response_available": interaction.imported_response_available,
                 },
             ),
         )

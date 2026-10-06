@@ -49,6 +49,28 @@ export type ImportedResponse = {
   text: string
 }
 
+export type InteractionSummary = {
+  project_id: string
+  work_item_id: string
+  role: string
+  agent_session: string
+  dispatch_id: string
+  dispatch_status: string
+  delivery_id: string | null
+  delivery_status: string | null
+  delivery_acknowledged_at: string | null
+  state: string
+  send_state: string | null
+  send_attempt_count: number | null
+  send_error_code: string | null
+  send_confirmed_at: string | null
+  imported_response_available: boolean
+  imported_response_count: number
+  latest_imported_response_at: string | null
+  manual_send_required: boolean
+  automatic_resend_allowed: boolean
+}
+
 export type SchedulerItem = {
   key: string
   canonical_status: string
@@ -86,17 +108,7 @@ export type ParallelExecutionItem = {
   waiting_for_capacity: boolean
   waiting_for_resource_lock: boolean
   inhibition_reason: string | null
-  interaction: null | {
-    dispatch_id: string | null
-    dispatch_status: string | null
-    delivery_id: string | null
-    delivery_status: string | null
-    send_state: string | null
-    send_attempt_count: number | null
-    send_error_code: string | null
-    send_confirmed_at: string | null
-    imported_response_available: boolean
-  }
+  interaction: InteractionSummary | null
   watchdog: null | {
     branch_last_activity_at: string
     threshold_seconds: number
@@ -237,6 +249,7 @@ export type CockpitOverview = {
       slot_state: string
       execution_state: string
       ci_state: string | null
+      interaction: InteractionSummary | null
       watchdog_stale: boolean
       watchdog_relaunch_prepared: boolean
     }[]

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import ArchitecturePanel from './ArchitecturePanel'
 import ContextDrawer from './ContextDrawer'
 import DevPool from './DevPool'
+import { interactionStateLabel } from './InteractionStatus'
 import RoadmapExplorer from './RoadmapExplorer'
 import ReviewPanel from './ReviewPanel'
 import type {
@@ -163,8 +164,9 @@ export default function CockpitDashboard({
             <small>
               {item.execution_state}
               {item.ci_state ? ' · CI ' + item.ci_state : ''}
+              {item.interaction ? ' · ' + interactionStateLabel(item.interaction) : ''}
               {item.watchdog_stale ? ' · STALE' : ''}
-              {item.watchdog_relaunch_prepared ? ' · relance' : ''}
+              {item.watchdog_relaunch_prepared ? ' · relance watchdog' : ''}
             </small>
           </button>)}
           {overview.dev_pool.items.length > 3 && <span className="dev-pool-compact__more">

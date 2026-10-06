@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import InteractionStatus, { interactionStateLabel } from './InteractionStatus'
+import type { InteractionSummary } from './dashboardTypes'
 
 type Response = { response_id: string; text: string; imported_at: string }
 type Dispatch = {
@@ -6,7 +8,8 @@ type Dispatch = {
   agent_session: string
   prompt_text: string
   status: string
-  delivery: null | { acknowledged: boolean }
+  delivery: null | { delivery_id?: string; acknowledged: boolean }
+  interaction: InteractionSummary
 }
 type Source = Dispatch & { responses: Response[] }
 type RoadmapApplicationSummary = {
@@ -92,9 +95,9 @@ type Preview = {
 function Prompt({ value, label }: { value: Dispatch; label: string }) {
   return <details>
     <summary>
-      {label} · {value.status} · {value.delivery?.acknowledged ? 'Accepté dans Firefox' : 'Non confirmé par Firefox'}
+      {label} · {value.status} · {interactionStateLabel(value.interaction)}
     </summary>
-    <p>{value.agent_session}</p>
+    <p><InteractionStatus interaction={value.interaction} /></p>
     <pre>{value.prompt_text}</pre>
   </details>
 }

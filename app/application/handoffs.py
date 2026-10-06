@@ -7,6 +7,10 @@ from app.application.executions import (
     _ci_red_idempotency_key,
     read_project_execution_for_work_item,
 )
+from app.application.interaction_summaries import (
+    interaction_indication,
+    read_interaction_summary,
+)
 from app.application.prompt_dispatches import CreatePromptDispatchCommand, create_prompt_dispatch_in_uow
 from app.application.roadmaps import RoadmapSourceError, read_project_roadmap
 from app.domain.execution import ExecutionState
@@ -705,6 +709,7 @@ def dispatch_payload(dispatch, uow):
     if dispatch is None:
         return None
     delivery = uow.prompt_deliveries.get_by_dispatch_id(dispatch.dispatch_id)
+    interaction = read_interaction_summary(dispatch, uow=uow)
     return {
         "dispatch_id": dispatch.dispatch_id,
         "agent_session": dispatch.agent_session,
@@ -714,6 +719,7 @@ def dispatch_payload(dispatch, uow):
             "delivery_id": delivery.delivery_id,
             "acknowledged": delivery.is_acknowledged,
         } if delivery else None,
+        "interaction": asdict(interaction),
     }
 
 
@@ -757,7 +763,9 @@ def read_orchestration(project, work_item_id, *, roadmap_reader, evidence_reader
                 uow.roadmap_change_proposals.list_for_decision(decision.decision_id)
                 if decision else []
             )
+            request_dispatch = uow.prompt_dispatches.get(handoff.request_dispatch_id)
             responses = responses_for(handoff.request_dispatch_id)
+            request_interaction = read_interaction_summary(request_dispatch, uow=uow)
             transfer_allowed = (
                 handoff.target_role == PromptDispatchRole.ARCH.value
                 and (
@@ -782,7 +790,9 @@ def read_orchestration(project, work_item_id, *, roadmap_reader, evidence_reader
                 **asdict(handoff),
                 "responses": responses,
                 "indication": (
-                    "Réponse à examiner" if responses else "En attente de réponse"
+                    "Réponse importée à examiner"
+                    if responses
+                    else interaction_indication(request_interaction)
                 ) if handoff.status is HandoffStatus.OPEN else handoff.status,
                 "decision": (
                     {
@@ -814,9 +824,7 @@ def read_orchestration(project, work_item_id, *, roadmap_reader, evidence_reader
                     }
                     for proposal in proposals
                 ],
-                "request_dispatch": dispatch_payload(
-                    uow.prompt_dispatches.get(handoff.request_dispatch_id), uow
-                ),
+                "request_dispatch": dispatch_payload(request_dispatch, uow),
                 "resume_dispatch": (
                     dispatch_payload(uow.prompt_dispatches.get(handoff.resume_dispatch_id), uow)
                     if handoff.resume_dispatch_id else None
