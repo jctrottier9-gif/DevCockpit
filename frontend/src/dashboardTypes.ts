@@ -427,6 +427,7 @@ export type ReviewPullRequest = {
   url: string | null
   mergeable: boolean | null
   mergeable_state: string | null
+  next_action: string | null
   auto_merge_enabled: boolean
   base_branch: string | null
   base_sha: string | null
