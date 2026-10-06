@@ -153,18 +153,23 @@ def project_execution_github_wait_watchdog(
     )
 
 
+def watchdog_dispatch_prefix(project: Project, work_item_id: str) -> str:
+    scope = sha256(
+        f"{project.project_id}:{work_item_id}:DEV:GITHUB_WATCHDOG".encode("utf-8")
+    ).hexdigest()[:24]
+    return f"execution:github-watchdog:{scope}:"
+
+
 def watchdog_dispatch_key(
     project: Project,
     work_item_id: str,
     watchdog: GitHubWaitWatchdog,
 ) -> str:
-    raw = (
-        f"execution:{project.project_id}:{work_item_id}:DEV:GITHUB_WATCHDOG:"
-        f"{watchdog.kind.value}:{watchdog.evidence_identity}:v1"
+    evidence_hash = sha256(watchdog.evidence_identity.encode("utf-8")).hexdigest()
+    return (
+        f"{watchdog_dispatch_prefix(project, work_item_id)}"
+        f"{watchdog.kind.value}:{evidence_hash}:v1"
     )
-    if len(raw) <= 200:
-        return raw
-    return f"execution:{sha256(raw.encode('utf-8')).hexdigest()}:v1"
 
 
 def with_recovery(
