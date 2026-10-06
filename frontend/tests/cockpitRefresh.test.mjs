@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  classifyCockpitRefreshFailure,
   createCockpitRefreshLoop,
   DEFAULT_COCKPIT_REFRESH_INTERVAL_MS,
   resolveCockpitRefreshInterval,
+  resolveRefreshedSelection,
 } from '../src/cockpitRefresh.ts'
 
 function fakeTimer() {
@@ -42,6 +44,18 @@ test('uses 30 seconds by default and accepts a positive frontend override', () =
   assert.equal(resolveCockpitRefreshInterval('15000'), 15000)
   assert.equal(resolveCockpitRefreshInterval('0'), DEFAULT_COCKPIT_REFRESH_INTERVAL_MS)
   assert.equal(resolveCockpitRefreshInterval('invalid'), DEFAULT_COCKPIT_REFRESH_INTERVAL_MS)
+})
+
+test('keeps the current snapshot on a temporary refresh error', () => {
+  assert.equal(classifyCockpitRefreshFailure('DevCockpit', 'DevCockpit'), 'stale')
+  assert.equal(classifyCockpitRefreshFailure('DevCockpit', null), 'fatal')
+  assert.equal(classifyCockpitRefreshFailure('DevCockpit', 'RessourcePlanner'), 'fatal')
+})
+
+test('preserves drawer selection while the refreshed projection still contains it', () => {
+  assert.equal(resolveRefreshedSelection('DC-073', ['DC-072B', 'DC-073', 'DC-074'], 'DC-074'), 'DC-073')
+  assert.equal(resolveRefreshedSelection('DC-071', ['DC-073', 'DC-074'], 'DC-074'), 'DC-074')
+  assert.equal(resolveRefreshedSelection(null, ['DC-073'], null), 'DC-073')
 })
 
 test('runs one coordinated periodic refresh and reschedules after completion', async () => {
