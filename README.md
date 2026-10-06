@@ -553,6 +553,14 @@ Aggregates are deterministic medians calculated only from deliveries that actual
 
 No analytics table or migration is introduced by DC-061. GitHub history is reconstructed on demand and React renders the backend projection without recalculating identity, timestamps, durations, medians, docs-only policy or CI recovery.
 
+## Hybrid cockpit
+
+DC-070A through DC-070F make the hybrid dashboard the normal operator surface for project context, Attention Center, role supervision, DEV Pool, roadmap exploration, architecture gates, Reviewer CI detail, companion state and WorkItem-targeted Orchestration.
+
+Raw scheduler/execution, Flow Analytics and imported-response views remain available under the collapsed **Diagnostics techniques** disclosure for troubleshooting. They are no longer required to reach normal WorkItem Orchestration.
+
+The historical RessourcePlanner cockpit remains unchanged and is not a runtime dependency. Migration, keyboard/focus behavior, responsive expectations and the explicit future-removal policy are documented in `docs/cockpit-migration.md`.
+
 ## Frontend setup
 
 Install frontend dependencies:

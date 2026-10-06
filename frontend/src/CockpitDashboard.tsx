@@ -224,7 +224,7 @@ export default function CockpitDashboard({
         }}
       />
       <button type="button" onClick={() => { setDrawer(null); onOpenTechnical('technical-executions') }}>
-        Voir les exécutions techniques
+        Ouvrir les diagnostics d’exécution
       </button>
     </ContextDrawer>}
 
@@ -257,7 +257,7 @@ export default function CockpitDashboard({
         type="button"
         onClick={() => { setDrawer(null); onOpenTechnical(selectedRole.role === 'REVIEWER' ? 'technical-executions' : 'technical-scheduler') }}
       >
-        Voir les données techniques
+        Ouvrir les diagnostics techniques
       </button>
     </ContextDrawer>}
 

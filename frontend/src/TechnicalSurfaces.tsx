@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import FlowAnalytics from './FlowAnalytics'
-import Orchestration from './Orchestration'
 import { isCurrentProjectLoad } from './projectWorkspace'
 import type {
   ImportedResponse,
@@ -25,10 +24,8 @@ const actionLabels: Record<string, string> = {
 
 export default function TechnicalSurfaces({
   project,
-  requestedWorkItem,
 }: {
   project: Project
-  requestedWorkItem: string
 }) {
   const [state, setState] = useState<LoadState>('loading')
   const [roadmap, setRoadmap] = useState<RoadmapResponse | null>(null)
@@ -36,18 +33,8 @@ export default function TechnicalSurfaces({
   const [scheduler, setScheduler] = useState<SchedulerResponse | null>(null)
   const [responses, setResponses] = useState<ImportedResponse[]>([])
   const [error, setError] = useState('')
-  const [orchestrationKey, setOrchestrationKey] = useState(requestedWorkItem)
   const activeProjectIdRef = useRef(project.project_id)
   const loadGenerationRef = useRef(0)
-
-  useEffect(() => {
-    setOrchestrationKey(requestedWorkItem)
-    if (requestedWorkItem) {
-      window.requestAnimationFrame(() => {
-        document.getElementById('orchestration')?.scrollIntoView({ behavior: 'smooth' })
-      })
-    }
-  }, [requestedWorkItem])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -213,22 +200,6 @@ export default function TechnicalSurfaces({
           </div>
         </article>)}
       </div>
-    </section>}
-
-    {pipeline && <section className="orchestration-picker" id="technical-orchestration">
-      <label>WorkItem à consulter
-        <select value={orchestrationKey || displayedWorkItem?.key || ''} onChange={event => setOrchestrationKey(event.target.value)}>
-          <option value="">Choisir un WorkItem</option>
-          {pipeline.work_items.map(workItem => <option key={workItem.key} value={workItem.key}>{workItem.key} · {workItem.title}</option>)}
-        </select>
-      </label>
-      {(orchestrationKey || displayedWorkItem?.key) && <div id="orchestration">
-        <Orchestration
-          key={project.project_id + ':' + (orchestrationKey || displayedWorkItem?.key)}
-          projectId={project.project_id}
-          workItem={orchestrationKey || displayedWorkItem!.key}
-        />
-      </div>}
     </section>}
 
     <section className="responses" id="technical-responses">
