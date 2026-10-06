@@ -35,10 +35,10 @@ def build_cockpit_router(
     uow_factory,
     max_parallel_dev_executions: int,
     dev_stale_after_seconds: float,
-    pr_no_ci_after_seconds: float,
-    ci_stall_after_seconds: float,
-    auto_merge_grace_seconds: float,
     companion_connections,
+    pr_no_ci_after_seconds: float = 900.0,
+    ci_stall_after_seconds: float = 1800.0,
+    auto_merge_grace_seconds: float = 600.0,
 ):
     router = APIRouter(tags=["cockpit"])
 
