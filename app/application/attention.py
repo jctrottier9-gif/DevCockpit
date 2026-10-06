@@ -225,6 +225,7 @@ def _execution_items(
                     title=f"DEV · {work_item.key} · watchdog {github_watchdog.kind.value}",
                     reason=(
                         f"Dernière activité GitHub {github_watchdog.last_activity_at}; "
+                        f"seuil {round(github_watchdog.threshold_seconds)} s; "
                         f"échéance {github_watchdog.deadline_at.isoformat()}; "
                         f"récupération {github_watchdog.recovery_state}."
                     ),
