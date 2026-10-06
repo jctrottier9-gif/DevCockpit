@@ -525,3 +525,375 @@ test("architecture session detection is exact and does not affect DEV or PO", as
   assert.equal(isArchitectureSession("DevCockpit:PO:DC-070D"), false);
   assert.equal(isArchitectureSession("DevCockpit:ARCHIVE:ASTRA-101"), false);
 });
+
+
+test("confirmed DOM evidence on a different durable conversation fails closed", async () => {
+  const routing = {
+    binding_version: 4,
+    conversation_id: "conv-a",
+    canonical_url: "https://chatgpt.com/c/conv-a",
+  };
+  const { coordinator, sendStore, queueStore, calls } = await setup({
+    routing,
+    targetUrl: routing.canonical_url,
+    commitResponse: {
+      ok: true,
+      conversationUrl: "https://chatgpt.com/c/conv-b",
+    },
+  });
+
+  const result = await coordinator.enqueue(DELIVERY_ID);
+  const state = await sendStore.get(DELIVERY_ID);
+
+  assert.equal(result.state, "AMBIGUOUS");
+  assert.equal(result.error, "CHATGPT_SEND_BINDING_CONFLICT");
+  assert.equal(state.state, "AMBIGUOUS");
+  assert.equal(state.recovery.status, "INTERVENTION_REQUIRED");
+  assert.equal(
+    state.recovery.binding_conflict.expected_conversation_id,
+    "conv-a",
+  );
+  assert.equal(
+    state.recovery.binding_conflict.observed_conversation_id,
+    "conv-b",
+  );
+  assert.equal((await queueStore.list()).length, 1);
+  assert.equal(
+    calls.filter((item) => item === "devcockpit_commit_prepared_prompt").length,
+    1,
+  );
+});
+
+async function setupAmbiguousRecovery({
+  session = SESSION,
+  routing = null,
+  conversationUrl = "https://chatgpt.com/c/recovery-conversation",
+  inspections = [
+    { ok: false, error: "delivery_evidence_ambiguous:matching=0" },
+    {
+      ok: true,
+      state: "SENT",
+      conversationUrl: "https://chatgpt.com/c/recovery-conversation",
+    },
+  ],
+  readyDelaysMs = [0],
+  initialReloadError = null,
+} = {}) {
+  const storage = createMemoryStorage();
+  let counter = 100;
+  const context = await loadClassicScripts(
+    [
+      "src/queue-store.js",
+      "src/response-store.js",
+      "src/send-store.js",
+      "src/send-coordinator.js",
+    ],
+    {
+      crypto: {
+        randomUUID: () =>
+          `00000000-0000-4000-8000-${String(++counter).padStart(12, "0")}`,
+      },
+    },
+  );
+  const { QueueStore } = context.DevCockpitCompanion.queue;
+  const { SentPromptStore } = context.DevCockpitCompanion.responses;
+  const { ChatGptSendStore, SEND_STATE } =
+    context.DevCockpitCompanion.sendStore;
+  const {
+    AmbiguousSendRecovery,
+    canonicalConversation,
+  } = context.DevCockpitCompanion.send;
+
+  const queueStore = new QueueStore(storage);
+  const sentPromptStore = new SentPromptStore(storage);
+  const sendStore = new ChatGptSendStore(storage, {
+    uuid: () =>
+      `00000000-0000-4000-8000-${String(++counter).padStart(12, "0")}`,
+  });
+  await queueStore.acceptPrompt({
+    deliveryId: DELIVERY_ID,
+    session,
+    text: "send me",
+    routing,
+  });
+  await sendStore.ensureQueued({ deliveryId: DELIVERY_ID, session });
+  await sendStore.transition({
+    deliveryId: DELIVERY_ID,
+    session,
+    state: SEND_STATE.ROUTING,
+    attempt: 1,
+  });
+  await sendStore.transition({
+    deliveryId: DELIVERY_ID,
+    session,
+    state: SEND_STATE.SEND_ARMED,
+    attempt: 1,
+  });
+  await sendStore.transition({
+    deliveryId: DELIVERY_ID,
+    session,
+    state: SEND_STATE.AMBIGUOUS,
+    attempt: 1,
+    conversation: canonicalConversation(conversationUrl),
+    errorCode: "send_confirmation_timeout",
+  });
+
+  let currentUrl = conversationUrl;
+  let inspectionSequence = [...inspections];
+  let inspectionIndex = 0;
+  let reloadError = initialReloadError;
+  let reloadCount = 0;
+  let inspectCount = 0;
+  let resumeCount = 0;
+
+  const routingStore = {
+    async get() {
+      if (routing) {
+        return {
+          kind: "BOUND",
+          tab_id: 7,
+          binding_version: routing.binding_version,
+          conversation_id: routing.conversation_id,
+          canonical_url: routing.canonical_url,
+        };
+      }
+      return {
+        kind: "PROVISIONAL",
+        tab_id: 7,
+        binding_version: null,
+        conversation_id: null,
+        canonical_url: null,
+      };
+    },
+  };
+  const router = {
+    async recoveryTarget() {
+      return { id: 7, url: currentUrl };
+    },
+    async revalidateRecoveryTarget() {
+      return { id: 7, url: currentUrl };
+    },
+  };
+  const inspectTab = async () => {
+    inspectCount += 1;
+    const index = Math.min(
+      inspectionIndex,
+      Math.max(0, inspectionSequence.length - 1),
+    );
+    inspectionIndex += 1;
+    const value = inspectionSequence[index];
+    if (value instanceof Error) throw value;
+    return value;
+  };
+  const reloadTab = async () => {
+    reloadCount += 1;
+    if (reloadError) throw reloadError;
+  };
+  const buildRecovery = () =>
+    new AmbiguousSendRecovery({
+      queueStore,
+      sentPromptStore,
+      sendStore,
+      routingStore,
+      router,
+      inspectTab,
+      reloadTab,
+      resumeSession: async () => {
+        resumeCount += 1;
+        return { ok: true };
+      },
+      sleep: async () => {},
+      readyDelaysMs,
+    });
+
+  return {
+    queueStore,
+    sentPromptStore,
+    sendStore,
+    buildRecovery,
+    recovery: buildRecovery(),
+    setInspections(next) {
+      inspectionSequence = [...next];
+      inspectionIndex = 0;
+    },
+    setReloadError(error) {
+      reloadError = error;
+    },
+    setCurrentUrl(url) {
+      currentUrl = url;
+    },
+    counts() {
+      return { reloadCount, inspectCount, resumeCount };
+    },
+  };
+}
+
+test("ambiguous recovery confirms already-visible evidence without reload", async () => {
+  const value = await setupAmbiguousRecovery({
+    inspections: [
+      {
+        ok: true,
+        state: "SENT",
+        conversationUrl: "https://chatgpt.com/c/recovery-conversation",
+      },
+    ],
+  });
+
+  const result = await value.recovery.recover(DELIVERY_ID);
+
+  assert.equal(result.state, "SENT_CONFIRMED");
+  assert.equal(value.counts().reloadCount, 0);
+  assert.equal((await value.sendStore.get(DELIVERY_ID)).state, "SENT_CONFIRMED");
+  assert.equal((await value.queueStore.list()).length, 0);
+});
+
+test("ambiguous recovery reloads at most once then confirms exact prompt", async () => {
+  const value = await setupAmbiguousRecovery();
+
+  const first = await value.recovery.recover(DELIVERY_ID);
+  const second = await value.recovery.recover(DELIVERY_ID);
+
+  assert.equal(first.state, "SENT_CONFIRMED");
+  assert.equal(second.state, "SENT_CONFIRMED");
+  assert.equal(value.counts().reloadCount, 1);
+  assert.equal(value.counts().inspectCount, 2);
+  assert.equal(
+    (await value.sendStore.get(DELIVERY_ID)).recovery.status,
+    "CONFIRMED",
+  );
+});
+
+test("ambiguous recovery survives restart after reload barrier without a second reload", async () => {
+  const value = await setupAmbiguousRecovery({
+    inspections: [
+      { ok: false, error: "delivery_evidence_ambiguous:matching=0" },
+    ],
+    initialReloadError: new Error("background_restarted"),
+  });
+
+  const interrupted = await value.recovery.recover(DELIVERY_ID);
+  assert.equal(interrupted.state, "AMBIGUOUS");
+  assert.equal(value.counts().reloadCount, 1);
+  assert.equal(
+    (await value.sendStore.get(DELIVERY_ID)).recovery.reload_attempted,
+    true,
+  );
+
+  value.setReloadError(null);
+  value.setInspections([
+    {
+      ok: true,
+      state: "SENT",
+      conversationUrl: "https://chatgpt.com/c/recovery-conversation",
+    },
+  ]);
+  const restarted = value.buildRecovery();
+  const recovered = await restarted.recover(DELIVERY_ID);
+
+  assert.equal(recovered.state, "SENT_CONFIRMED");
+  assert.equal(value.counts().reloadCount, 1);
+});
+
+test("content script not ready stays ambiguous after bounded single reload", async () => {
+  const missing = new Error(
+    "Could not establish connection. Receiving end does not exist.",
+  );
+  const value = await setupAmbiguousRecovery({
+    inspections: [missing],
+    readyDelaysMs: [0, 0],
+  });
+
+  const result = await value.recovery.recover(DELIVERY_ID);
+  const state = await value.sendStore.get(DELIVERY_ID);
+
+  assert.equal(result.state, "AMBIGUOUS");
+  assert.equal(value.counts().reloadCount, 1);
+  assert.equal(value.counts().inspectCount, 3);
+  assert.equal(state.recovery.status, "INTERVENTION_REQUIRED");
+  assert.equal(state.recovery.last_error, "content_script_unavailable");
+});
+
+test("multiple matching turns remain ambiguous after the single recovery reload", async () => {
+  const value = await setupAmbiguousRecovery({
+    inspections: [
+      { ok: false, error: "delivery_evidence_ambiguous:matching=2" },
+    ],
+    readyDelaysMs: [0],
+  });
+
+  const result = await value.recovery.recover(DELIVERY_ID);
+  const state = await value.sendStore.get(DELIVERY_ID);
+
+  assert.equal(result.state, "AMBIGUOUS");
+  assert.equal(value.counts().reloadCount, 1);
+  assert.equal(state.recovery.status, "INTERVENTION_REQUIRED");
+  assert.match(state.recovery.last_error, /matching=2/);
+});
+
+test("NOT_SENT proof is distinct and never triggers recovery reload", async () => {
+  const value = await setupAmbiguousRecovery({
+    inspections: [{ ok: true, state: "NOT_SENT" }],
+  });
+
+  const result = await value.recovery.recover(DELIVERY_ID);
+  const state = await value.sendStore.get(DELIVERY_ID);
+
+  assert.equal(result.state, "BLOCKED");
+  assert.equal(result.evidence, "NOT_SENT");
+  assert.equal(value.counts().reloadCount, 0);
+  assert.equal(state.recovery.status, "VERIFIED_NOT_SENT");
+  assert.equal(state.error_code, "verified_not_sent");
+});
+
+test("different conversation evidence never confirms a durable binding", async () => {
+  const routing = {
+    binding_version: 4,
+    conversation_id: "conv-a",
+    canonical_url: "https://chatgpt.com/c/conv-a",
+  };
+  const value = await setupAmbiguousRecovery({
+    routing,
+    conversationUrl: routing.canonical_url,
+    inspections: [
+      {
+        ok: true,
+        state: "SENT",
+        conversationUrl: "https://chatgpt.com/c/conv-b",
+      },
+    ],
+  });
+
+  const result = await value.recovery.recover(DELIVERY_ID);
+  const state = await value.sendStore.get(DELIVERY_ID);
+
+  assert.equal(result.state, "AMBIGUOUS");
+  assert.equal(result.error, "CHATGPT_SEND_BINDING_CONFLICT");
+  assert.equal(value.counts().reloadCount, 0);
+  assert.equal(state.recovery.status, "INTERVENTION_REQUIRED");
+  assert.equal(
+    state.recovery.binding_conflict.expected_conversation_id,
+    "conv-a",
+  );
+  assert.equal(
+    state.recovery.binding_conflict.observed_conversation_id,
+    "conv-b",
+  );
+  assert.equal(state.recovery.binding_conflict.expected_binding_version, 4);
+  assert.equal(state.recovery.binding_conflict.observed_binding_version, 4);
+});
+
+test("automatic ambiguous recovery never runs for ARCH sessions", async () => {
+  const value = await setupAmbiguousRecovery({
+    session: "DevCockpit:ARCH:ASTRA-072B",
+  });
+
+  const result = await value.recovery.recover(DELIVERY_ID);
+
+  assert.equal(result.state, "AMBIGUOUS");
+  assert.equal(result.error, "manual_arch_recovery_required");
+  assert.deepEqual(value.counts(), {
+    reloadCount: 0,
+    inspectCount: 0,
+    resumeCount: 0,
+  });
+});
