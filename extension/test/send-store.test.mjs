@@ -173,3 +173,88 @@ test("ambiguous send can be explicitly resolved to SENT_CONFIRMED after DOM proo
   );
   assert.equal(resolved.event.state, "SENT_CONFIRMED");
 });
+
+
+test("ambiguous recovery persists a single reload barrier across retries", async () => {
+  const { store, SEND_STATE } = await setup();
+  await store.ensureQueued({ deliveryId: DELIVERY_ID, session: SESSION });
+  await store.transition({
+    deliveryId: DELIVERY_ID,
+    session: SESSION,
+    state: SEND_STATE.ROUTING,
+    attempt: 1,
+  });
+  await store.transition({
+    deliveryId: DELIVERY_ID,
+    session: SESSION,
+    state: SEND_STATE.SEND_ARMED,
+    attempt: 1,
+  });
+  await store.transition({
+    deliveryId: DELIVERY_ID,
+    session: SESSION,
+    state: SEND_STATE.AMBIGUOUS,
+    attempt: 1,
+    errorCode: "send_confirmation_timeout",
+  });
+
+  const first = await store.markRecoveryReloadAttempted(DELIVERY_ID);
+  const second = await store.markRecoveryReloadAttempted(DELIVERY_ID);
+  const persisted = await store.get(DELIVERY_ID);
+
+  assert.equal(first.started, true);
+  assert.equal(second.started, false);
+  assert.equal(persisted.state, "AMBIGUOUS");
+  assert.equal(persisted.recovery.reload_attempted, true);
+  assert.equal(persisted.recovery.status, "RELOADING");
+});
+
+test("binding conflict diagnostics remain local and explicit while send stays ambiguous", async () => {
+  const { store, SEND_STATE } = await setup();
+  await store.ensureQueued({ deliveryId: DELIVERY_ID, session: SESSION });
+  await store.transition({
+    deliveryId: DELIVERY_ID,
+    session: SESSION,
+    state: SEND_STATE.ROUTING,
+    attempt: 1,
+  });
+  await store.transition({
+    deliveryId: DELIVERY_ID,
+    session: SESSION,
+    state: SEND_STATE.SEND_ARMED,
+    attempt: 1,
+  });
+  await store.transition({
+    deliveryId: DELIVERY_ID,
+    session: SESSION,
+    state: SEND_STATE.AMBIGUOUS,
+    attempt: 1,
+    errorCode: "send_confirmation_timeout",
+  });
+
+  await store.setRecoveryStatus(DELIVERY_ID, {
+    status: "INTERVENTION_REQUIRED",
+    errorCode: "CHATGPT_SEND_BINDING_CONFLICT",
+    bindingConflict: {
+      agent_session: SESSION,
+      expected_conversation_id: "conv-a",
+      expected_canonical_url: "https://chatgpt.com/c/conv-a",
+      expected_binding_version: 4,
+      observed_conversation_id: "conv-b",
+      observed_canonical_url: "https://chatgpt.com/c/conv-b",
+      observed_binding_version: 4,
+    },
+  });
+
+  const persisted = await store.get(DELIVERY_ID);
+  assert.equal(persisted.state, "AMBIGUOUS");
+  assert.equal(persisted.error_code, "CHATGPT_SEND_BINDING_CONFLICT");
+  assert.equal(
+    persisted.recovery.binding_conflict.expected_conversation_id,
+    "conv-a",
+  );
+  assert.equal(
+    persisted.recovery.binding_conflict.observed_conversation_id,
+    "conv-b",
+  );
+});
