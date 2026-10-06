@@ -173,7 +173,12 @@ def test_reads_base_sha_and_behind_count_for_open_pr() -> None:
                     mergeable_state="behind",
                 ),
             )
-        if path == "/repos/jctrottier9-gif/DevCockpit/compare/base123...abc123":
+        if path == "/repos/jctrottier9-gif/DevCockpit/branches/main":
+            return httpx.Response(
+                200,
+                json={"name": "main", "commit": {"sha": "current-main"}},
+            )
+        if path == "/repos/jctrottier9-gif/DevCockpit/compare/current-main...abc123":
             return httpx.Response(
                 200,
                 json={"behind_by": 1, "ahead_by": 2},
@@ -202,9 +207,65 @@ def test_reads_base_sha_and_behind_count_for_open_pr() -> None:
     projection = derive_execution_projection(WORK_ITEM, evidence)
 
     assert pull_request.base_branch == "main"
-    assert pull_request.base_sha == "base123"
+    assert pull_request.base_sha == "current-main"
     assert pull_request.behind_by == 1
     assert pull_request.mergeable_state == "behind"
+    assert projection.state is ExecutionState.BASE_OUTDATED
+    assert projection.next_action.value == "SYNC_BRANCH"
+
+
+def test_mergeable_state_behind_blocks_ready_to_merge_when_live_compare_reports_zero() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/repos/jctrottier9-gif/DevCockpit":
+            return httpx.Response(200, json={"default_branch": "main"})
+        if path == "/repos/jctrottier9-gif/DevCockpit/pulls":
+            return httpx.Response(
+                200,
+                json=[pull_payload(base_sha="historical-base")],
+            )
+        if path == "/repos/jctrottier9-gif/DevCockpit/pulls/22":
+            return httpx.Response(
+                200,
+                json=pull_payload(
+                    base_sha="historical-base",
+                    mergeable=True,
+                    mergeable_state="behind",
+                    auto_merge={"enabled_by": {"login": "jctrottier9-gif"}},
+                ),
+            )
+        if path == "/repos/jctrottier9-gif/DevCockpit/branches/main":
+            return httpx.Response(
+                200,
+                json={"name": "main", "commit": {"sha": "current-main"}},
+            )
+        if path == "/repos/jctrottier9-gif/DevCockpit/compare/current-main...abc123":
+            return httpx.Response(200, json={"behind_by": 0, "ahead_by": 1})
+        if path == "/repos/jctrottier9-gif/DevCockpit/actions/runs":
+            return httpx.Response(
+                200,
+                json={
+                    "workflow_runs": [
+                        {
+                            "id": 456,
+                            "name": "CI",
+                            "status": "completed",
+                            "conclusion": "success",
+                            "run_attempt": 1,
+                            "head_sha": "abc123",
+                            "html_url": "https://github.example/actions/456",
+                        }
+                    ]
+                },
+            )
+        raise AssertionError(f"unexpected GitHub request: {request.url}")
+
+    evidence = reader_for(handler).read(PROJECT, WORK_ITEM)
+    projection = derive_execution_projection(WORK_ITEM, evidence)
+
+    assert evidence.pull_requests[0].base_sha == "current-main"
+    assert evidence.pull_requests[0].behind_by == 0
+    assert evidence.pull_requests[0].mergeable_state == "behind"
     assert projection.state is ExecutionState.BASE_OUTDATED
     assert projection.next_action.value == "SYNC_BRANCH"
 
