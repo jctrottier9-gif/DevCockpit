@@ -1,9 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import AttentionCenter from './AttentionCenter'
 import CockpitDashboard from './CockpitDashboard'
+import { CockpitRefreshProvider } from './CockpitRefreshContext'
 import ContextDrawer from './ContextDrawer'
 import Orchestration from './Orchestration'
 import TechnicalSurfaces from './TechnicalSurfaces'
+import {
+  createCockpitRefreshLoop,
+  resolveCockpitRefreshInterval,
+  type CockpitRefreshLoop,
+} from './cockpitRefresh'
 import type { CockpitOverview, Project } from './dashboardTypes'
 import {
   ACTIVE_PROJECT_STORAGE_KEY,
@@ -12,6 +18,10 @@ import {
 } from './projectWorkspace'
 
 type LoadState = 'loading' | 'ready' | 'error'
+
+const cockpitRefreshIntervalMs = resolveCockpitRefreshInterval(
+  import.meta.env.VITE_COCKPIT_REFRESH_INTERVAL_MS,
+)
 
 function readPreferredProjectId() {
   try {
@@ -38,14 +48,24 @@ function App() {
   const [error, setError] = useState('')
   const [technicalOpen, setTechnicalOpen] = useState(false)
   const [orchestrationWorkItem, setOrchestrationWorkItem] = useState('')
-  const [cockpitReloadVersion, setCockpitReloadVersion] = useState(0)
+  const [refreshing, setRefreshing] = useState(false)
+  const [lastRefreshAt, setLastRefreshAt] = useState<string | null>(null)
+  const [refreshError, setRefreshError] = useState('')
+  const [surfaceRefreshVersion, setSurfaceRefreshVersion] = useState(0)
   const activeProjectIdRef = useRef('')
+  const loadedProjectIdRef = useRef<string | null>(null)
   const loadGenerationRef = useRef(0)
+  const refreshLoopRef = useRef<CockpitRefreshLoop | null>(null)
 
   function resetProjectView() {
+    loadedProjectIdRef.current = null
     setLoadedProjectId(null)
     setOverview(null)
     setError('')
+    setRefreshError('')
+    setLastRefreshAt(null)
+    setRefreshing(false)
+    setSurfaceRefreshVersion(0)
     setState('loading')
     setTechnicalOpen(false)
     setOrchestrationWorkItem('')
@@ -71,6 +91,10 @@ function App() {
 
   function openWorkItem(workItemId: string) {
     setOrchestrationWorkItem(workItemId)
+  }
+
+  function requestRefreshNow() {
+    void refreshLoopRef.current?.refreshNow()
   }
 
   useEffect(() => {
@@ -103,13 +127,27 @@ function App() {
   useEffect(() => {
     if (!activeProjectId) return
 
-    const controller = new AbortController()
     const projectId = activeProjectId
     const generation = ++loadGenerationRef.current
     activeProjectIdRef.current = projectId
     resetProjectView()
 
-    async function loadCockpit() {
+    let disposed = false
+    let controller: AbortController | null = null
+
+    async function refreshCockpit() {
+      controller = new AbortController()
+      const hasCurrentSnapshot = loadedProjectIdRef.current === projectId
+
+      if (hasCurrentSnapshot) {
+        setRefreshing(true)
+        setSurfaceRefreshVersion(version => version + 1)
+      } else {
+        setState('loading')
+        setError('')
+      }
+      setRefreshError('')
+
       try {
         const response = await fetch(
           '/api/projects/' + encodeURIComponent(projectId) + '/cockpit',
@@ -131,8 +169,12 @@ function App() {
           throw new Error('Project context mismatch while loading ' + projectId)
         }
 
+        loadedProjectIdRef.current = projectId
         setOverview(payload)
         setLoadedProjectId(projectId)
+        setLastRefreshAt(new Date().toISOString())
+        setError('')
+        setRefreshError('')
         setState('ready')
       } catch (caught: unknown) {
         if (caught instanceof DOMException && caught.name === 'AbortError') return
@@ -142,115 +184,178 @@ function App() {
           generation,
           loadGenerationRef.current,
         )) return
-        setError(caught instanceof Error ? caught.message : 'Unable to load cockpit overview')
-        setState('error')
+
+        const message = caught instanceof Error ? caught.message : 'Unable to load cockpit overview'
+        if (loadedProjectIdRef.current === projectId) {
+          setRefreshError(message)
+          setState('ready')
+        } else {
+          setError(message)
+          setState('error')
+        }
+      } finally {
+        if (
+          !disposed
+          && isCurrentProjectLoad(
+            projectId,
+            activeProjectIdRef.current,
+            generation,
+            loadGenerationRef.current,
+          )
+        ) {
+          setRefreshing(false)
+        }
       }
     }
 
-    void loadCockpit()
-    return () => controller.abort()
-  }, [activeProjectId, cockpitReloadVersion])
+    const loop = createCockpitRefreshLoop({
+      intervalMs: cockpitRefreshIntervalMs,
+      refresh: refreshCockpit,
+      initialVisible: !document.hidden,
+    })
+    refreshLoopRef.current = loop
+
+    const handleVisibilityChange = () => {
+      loop.setVisible(!document.hidden)
+    }
+    const handleFocus = () => {
+      loop.notifyFocus()
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('focus', handleFocus)
+
+    loop.start()
+    void loop.refreshNow()
+
+    return () => {
+      disposed = true
+      controller?.abort()
+      loop.stop()
+      if (refreshLoopRef.current === loop) refreshLoopRef.current = null
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('focus', handleFocus)
+    }
+  }, [activeProjectId])
 
   const activeProject = projects.find(project => project.project_id === activeProjectId) ?? null
   const currentOverview = loadedProjectId === activeProjectId ? overview : null
+  const freshnessLabel = refreshing
+    ? 'Actualisation en cours…'
+    : refreshError
+      ? 'Données conservées · dernière actualisation en erreur'
+      : lastRefreshAt
+        ? 'Dernière actualisation réussie ' + new Date(lastRefreshAt).toLocaleString()
+        : 'En attente de la première observation'
 
-  return <main className="shell">
-    <a className="skip-link" href="#cockpit-content">Aller au cockpit</a>
-    <div id="cockpit-content" className="panel" tabIndex={-1}>
-      <header className="app-header">
-        <div>
-          <p className="eyebrow">DEVCOCKPIT</p>
-          <h1>Delivery cockpit</h1>
-          <p className="app-subtitle">Supervision visuelle du roadmap, des rôles et du travail observable.</p>
-        </div>
-        <div className={'health health--' + state} aria-live="polite">
-          {state === 'loading' ? 'Reading project context…' : state === 'ready' ? 'Project context loaded' : error}
-        </div>
-      </header>
+  return <CockpitRefreshProvider version={surfaceRefreshVersion}>
+    <main className="shell">
+      <a className="skip-link" href="#cockpit-content">Aller au cockpit</a>
+      <div id="cockpit-content" className="panel" tabIndex={-1}>
+        <header className="app-header">
+          <div>
+            <p className="eyebrow">DEVCOCKPIT</p>
+            <h1>Delivery cockpit</h1>
+            <p className="app-subtitle">Supervision visuelle du roadmap, des rôles et du travail observable.</p>
+          </div>
+          <div className={'health health--' + state} aria-live="polite">
+            {state === 'loading' ? 'Reading project context…' : state === 'ready' ? 'Project context loaded' : error}
+          </div>
+        </header>
 
-      {state !== 'ready' && <section
-        className={'cockpit-load-state cockpit-load-state--' + state}
-        role={state === 'error' ? 'alert' : 'status'}
-        aria-live="polite"
-        aria-busy={state === 'loading'}
-      >
-        <strong>{state === 'loading' ? 'Chargement du cockpit…' : 'Cockpit indisponible'}</strong>
-        <span>{state === 'loading'
-          ? (activeProjectId ? 'Lecture des projections du projet actif.' : 'Lecture des projets configurés.')
-          : error}</span>
-        {state === 'error' && activeProjectId && <button
-          type="button"
-          onClick={() => setCockpitReloadVersion(version => version + 1)}
+        {state !== 'ready' && <section
+          className={'cockpit-load-state cockpit-load-state--' + state}
+          role={state === 'error' ? 'alert' : 'status'}
+          aria-live="polite"
+          aria-busy={state === 'loading'}
         >
-          Réessayer
-        </button>}
-      </section>}
-
-      {projects.length > 0 && <section className="project-workspace" aria-label="Contexte projet">
-        <label htmlFor="active-project">Projet actif
-          <select
-            id="active-project"
-            value={activeProjectId}
-            disabled={projects.length === 1}
-            onChange={event => selectProject(event.target.value)}
+          <strong>{state === 'loading' ? 'Chargement du cockpit…' : 'Cockpit indisponible'}</strong>
+          <span>{state === 'loading'
+            ? (activeProjectId ? 'Lecture des projections du projet actif.' : 'Lecture des projets configurés.')
+            : error}</span>
+          {state === 'error' && activeProjectId && <button
+            type="button"
+            onClick={requestRefreshNow}
           >
-            {projects.map(project => <option key={project.project_id} value={project.project_id}>{project.project_id}</option>)}
-          </select>
-        </label>
-        {activeProject && <p>{activeProject.repository_full_name} · roadmap #{activeProject.roadmap_issue_number}</p>}
-      </section>}
+            Réessayer
+          </button>}
+        </section>}
 
-      {activeProjectId && <AttentionCenter
-        key={'attention:' + activeProjectId}
-        projectId={activeProjectId}
-        onOpenWorkItem={openWorkItem}
-      />}
+        {projects.length > 0 && <section className="project-workspace" aria-label="Contexte projet">
+          <label htmlFor="active-project">Projet actif
+            <select
+              id="active-project"
+              value={activeProjectId}
+              disabled={projects.length === 1}
+              onChange={event => selectProject(event.target.value)}
+            >
+              {projects.map(project => <option key={project.project_id} value={project.project_id}>{project.project_id}</option>)}
+            </select>
+          </label>
+          {activeProject && <p>{activeProject.repository_full_name} · roadmap #{activeProject.roadmap_issue_number}</p>}
+          {activeProjectId && <div className="source-statuses" aria-live="polite">
+            <span className={'source-chip source-chip--' + (refreshError ? 'unavailable' : 'available')}>
+              {freshnessLabel}
+            </span>
+            {refreshError && <span className="source-chip source-chip--unavailable">{refreshError}</span>}
+            <button type="button" disabled={refreshing} onClick={requestRefreshNow}>
+              {refreshing ? 'Actualisation…' : 'Actualiser maintenant'}
+            </button>
+          </div>}
+        </section>}
 
-      {currentOverview && <CockpitDashboard
-        key={'cockpit:' + activeProjectId}
-        overview={currentOverview}
-        onOpenWorkItem={openWorkItem}
-        onOpenTechnical={openTechnical}
-      />}
-
-      {activeProject && orchestrationWorkItem && <ContextDrawer
-        projectId={activeProject.project_id}
-        contextKind="work-item"
-        contextId={orchestrationWorkItem}
-        eyebrow="ORCHESTRATION"
-        title={'Orchestration · ' + orchestrationWorkItem}
-        onClose={() => setOrchestrationWorkItem('')}
-      >
-        <p className="drawer-note">
-          Vue opérationnelle principale du WorkItem. Les diagnostics bruts restent disponibles séparément.
-        </p>
-        <Orchestration
-          key={activeProject.project_id + ':' + orchestrationWorkItem}
-          projectId={activeProject.project_id}
-          workItem={orchestrationWorkItem}
-        />
-      </ContextDrawer>}
-
-      {activeProject && <details
-        id="technical-surfaces"
-        className="technical-surfaces"
-        open={technicalOpen}
-        onToggle={event => setTechnicalOpen(event.currentTarget.open)}
-      >
-        <summary>
-          <span>
-            <strong>Diagnostics techniques</strong>
-            <small>Données brutes scheduler/exécutions, Flow Analytics et réponses importées</small>
-          </span>
-          <span aria-hidden="true">⌄</span>
-        </summary>
-        {technicalOpen && <TechnicalSurfaces
-          key={'technical:' + activeProject.project_id}
-          project={activeProject}
+        {activeProjectId && <AttentionCenter
+          key={'attention:' + activeProjectId}
+          projectId={activeProjectId}
+          onOpenWorkItem={openWorkItem}
         />}
-      </details>}
-    </div>
-  </main>
+
+        {currentOverview && <CockpitDashboard
+          key={'cockpit:' + activeProjectId}
+          overview={currentOverview}
+          onOpenWorkItem={openWorkItem}
+          onOpenTechnical={openTechnical}
+        />}
+
+        {activeProject && orchestrationWorkItem && <ContextDrawer
+          projectId={activeProject.project_id}
+          contextKind="work-item"
+          contextId={orchestrationWorkItem}
+          eyebrow="ORCHESTRATION"
+          title={'Orchestration · ' + orchestrationWorkItem}
+          onClose={() => setOrchestrationWorkItem('')}
+        >
+          <p className="drawer-note">
+            Vue opérationnelle principale du WorkItem. Les diagnostics bruts restent disponibles séparément.
+          </p>
+          <Orchestration
+            key={activeProject.project_id + ':' + orchestrationWorkItem}
+            projectId={activeProject.project_id}
+            workItem={orchestrationWorkItem}
+          />
+        </ContextDrawer>}
+
+        {activeProject && <details
+          id="technical-surfaces"
+          className="technical-surfaces"
+          open={technicalOpen}
+          onToggle={event => setTechnicalOpen(event.currentTarget.open)}
+        >
+          <summary>
+            <span>
+              <strong>Diagnostics techniques</strong>
+              <small>Données brutes scheduler/exécutions, Flow Analytics et réponses importées</small>
+            </span>
+            <span aria-hidden="true">⌄</span>
+          </summary>
+          {technicalOpen && <TechnicalSurfaces
+            key={'technical:' + activeProject.project_id}
+            project={activeProject}
+          />}
+        </details>}
+      </div>
+    </main>
+  </CockpitRefreshProvider>
 }
 
 export default App
