@@ -76,6 +76,7 @@ class GitHubPullRequestFinalizer:
         *,
         pr_number: int,
         expected_head_sha: str,
+        expected_base_sha: str | None,
     ) -> FinalizationMutationResult:
         base_url, headers = self._connection(project)
         try:
@@ -85,13 +86,19 @@ class GitHubPullRequestFinalizer:
                 stale = self._validate_open_identity(
                     detail,
                     expected_head_sha=expected_head_sha,
-                    expected_base_sha=None,
+                    expected_base_sha=expected_base_sha,
                 )
                 if stale is not None:
                     return stale
 
                 mergeable = detail.get("mergeable") if isinstance(detail, dict) else None
                 mergeable_state = detail.get("mergeable_state") if isinstance(detail, dict) else None
+                if mergeable_state == "behind":
+                    return FinalizationMutationResult(
+                        FinalizationAttemptStatus.STALE,
+                        error_code="BASE_OUTDATED",
+                        message="Pull-request base advanced before merge finalization.",
+                    )
                 if mergeable is not True or mergeable_state in {"dirty", "blocked"}:
                     return FinalizationMutationResult(
                         FinalizationAttemptStatus.BLOCKED,
