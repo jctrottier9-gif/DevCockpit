@@ -24,7 +24,9 @@ def test_sqlite_bootstrap_is_reproducible(tmp_path: Path) -> None:
         session_factory = build_session_factory(engine)
         with session_factory() as session:
             assert session.execute(text("SELECT 1")).scalar_one() == 1
-        assert "prompt_dispatches" in inspect(engine).get_table_names()
+        tables = inspect(engine).get_table_names()
+        assert "prompt_dispatches" in tables
+        assert "pull_request_finalization_attempts" in tables
     finally:
         engine.dispose()
 
