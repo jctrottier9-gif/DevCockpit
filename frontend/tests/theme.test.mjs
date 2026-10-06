@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
   createThemeController,
@@ -106,4 +107,10 @@ test('system preference follows OS changes while an explicit theme remains stabl
   assert.equal(applied.length, applicationCount)
   assert.deepEqual(controller.getSnapshot(), { preference: 'light', resolved: 'light' })
   controller.stop()
+})
+
+
+test('themeable surfaces do not hard-code white backgrounds', () => {
+  const css = readFileSync(new URL('../src/index.css', import.meta.url), 'utf8')
+  assert.doesNotMatch(css, /background(?:-color)?:\s*(?:white|#fff(?:fff)?)\s*;/i)
 })
