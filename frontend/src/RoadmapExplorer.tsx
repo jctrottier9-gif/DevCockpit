@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useCockpitRefreshVersion } from './CockpitRefreshContext'
+import { resolveRefreshedSelection } from './cockpitRefresh'
 import type {
   RoadmapExplorerIssueDetail,
   RoadmapExplorerItem,
@@ -126,9 +127,8 @@ export default function RoadmapExplorer({
         const preferred = initialWorkItemId && payload.items.some(item => item.key === initialWorkItemId)
           ? initialWorkItemId
           : payload.horizons.now
-        setSelectedKey(current => current && payload.items.some(item => item.key === current)
-          ? current
-          : preferred ?? payload.items[0]?.key ?? null)
+        const availableKeys = payload.items.map(item => item.key)
+        setSelectedKey(current => resolveRefreshedSelection(current, availableKeys, preferred))
         setState('ready')
       } catch (caught: unknown) {
         if (caught instanceof DOMException && caught.name === 'AbortError') return
