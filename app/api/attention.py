@@ -16,6 +16,10 @@ def build_attention_router(
     uow_factory,
     max_parallel_dev_executions: int,
     companion_connections,
+    dev_stale_after_seconds: float = 3600.0,
+    pr_no_ci_after_seconds: float = 900.0,
+    ci_stall_after_seconds: float = 1800.0,
+    auto_merge_grace_seconds: float = 600.0,
 ):
     router = APIRouter(tags=["attention"])
 
@@ -32,6 +36,10 @@ def build_attention_router(
                 uow_factory=uow_factory,
                 max_parallel_dev_executions=max_parallel_dev_executions,
                 companion_connected=companion_connections.has_active_connection,
+                dev_stale_after_seconds=dev_stale_after_seconds,
+                pr_no_ci_after_seconds=pr_no_ci_after_seconds,
+                ci_stall_after_seconds=ci_stall_after_seconds,
+                auto_merge_grace_seconds=auto_merge_grace_seconds,
             )
         except RoadmapSourceError as exc:
             raise HTTPException(
