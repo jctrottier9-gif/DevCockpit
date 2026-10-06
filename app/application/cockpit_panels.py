@@ -500,30 +500,33 @@ def read_project_review_panel(
     )
     evidence = review_reader.read(project, active_work)
     pull_requests = evidence.pull_requests
+    current = now or datetime.now(timezone.utc)
+    work_by_key = {item.key: item for item in active_work}
     if uow_factory is not None:
         with uow_factory() as uow:
             attempts = getattr(uow, "pr_finalization_attempts", None)
-            if attempts is not None:
-                projected = []
-                for pull_request in pull_requests:
+            projected = []
+            for pull_request in pull_requests:
+                attempt = None
+                if attempts is not None:
                     matching = [
-                        attempt
-                        for attempt in attempts.list_for_pr(
+                        candidate
+                        for candidate in attempts.list_for_pr(
                             project.project_id,
                             pull_request.work_item_id,
                             pull_request.number,
                         )
-                        if attempt.expected_head_sha == pull_request.head_sha
+                        if candidate.expected_head_sha == pull_request.head_sha
                         and (
-                            attempt.operation is FinalizationOperation.MERGE_PR
-                            or attempt.base_sha == pull_request.base_sha
+                            candidate.operation is FinalizationOperation.MERGE_PR
+                            or candidate.base_sha == pull_request.base_sha
                         )
                     ]
                     attempt = matching[0] if matching else None
-                    if attempt is None:
-                        projected.append(pull_request)
-                        continue
-                    state = pull_request.finalization_state
+
+                state = pull_request.finalization_state
+                detail = pull_request.finalization_detail
+                if attempt is not None:
                     detail = attempt.message or attempt.error_code
                     if attempt.status is FinalizationAttemptStatus.BLOCKED:
                         state = (
@@ -541,90 +544,82 @@ def read_project_review_panel(
                         )
                     elif attempt.status is FinalizationAttemptStatus.STALE:
                         state = "FINALIZATION_STALE"
-                    updated_pull_request = replace(
-                        pull_request,
-                        finalization_state=state,
-                        finalization_detail=detail,
+
+                updated_pull_request = replace(
+                    pull_request,
+                    finalization_state=state,
+                    finalization_detail=detail,
+                )
+                work_item = work_by_key.get(updated_pull_request.work_item_id)
+                watchdog = None
+                if work_item is not None:
+                    watchdog_execution, watchdog = _review_watchdog(
+                        project,
+                        updated_pull_request,
+                        work_item=work_item,
+                        now=current,
+                        pr_no_ci_after_seconds=pr_no_ci_after_seconds,
+                        ci_stall_after_seconds=ci_stall_after_seconds,
+                        auto_merge_grace_seconds=auto_merge_grace_seconds,
                     )
-                    work_item = next(
-                        (
-                            item
-                            for item in active_work
-                            if item.key == updated_pull_request.work_item_id
-                        ),
-                        None,
-                    )
-                    watchdog = None
-                    if work_item is not None:
-                        watchdog_execution, watchdog = _review_watchdog(
-                            project,
-                            updated_pull_request,
-                            work_item=work_item,
-                            now=now or datetime.now(timezone.utc),
-                            pr_no_ci_after_seconds=pr_no_ci_after_seconds,
-                            ci_stall_after_seconds=ci_stall_after_seconds,
-                            auto_merge_grace_seconds=auto_merge_grace_seconds,
-                        )
-                        if watchdog is not None:
-                            if watchdog.kind in {
-                                GitHubWaitWatchdogKind.PR_NO_CI,
-                                GitHubWaitWatchdogKind.CI_STALLED,
-                            }:
-                                prepared = (
-                                    uow.prompt_dispatches.get_by_idempotency_key(
-                                        watchdog_dispatch_key(
-                                            project,
-                                            updated_pull_request.work_item_id,
-                                            watchdog,
-                                        )
-                                    )
-                                    is not None
-                                )
-                                watchdog = with_recovery(
-                                    watchdog,
-                                    prepared=prepared,
-                                    state=(
-                                        "DEV_RELAUNCH_PREPARED"
-                                        if prepared
-                                        else "DEV_RELAUNCH_DUE"
-                                        if watchdog.due
-                                        else "WAITING"
-                                    ),
-                                )
-                            elif watchdog_execution is not None:
-                                recovery_projection = replace(
-                                    watchdog_execution,
-                                    next_action=NextAction.MERGE_PR,
-                                )
-                                try:
-                                    recovery_key = finalization_idempotency_key(
+                    if watchdog is not None:
+                        if watchdog.kind in {
+                            GitHubWaitWatchdogKind.PR_NO_CI,
+                            GitHubWaitWatchdogKind.CI_STALLED,
+                        }:
+                            prepared = (
+                                uow.prompt_dispatches.get_by_idempotency_key(
+                                    watchdog_dispatch_key(
                                         project,
-                                        recovery_projection,
+                                        updated_pull_request.work_item_id,
+                                        watchdog,
                                     )
-                                except ValueError:
-                                    recovery_attempt = None
-                                else:
-                                    recovery_attempt = attempts.get_by_idempotency_key(
-                                        recovery_key
-                                    )
-                                watchdog = with_recovery(
-                                    watchdog,
-                                    prepared=recovery_attempt is not None,
-                                    state=(
-                                        f"FINALIZER_{recovery_attempt.status.value}"
-                                        if recovery_attempt is not None
-                                        else "FINALIZER_DUE"
-                                        if watchdog.due
-                                        else "WAITING_FOR_GITHUB"
-                                    ),
                                 )
-                    projected.append(
-                        replace(updated_pull_request, github_watchdog=watchdog)
-                    )
-                pull_requests = tuple(projected)
+                                is not None
+                            )
+                            watchdog = with_recovery(
+                                watchdog,
+                                prepared=prepared,
+                                state=(
+                                    "DEV_RELAUNCH_PREPARED"
+                                    if prepared
+                                    else "DEV_RELAUNCH_DUE"
+                                    if watchdog.due
+                                    else "WAITING"
+                                ),
+                            )
+                        elif watchdog_execution is not None and attempts is not None:
+                            recovery_projection = replace(
+                                watchdog_execution,
+                                next_action=NextAction.MERGE_PR,
+                            )
+                            try:
+                                recovery_key = finalization_idempotency_key(
+                                    project,
+                                    recovery_projection,
+                                )
+                            except ValueError:
+                                recovery_attempt = None
+                            else:
+                                recovery_attempt = attempts.get_by_idempotency_key(
+                                    recovery_key
+                                )
+                            watchdog = with_recovery(
+                                watchdog,
+                                prepared=recovery_attempt is not None,
+                                state=(
+                                    f"FINALIZER_{recovery_attempt.status.value}"
+                                    if recovery_attempt is not None
+                                    else "FINALIZER_DUE"
+                                    if watchdog.due
+                                    else "WAITING_FOR_GITHUB"
+                                ),
+                            )
+                projected.append(
+                    replace(updated_pull_request, github_watchdog=watchdog)
+                )
+            pull_requests = tuple(projected)
     elif pull_requests:
-        current = now or datetime.now(timezone.utc)
-        work_by_key = {item.key: item for item in active_work}
         pull_requests = tuple(
             replace(
                 pull_request,
