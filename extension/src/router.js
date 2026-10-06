@@ -393,6 +393,77 @@
       );
     }
 
+    async recoveryTarget({ session, routing }) {
+      const cached = await this.routingStore.get(session);
+      if (cached?.kind === ROUTING_KIND.INVALIDATED) {
+        throw new RoutingError("binding_invalidated");
+      }
+      if (!cached || !Number.isInteger(cached.tab_id)) {
+        throw new RoutingError("recovery_target_missing");
+      }
+      return this.revalidateRecoveryTarget({
+        session,
+        routing,
+        tabId: cached.tab_id,
+      });
+    }
+
+    async revalidateRecoveryTarget({ session, routing, tabId }) {
+      const cached = await this.routingStore.get(session);
+      if (cached?.kind === ROUTING_KIND.INVALIDATED) {
+        throw new RoutingError("binding_invalidated");
+      }
+      if (!cached || !Number.isInteger(cached.tab_id) || cached.tab_id !== tabId) {
+        throw new RoutingError("recovery_target_changed");
+      }
+
+      if (routing === null) {
+        if (cached.kind !== ROUTING_KIND.PROVISIONAL) {
+          throw new RoutingError("provisional_recovery_binding_changed");
+        }
+        const tabs = await this._tabs();
+        const tab = tabs.find((candidate) => candidate.id === tabId);
+        if (!tab) {
+          throw new RoutingError("target_tab_missing");
+        }
+        if (!isSupportedChatGptUrl(tab.url)) {
+          throw new RoutingError("provisional_recovery_target_changed");
+        }
+        return tab;
+      }
+
+      const normalized = normalizeRouting(routing);
+      if (cached.kind !== ROUTING_KIND.BOUND) {
+        throw new RoutingError("bound_recovery_binding_missing");
+      }
+      if (cached.binding_version !== normalized.binding_version) {
+        throw new RoutingError(
+          "stale_binding_snapshot",
+          [
+            "expected_version=" + normalized.binding_version,
+            "observed_version=" + cached.binding_version,
+          ].join(","),
+        );
+      }
+      if (
+        cached.conversation_id !== normalized.conversation_id ||
+        cached.canonical_url !== normalized.canonical_url
+      ) {
+        throw new RoutingError(
+          "binding_snapshot_conflict",
+          [
+            "expected=" + normalized.conversation_id,
+            "observed=" + (cached.conversation_id || "unknown"),
+          ].join(","),
+        );
+      }
+      return this.revalidateTarget({
+        session,
+        routing: normalized,
+        tabId,
+      });
+    }
+
     async invalidate(session, reason) {
       await this.routingStore.markInvalidated(session, reason);
     }
