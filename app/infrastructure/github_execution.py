@@ -321,6 +321,12 @@ class GitHubExecutionReader:
             url = item.get("html_url")
             if url is not None and not isinstance(url, str):
                 url = None
+            created_at = item.get("created_at")
+            updated_at = item.get("updated_at")
+            if created_at is not None and not isinstance(created_at, str):
+                raise ExecutionPayloadError("GitHub workflow created_at must be text or null")
+            if updated_at is not None and not isinstance(updated_at, str):
+                raise ExecutionPayloadError("GitHub workflow updated_at must be text or null")
             runs.append(
                 WorkflowRunEvidence(
                     run_id=run_id,
@@ -331,6 +337,8 @@ class GitHubExecutionReader:
                     head_sha=run_head_sha,
                     url=url,
                     failed_jobs=failed_jobs,
+                    created_at=created_at,
+                    updated_at=updated_at,
                 )
             )
         return tuple(runs)
@@ -392,6 +400,9 @@ class GitHubExecutionReader:
         merged_at = payload.get("merged_at")
         if merged_at is not None and not isinstance(merged_at, str):
             raise ExecutionPayloadError("GitHub pull-request merged_at must be text or null")
+        created_at = payload.get("created_at")
+        if created_at is not None and not isinstance(created_at, str):
+            raise ExecutionPayloadError("GitHub pull-request created_at must be text or null")
         updated_at = payload.get("updated_at")
         if updated_at is not None and not isinstance(updated_at, str):
             raise ExecutionPayloadError("GitHub pull-request updated_at must be text or null")
@@ -432,6 +443,7 @@ class GitHubExecutionReader:
             url=url,
             updated_at=updated_at,
             merged_at=merged_at,
+            created_at=created_at,
         )
 
     @staticmethod
