@@ -2,6 +2,7 @@ export const DEFAULT_COCKPIT_REFRESH_INTERVAL_MS = 30_000
 export const DEFAULT_RESUME_DEDUPE_MS = 1_000
 
 export type CockpitRefreshReason = 'interval' | 'resume' | 'focus' | 'manual'
+export type CockpitRefreshFailure = 'stale' | 'fatal'
 
 type TimerHandle = ReturnType<typeof setTimeout>
 
@@ -31,6 +32,23 @@ export function resolveCockpitRefreshInterval(
   if (!rawValue) return fallback
   const parsed = Number(rawValue)
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback
+}
+
+export function classifyCockpitRefreshFailure(
+  requestProjectId: string,
+  loadedProjectId: string | null,
+): CockpitRefreshFailure {
+  return loadedProjectId === requestProjectId ? 'stale' : 'fatal'
+}
+
+export function resolveRefreshedSelection(
+  currentKey: string | null,
+  availableKeys: readonly string[],
+  preferredKey?: string | null,
+): string | null {
+  if (currentKey && availableKeys.includes(currentKey)) return currentKey
+  if (preferredKey && availableKeys.includes(preferredKey)) return preferredKey
+  return availableKeys[0] ?? null
 }
 
 export function createCockpitRefreshLoop(options: RefreshLoopOptions): CockpitRefreshLoop {
