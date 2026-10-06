@@ -340,6 +340,20 @@ def _parallel_execution_item_payload(
             if item.interaction is not None
             else None
         ),
+        "github_watchdog": (
+            {
+                "kind": item.github_watchdog.kind.value,
+                "last_activity_at": item.github_watchdog.last_activity_at,
+                "threshold_seconds": item.github_watchdog.threshold_seconds,
+                "deadline_at": item.github_watchdog.deadline_at.isoformat(),
+                "due": item.github_watchdog.due,
+                "recovery_prepared": item.github_watchdog.recovery_prepared,
+                "recovery_state": item.github_watchdog.recovery_state,
+                "evidence_identity": item.github_watchdog.evidence_identity,
+            }
+            if item.github_watchdog is not None
+            else None
+        ),
         "watchdog": (
             {
                 "branch_last_activity_at": item.watchdog.branch_last_activity_at,
@@ -518,6 +532,9 @@ def create_app(
                         max_parallel_dev_executions=active_settings.max_parallel_dev_executions,
                         resource_lock_lease_seconds=active_settings.resource_lock_lease_seconds,
                         dev_stale_after_seconds=active_settings.dev_stale_after_seconds,
+                        pr_no_ci_after_seconds=active_settings.pr_no_ci_after_seconds,
+                        ci_stall_after_seconds=active_settings.ci_stall_after_seconds,
+                        auto_merge_grace_seconds=active_settings.auto_merge_grace_seconds,
                         lease_owner_id=resource_lock_lease_owner_id,
                         finalizer=active_execution_finalizer,
                     )
@@ -587,6 +604,10 @@ def create_app(
         uow_factory=uow_factory,
         max_parallel_dev_executions=active_settings.max_parallel_dev_executions,
         companion_connections=connection_manager,
+        dev_stale_after_seconds=active_settings.dev_stale_after_seconds,
+        pr_no_ci_after_seconds=active_settings.pr_no_ci_after_seconds,
+        ci_stall_after_seconds=active_settings.ci_stall_after_seconds,
+        auto_merge_grace_seconds=active_settings.auto_merge_grace_seconds,
     ))
 
     application.include_router(build_cockpit_router(
@@ -599,6 +620,9 @@ def create_app(
         uow_factory=uow_factory,
         max_parallel_dev_executions=active_settings.max_parallel_dev_executions,
         dev_stale_after_seconds=active_settings.dev_stale_after_seconds,
+        pr_no_ci_after_seconds=active_settings.pr_no_ci_after_seconds,
+        ci_stall_after_seconds=active_settings.ci_stall_after_seconds,
+        auto_merge_grace_seconds=active_settings.auto_merge_grace_seconds,
         companion_connections=connection_manager,
     ))
 
@@ -665,6 +689,9 @@ def create_app(
                 uow_factory=uow_factory,
                 max_parallel_dev_executions=active_settings.max_parallel_dev_executions,
                 dev_stale_after_seconds=active_settings.dev_stale_after_seconds,
+                pr_no_ci_after_seconds=active_settings.pr_no_ci_after_seconds,
+                ci_stall_after_seconds=active_settings.ci_stall_after_seconds,
+                auto_merge_grace_seconds=active_settings.auto_merge_grace_seconds,
             )
         except RoadmapSourceError as exc:
             return JSONResponse(
@@ -692,6 +719,9 @@ def create_app(
             max_parallel_dev_executions=active_settings.max_parallel_dev_executions,
             resource_lock_lease_seconds=active_settings.resource_lock_lease_seconds,
             dev_stale_after_seconds=active_settings.dev_stale_after_seconds,
+            pr_no_ci_after_seconds=active_settings.pr_no_ci_after_seconds,
+            ci_stall_after_seconds=active_settings.ci_stall_after_seconds,
+            auto_merge_grace_seconds=active_settings.auto_merge_grace_seconds,
             lease_owner_id=resource_lock_lease_owner_id,
             finalizer=active_execution_finalizer,
         )
@@ -745,6 +775,9 @@ def create_app(
             max_parallel_dev_executions=1,
             resource_lock_lease_seconds=active_settings.resource_lock_lease_seconds,
             dev_stale_after_seconds=active_settings.dev_stale_after_seconds,
+            pr_no_ci_after_seconds=active_settings.pr_no_ci_after_seconds,
+            ci_stall_after_seconds=active_settings.ci_stall_after_seconds,
+            auto_merge_grace_seconds=active_settings.auto_merge_grace_seconds,
             lease_owner_id=resource_lock_lease_owner_id,
             finalizer=active_execution_finalizer,
         )
