@@ -512,6 +512,7 @@ def _execute_deterministic_finalization_actions(
                 project,
                 pr_number=pull_request.number,
                 expected_head_sha=pull_request.head_sha,
+                expected_base_sha=pull_request.base_sha,
             )
 
         if result is None:
