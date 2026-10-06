@@ -36,6 +36,9 @@ def build_cockpit_router(
     max_parallel_dev_executions: int,
     dev_stale_after_seconds: float,
     companion_connections,
+    pr_no_ci_after_seconds: float = 900.0,
+    ci_stall_after_seconds: float = 1800.0,
+    auto_merge_grace_seconds: float = 600.0,
 ):
     router = APIRouter(tags=["cockpit"])
 
@@ -57,6 +60,9 @@ def build_cockpit_router(
             max_parallel_dev_executions=max_parallel_dev_executions,
             companion_connected=companion_connections.has_active_connection,
             dev_stale_after_seconds=dev_stale_after_seconds,
+            pr_no_ci_after_seconds=pr_no_ci_after_seconds,
+            ci_stall_after_seconds=ci_stall_after_seconds,
+            auto_merge_grace_seconds=auto_merge_grace_seconds,
         )
         return {
             "project": {
@@ -254,6 +260,9 @@ def build_cockpit_router(
                 roadmap_reader=roadmap_reader,
                 review_reader=review_reader,
                 uow_factory=uow_factory,
+                pr_no_ci_after_seconds=pr_no_ci_after_seconds,
+                ci_stall_after_seconds=ci_stall_after_seconds,
+                auto_merge_grace_seconds=auto_merge_grace_seconds,
             )
         except (RoadmapSourceError, ExecutionSourceError) as exc:
             code = getattr(exc, "code", "GITHUB_UNAVAILABLE")

@@ -205,6 +205,8 @@ class GitHubReviewReader:
                             finalization_detail=None,
                             ci_state=ci_state,
                             workflows=workflows,
+                            created_at=detail.created_at,
+                            updated_at=detail.updated_at,
                         )
                     )
 
@@ -303,6 +305,12 @@ class GitHubReviewReader:
             url = item.get("html_url")
             if url is not None and not isinstance(url, str):
                 url = None
+            created_at = item.get("created_at")
+            updated_at = item.get("updated_at")
+            if created_at is not None and not isinstance(created_at, str):
+                raise ExecutionPayloadError("GitHub workflow created_at must be text or null")
+            if updated_at is not None and not isinstance(updated_at, str):
+                raise ExecutionPayloadError("GitHub workflow updated_at must be text or null")
 
             jobs, jobs_complete = self._read_attempt_jobs(
                 client,
@@ -322,6 +330,8 @@ class GitHubReviewReader:
                     url=url,
                     jobs=jobs,
                     jobs_complete=jobs_complete,
+                    created_at=created_at,
+                    updated_at=updated_at,
                 )
             )
         workflows.sort(key=lambda item: (item.run_id, item.attempt), reverse=True)
@@ -332,7 +342,7 @@ class GitHubReviewReader:
         client: httpx.Client,
         base_url: str,
         head_sha: str,
-    ) -> tuple[tuple[tuple[int, int, str, str | None, str], ...], bool]:
+    ) -> tuple[tuple[tuple[int, int, str, str | None, str, str | None, str | None], ...], bool]:
         raw_runs, complete = self._paged_items(
             client,
             f"{base_url}/actions/runs",
@@ -340,7 +350,9 @@ class GitHubReviewReader:
             payload_key="workflow_runs",
             max_pages=10,
         )
-        signature: list[tuple[int, int, str, str | None, str]] = []
+        signature: list[
+            tuple[int, int, str, str | None, str, str | None, str | None]
+        ] = []
         for item in raw_runs:
             if not isinstance(item, dict):
                 raise ExecutionPayloadError("GitHub workflow run must be an object")
@@ -355,13 +367,24 @@ class GitHubReviewReader:
             conclusion = item.get("conclusion")
             if conclusion is not None and not isinstance(conclusion, str):
                 raise ExecutionPayloadError("GitHub workflow conclusion must be text or null")
-            signature.append((run_id, attempt, status, conclusion, run_head_sha))
+            created_at = item.get("created_at")
+            updated_at = item.get("updated_at")
+            if created_at is not None and not isinstance(created_at, str):
+                raise ExecutionPayloadError("GitHub workflow created_at must be text or null")
+            if updated_at is not None and not isinstance(updated_at, str):
+                raise ExecutionPayloadError("GitHub workflow updated_at must be text or null")
+            signature.append(
+                (run_id, attempt, status, conclusion, run_head_sha, created_at, updated_at)
+            )
         return tuple(sorted(signature)), complete
 
     @staticmethod
     def _workflow_signature(
         workflows: tuple[ReviewWorkflowEvidence, ...],
-    ) -> tuple[tuple[int, int, str, str | None, str], ...]:
+    ) -> tuple[
+        tuple[int, int, str, str | None, str, str | None, str | None],
+        ...,
+    ]:
         return tuple(
             sorted(
                 (
@@ -370,6 +393,8 @@ class GitHubReviewReader:
                     item.status,
                     item.conclusion,
                     item.head_sha,
+                    item.created_at,
+                    item.updated_at,
                 )
                 for item in workflows
             )
@@ -501,6 +526,7 @@ class GitHubReviewReader:
         head_sha = GitHubReviewReader._require_string(head, "sha", context="pull-request head")
         state = GitHubReviewReader._require_string(payload, "state", context="pull request")
         merged_at = payload.get("merged_at")
+        created_at = payload.get("created_at")
         updated_at = payload.get("updated_at")
         url = payload.get("html_url")
         mergeable = payload.get("mergeable")
@@ -512,7 +538,12 @@ class GitHubReviewReader:
             mergeable_state = None
         if auto_merge is not None and not isinstance(auto_merge, dict):
             raise ExecutionPayloadError("GitHub pull-request auto_merge must be object or null")
-        for value, field in ((merged_at, "merged_at"), (updated_at, "updated_at"), (url, "html_url")):
+        for value, field in (
+            (merged_at, "merged_at"),
+            (created_at, "created_at"),
+            (updated_at, "updated_at"),
+            (url, "html_url"),
+        ):
             if value is not None and not isinstance(value, str):
                 raise ExecutionPayloadError(f"GitHub pull-request {field} must be text or null")
         base_branch = None
@@ -538,6 +569,7 @@ class GitHubReviewReader:
             mergeable_state=mergeable_state,
             auto_merge_enabled=auto_merge is not None,
             url=url,
+            created_at=created_at,
             updated_at=updated_at,
             merged_at=merged_at,
         )

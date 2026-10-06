@@ -94,6 +94,17 @@ export type SchedulerResponse = {
   }
 }
 
+export type GitHubWaitWatchdog = {
+  kind: string
+  last_activity_at: string
+  threshold_seconds: number
+  deadline_at: string
+  due: boolean
+  evidence_identity: string
+  recovery_state: string
+  recovery_prepared: boolean
+}
+
 export type ParallelExecutionItem = {
   role: string
   agent_session: string
@@ -117,6 +128,7 @@ export type ParallelExecutionItem = {
     stale_due: boolean
     relaunch_prepared: boolean
   }
+  github_watchdog: GitHubWaitWatchdog | null
   resource_locks: {
     required: { surface: string; mode: string }[]
     held: {
@@ -257,6 +269,10 @@ export type CockpitOverview = {
       interaction: InteractionSummary | null
       watchdog_stale: boolean
       watchdog_relaunch_prepared: boolean
+      github_watchdog_kind: string | null
+      github_watchdog_due: boolean
+      github_watchdog_deadline_at: string | null
+      github_watchdog_recovery_state: string | null
     }[]
   }
 }
@@ -396,6 +412,8 @@ export type ReviewWorkflow = {
   url: string | null
   jobs: ReviewJob[]
   jobs_complete: boolean
+  created_at: string | null
+  updated_at: string | null
 }
 
 export type ReviewPullRequest = {
@@ -416,6 +434,9 @@ export type ReviewPullRequest = {
   finalization_detail: string | null
   ci_state: string
   workflows: ReviewWorkflow[]
+  created_at: string | null
+  updated_at: string | null
+  github_watchdog: GitHubWaitWatchdog | null
 }
 
 export type ReviewPanelResponse = {

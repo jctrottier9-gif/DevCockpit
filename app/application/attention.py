@@ -208,6 +208,58 @@ def _execution_items(
             continue
         by_work_item[work_item.key] = candidate
         pull_request = candidate.execution.pull_request
+        github_watchdog = candidate.github_watchdog
+        if github_watchdog is not None:
+            overdue = github_watchdog.due
+            _add(
+                items,
+                AttentionItem(
+                    stable_key=_stable_key(
+                        project_id,
+                        "DEV",
+                        work_item.key,
+                        f"GITHUB_WATCHDOG_{github_watchdog.kind.value}",
+                    ),
+                    level=AttentionLevel.ACTION if overdue else AttentionLevel.WATCH,
+                    kind=AttentionKind.PR_FINALIZATION,
+                    title=f"DEV · {work_item.key} · watchdog {github_watchdog.kind.value}",
+                    reason=(
+                        f"Dernière activité GitHub {github_watchdog.last_activity_at}; "
+                        f"seuil {round(github_watchdog.threshold_seconds)} s; "
+                        f"échéance {github_watchdog.deadline_at.isoformat()}; "
+                        f"récupération {github_watchdog.recovery_state}."
+                    ),
+                    project_id=project_id,
+                    work_item_id=work_item.key,
+                    role="DEV",
+                    agent_session=candidate.agent_session,
+                    primary_action=AttentionAction(
+                        kind=github_watchdog.kind.value,
+                        label="Ouvrir la PR",
+                        target="pull_request" if pull_request and pull_request.url else "orchestration",
+                        work_item_id=work_item.key,
+                        href=pull_request.url if pull_request else None,
+                    ),
+                    pr_number=pull_request.number if pull_request else None,
+                    pr_url=pull_request.url if pull_request else None,
+                    evidence=(
+                        AttentionEvidence(
+                            "GitHubWaitWatchdog",
+                            github_watchdog.evidence_identity,
+                            github_watchdog.recovery_state,
+                        ),
+                    ),
+                    context={
+                        "watchdog_kind": github_watchdog.kind.value,
+                        "last_activity_at": github_watchdog.last_activity_at,
+                        "threshold_seconds": github_watchdog.threshold_seconds,
+                        "deadline_at": github_watchdog.deadline_at.isoformat(),
+                        "due": github_watchdog.due,
+                        "recovery_prepared": github_watchdog.recovery_prepared,
+                        "recovery_state": github_watchdog.recovery_state,
+                    },
+                ),
+            )
 
         if candidate.execution.state is ExecutionState.CI_RED:
             action_kind = "FIX_CI"
@@ -1000,6 +1052,10 @@ def read_project_attention(
     uow_factory,
     max_parallel_dev_executions: int,
     companion_connected: bool,
+    dev_stale_after_seconds: float = 3600.0,
+    pr_no_ci_after_seconds: float = 900.0,
+    ci_stall_after_seconds: float = 1800.0,
+    auto_merge_grace_seconds: float = 600.0,
 ) -> AttentionProjection:
     parallel = read_project_parallel_dev_executions(
         project,
@@ -1007,6 +1063,10 @@ def read_project_attention(
         evidence_reader=evidence_reader,
         uow_factory=uow_factory,
         max_parallel_dev_executions=max_parallel_dev_executions,
+        dev_stale_after_seconds=dev_stale_after_seconds,
+        pr_no_ci_after_seconds=pr_no_ci_after_seconds,
+        ci_stall_after_seconds=ci_stall_after_seconds,
+        auto_merge_grace_seconds=auto_merge_grace_seconds,
     )
     items: dict[str, AttentionItem] = {}
     execution_by_work_item = _execution_items(project.project_id, parallel, items)

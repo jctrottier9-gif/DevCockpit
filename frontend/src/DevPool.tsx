@@ -38,6 +38,7 @@ function DevExecutionCard({
 }) {
   const key = item.work_item?.key
   const watchdog = item.watchdog
+  const githubWatchdog = item.github_watchdog
 
   return <article className="dev-execution-card">
     <div className="dev-execution-card__header">
@@ -97,7 +98,22 @@ function DevExecutionCard({
     </div>
 
     <div className="dev-execution-subsection">
-      <strong>Watchdog</strong>
+      <strong>Watchdog GitHub</strong>
+      {githubWatchdog ? <>
+        <p>Type : {githubWatchdog.kind}</p>
+        <p>Dernière activité : {new Date(githubWatchdog.last_activity_at).toLocaleString()}</p>
+        <p>Seuil : {Math.round(githubWatchdog.threshold_seconds / 60)} min</p>
+        <p>Échéance : {new Date(githubWatchdog.deadline_at).toLocaleString()}</p>
+        <p>
+          État : {githubWatchdog.due ? 'échéance dépassée' : 'dans la fenêtre'}
+          {' · '}{githubWatchdog.recovery_state}
+          {githubWatchdog.recovery_prepared ? ' · récupération préparée/tentée' : ''}
+        </p>
+      </> : <p>Non applicable avec les preuves GitHub actuelles.</p>}
+    </div>
+
+    <div className="dev-execution-subsection">
+      <strong>Watchdog DEV</strong>
       {watchdog ? <>
         <p>Dernière activité branche : {new Date(watchdog.branch_last_activity_at).toLocaleString()}</p>
         <p>Seuil : {Math.round(watchdog.threshold_seconds / 60)} min</p>

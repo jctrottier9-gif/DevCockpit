@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 
@@ -16,6 +16,16 @@ from app.application.executions import (
     build_initial_dev_prompt,
     build_roadmap_reconciliation_follow_up,
     build_stale_dev_follow_up,
+)
+from app.application.github_wait_watchdogs import (
+    GitHubWaitWatchdog,
+    GitHubWaitWatchdogKind,
+    build_ci_stall_follow_up,
+    build_pr_no_ci_follow_up,
+    project_execution_github_wait_watchdog,
+    watchdog_dispatch_key,
+    watchdog_dispatch_prefix,
+    with_recovery,
 )
 from app.application.interaction_summaries import InteractionSummary, read_interaction_summary
 from app.application.prompt_dispatches import (
@@ -48,6 +58,7 @@ from app.domain.project import Project
 from app.domain.prompt_dispatch import (
     PromptDispatch,
     PromptDispatchRole,
+    PromptDispatchStatus,
     build_agent_session,
 )
 from app.domain.resource_lock import (
@@ -102,6 +113,7 @@ class DevExecutionItem:
     inhibition_reason: str | None = None
     interaction: DevInteractionSummary | None = None
     watchdog: DevWatchdogSummary | None = None
+    github_watchdog: GitHubWaitWatchdog | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +150,9 @@ def read_project_parallel_dev_executions(
     uow_factory: UnitOfWorkFactory,
     max_parallel_dev_executions: int,
     dev_stale_after_seconds: float = 3600.0,
+    pr_no_ci_after_seconds: float = 900.0,
+    ci_stall_after_seconds: float = 1800.0,
+    auto_merge_grace_seconds: float = 600.0,
     now: datetime | None = None,
 ) -> ParallelDevExecutionProjection:
     issue, scheduler, snapshots = _read_candidate_snapshots(
@@ -159,6 +174,9 @@ def read_project_parallel_dev_executions(
             uow=uow,
             max_parallel_dev_executions=max_parallel_dev_executions,
             dev_stale_after_seconds=dev_stale_after_seconds,
+            pr_no_ci_after_seconds=pr_no_ci_after_seconds,
+            ci_stall_after_seconds=ci_stall_after_seconds,
+            auto_merge_grace_seconds=auto_merge_grace_seconds,
             global_inhibition=(
                 "ROADMAP_APPLICATION_ACTIVE"
                 if fence.active_application_id is not None
@@ -177,6 +195,9 @@ def evaluate_project_parallel_dev_executions(
     max_parallel_dev_executions: int,
     resource_lock_lease_seconds: float = 900.0,
     dev_stale_after_seconds: float = 3600.0,
+    pr_no_ci_after_seconds: float = 900.0,
+    ci_stall_after_seconds: float = 1800.0,
+    auto_merge_grace_seconds: float = 600.0,
     lease_owner_id: str = "devcockpit-process",
     clock: Callable[[], datetime] | None = None,
     finalizer: PullRequestFinalizer | None = None,
@@ -215,6 +236,9 @@ def evaluate_project_parallel_dev_executions(
                 uow=uow,
                 max_parallel_dev_executions=max_parallel_dev_executions,
                 dev_stale_after_seconds=dev_stale_after_seconds,
+                pr_no_ci_after_seconds=pr_no_ci_after_seconds,
+                ci_stall_after_seconds=ci_stall_after_seconds,
+                auto_merge_grace_seconds=auto_merge_grace_seconds,
                 global_inhibition="ROADMAP_APPLICATION_FENCE",
                 now=now,
             )
@@ -229,6 +253,9 @@ def evaluate_project_parallel_dev_executions(
                 uow=uow,
                 max_parallel_dev_executions=max_parallel_dev_executions,
                 dev_stale_after_seconds=dev_stale_after_seconds,
+                pr_no_ci_after_seconds=pr_no_ci_after_seconds,
+                ci_stall_after_seconds=ci_stall_after_seconds,
+                auto_merge_grace_seconds=auto_merge_grace_seconds,
                 global_inhibition="SCHEDULER_INVALID",
                 now=now,
             )
@@ -240,6 +267,10 @@ def evaluate_project_parallel_dev_executions(
             evidence_reader=evidence_reader,
             uow=uow,
             finalizer=finalizer,
+            now=now,
+            pr_no_ci_after_seconds=pr_no_ci_after_seconds,
+            ci_stall_after_seconds=ci_stall_after_seconds,
+            auto_merge_grace_seconds=auto_merge_grace_seconds,
         )
 
         _reconcile_resource_locks(
@@ -266,12 +297,21 @@ def evaluate_project_parallel_dev_executions(
             uow=uow,
             max_parallel_dev_executions=max_parallel_dev_executions,
             dev_stale_after_seconds=dev_stale_after_seconds,
+            pr_no_ci_after_seconds=pr_no_ci_after_seconds,
+            ci_stall_after_seconds=ci_stall_after_seconds,
+            auto_merge_grace_seconds=auto_merge_grace_seconds,
             global_inhibition=None,
             now=now,
         )
 
         remaining_starts = projection.available_capacity
         for item in projection.items:
+            _cancel_obsolete_github_watchdog_dispatches(
+                project,
+                item,
+                uow=uow,
+                now=now,
+            )
             work_item = item.execution.work_item
             if work_item is None:
                 continue
@@ -353,6 +393,42 @@ def evaluate_project_parallel_dev_executions(
                             uow=uow,
                         )
                     )
+                elif (
+                    item.github_watchdog is not None
+                    and item.github_watchdog.due
+                    and item.github_watchdog.kind
+                    in {
+                        GitHubWaitWatchdogKind.PR_NO_CI,
+                        GitHubWaitWatchdogKind.CI_STALLED,
+                    }
+                ):
+                    watchdog_key = watchdog_dispatch_key(
+                        project,
+                        work_item.key,
+                        item.github_watchdog,
+                    )
+                    if uow.prompt_dispatches.get_by_idempotency_key(watchdog_key) is None:
+                        prompt_builder = (
+                            build_pr_no_ci_follow_up
+                            if item.github_watchdog.kind is GitHubWaitWatchdogKind.PR_NO_CI
+                            else build_ci_stall_follow_up
+                        )
+                        dispatches.append(
+                            create_prompt_dispatch_in_uow(
+                                CreatePromptDispatchCommand(
+                                    project_id=project.project_id,
+                                    work_item_id=work_item.key,
+                                    role=PromptDispatchRole.DEV,
+                                    prompt_text=prompt_builder(
+                                        project,
+                                        item.execution,
+                                        item.github_watchdog,
+                                    ),
+                                    idempotency_key=watchdog_key,
+                                ),
+                                uow=uow,
+                            )
+                        )
                 elif _stale_dev_due(
                     project,
                     item.execution,
@@ -430,6 +506,9 @@ def evaluate_project_parallel_dev_executions(
             uow=uow,
             max_parallel_dev_executions=max_parallel_dev_executions,
             dev_stale_after_seconds=dev_stale_after_seconds,
+            pr_no_ci_after_seconds=pr_no_ci_after_seconds,
+            ci_stall_after_seconds=ci_stall_after_seconds,
+            auto_merge_grace_seconds=auto_merge_grace_seconds,
             global_inhibition=None,
             now=now,
         )
@@ -447,6 +526,10 @@ def _execute_deterministic_finalization_actions(
     evidence_reader: ExecutionEvidenceReader,
     uow,
     finalizer: PullRequestFinalizer | None,
+    now: datetime,
+    pr_no_ci_after_seconds: float,
+    ci_stall_after_seconds: float,
+    auto_merge_grace_seconds: float,
 ) -> tuple[_CandidateSnapshot, ...]:
     attempts = getattr(uow, "pr_finalization_attempts", None)
     if attempts is None:
@@ -454,9 +537,24 @@ def _execute_deterministic_finalization_actions(
 
     updated: list[_CandidateSnapshot] = []
     for snapshot in snapshots:
+        execution = snapshot.execution
+        watchdog = project_execution_github_wait_watchdog(
+            execution,
+            now=now,
+            pr_no_ci_after_seconds=pr_no_ci_after_seconds,
+            ci_stall_after_seconds=ci_stall_after_seconds,
+            auto_merge_grace_seconds=auto_merge_grace_seconds,
+        )
+        if (
+            watchdog is not None
+            and watchdog.kind is GitHubWaitWatchdogKind.AUTO_MERGE_GRACE
+            and watchdog.due
+            and execution.next_action is NextAction.WAIT_AUTO_MERGE
+        ):
+            execution = replace(execution, next_action=NextAction.MERGE_PR)
         execution = overlay_finalization_attempt(
             project,
-            snapshot.execution,
+            execution,
             attempts=attempts,
         )
         if (
@@ -767,6 +865,53 @@ def _restore_active_execution_locks(
 
 
 
+def _cancel_obsolete_github_watchdog_dispatches(
+    project: Project,
+    item: DevExecutionItem,
+    *,
+    uow,
+    now: datetime,
+) -> None:
+    work_item = item.execution.work_item
+    if work_item is None:
+        return
+    repository = getattr(uow, "prompt_dispatches", None)
+    list_for_work_item = getattr(repository, "list_for_work_item", None)
+    save = getattr(repository, "save", None)
+    if list_for_work_item is None or save is None:
+        return
+
+    current_key = None
+    watchdog = item.github_watchdog
+    if (
+        watchdog is not None
+        and watchdog.due
+        and watchdog.kind
+        in {
+            GitHubWaitWatchdogKind.PR_NO_CI,
+            GitHubWaitWatchdogKind.CI_STALLED,
+        }
+    ):
+        current_key = watchdog_dispatch_key(project, work_item.key, watchdog)
+
+    prefix = watchdog_dispatch_prefix(project, work_item.key)
+    for dispatch in list_for_work_item(project.project_id, work_item.key):
+        if (
+            dispatch.status is not PromptDispatchStatus.PREPARED
+            or not dispatch.idempotency_key.startswith(prefix)
+            or dispatch.idempotency_key == current_key
+        ):
+            continue
+        delivery = uow.prompt_deliveries.get_by_dispatch_id(dispatch.dispatch_id)
+        if delivery is not None and delivery.is_acknowledged:
+            # The extension may already own this prompt. There is deliberately no
+            # remote-revocation protocol; the prompt itself revalidates GitHub and
+            # must fail stale. Only unsent/unacknowledged local work is cancelled.
+            continue
+        dispatch.cancel(now=max(now, dispatch.updated_at))
+        save(dispatch)
+
+
 def _selected_dev_dispatch(project: Project, execution: ExecutionProjection, *, uow):
     work_item = execution.work_item
     if work_item is None:
@@ -890,6 +1035,71 @@ def _watchdog_summary(
         relaunch_prepared=relaunch_prepared,
     )
 
+def _github_wait_watchdog_summary(
+    project: Project,
+    execution: ExecutionProjection,
+    *,
+    uow,
+    now: datetime,
+    pr_no_ci_after_seconds: float,
+    ci_stall_after_seconds: float,
+    auto_merge_grace_seconds: float,
+) -> GitHubWaitWatchdog | None:
+    watchdog = project_execution_github_wait_watchdog(
+        execution,
+        now=now,
+        pr_no_ci_after_seconds=pr_no_ci_after_seconds,
+        ci_stall_after_seconds=ci_stall_after_seconds,
+        auto_merge_grace_seconds=auto_merge_grace_seconds,
+    )
+    if watchdog is None or execution.work_item is None:
+        return watchdog
+
+    if watchdog.kind in {
+        GitHubWaitWatchdogKind.PR_NO_CI,
+        GitHubWaitWatchdogKind.CI_STALLED,
+    }:
+        prepared = (
+            uow.prompt_dispatches.get_by_idempotency_key(
+                watchdog_dispatch_key(project, execution.work_item.key, watchdog)
+            )
+            is not None
+        )
+        return with_recovery(
+            watchdog,
+            prepared=prepared,
+            state=(
+                "DEV_RELAUNCH_PREPARED"
+                if prepared
+                else "DEV_RELAUNCH_DUE"
+                if watchdog.due
+                else "WAITING"
+            ),
+        )
+
+    attempts = getattr(uow, "pr_finalization_attempts", None)
+    attempt = None
+    if attempts is not None and execution.pull_request is not None:
+        recovery_projection = replace(execution, next_action=NextAction.MERGE_PR)
+        try:
+            key = finalization_idempotency_key(project, recovery_projection)
+        except ValueError:
+            key = None
+        if key is not None:
+            attempt = attempts.get_by_idempotency_key(key)
+    if attempt is None:
+        return with_recovery(
+            watchdog,
+            prepared=False,
+            state="FINALIZER_DUE" if watchdog.due else "WAITING_FOR_GITHUB",
+        )
+    return with_recovery(
+        watchdog,
+        prepared=True,
+        state=f"FINALIZER_{attempt.status.value}",
+    )
+
+
 def _project_parallel_state(
     project: Project,
     *,
@@ -899,6 +1109,9 @@ def _project_parallel_state(
     uow,
     max_parallel_dev_executions: int,
     dev_stale_after_seconds: float,
+    pr_no_ci_after_seconds: float,
+    ci_stall_after_seconds: float,
+    auto_merge_grace_seconds: float,
     global_inhibition: str | None,
     now: datetime,
 ) -> ParallelDevExecutionProjection:
@@ -1036,6 +1249,15 @@ def _project_parallel_state(
                     uow=uow,
                     now=now,
                     stale_after_seconds=dev_stale_after_seconds,
+                ),
+                github_watchdog=_github_wait_watchdog_summary(
+                    project,
+                    execution,
+                    uow=uow,
+                    now=now,
+                    pr_no_ci_after_seconds=pr_no_ci_after_seconds,
+                    ci_stall_after_seconds=ci_stall_after_seconds,
+                    auto_merge_grace_seconds=auto_merge_grace_seconds,
                 ),
             )
         )
