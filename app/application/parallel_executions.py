@@ -58,6 +58,7 @@ from app.domain.project import Project
 from app.domain.prompt_dispatch import (
     PromptDispatch,
     PromptDispatchRole,
+    PromptDispatchStatus,
     build_agent_session,
 )
 from app.domain.resource_lock import (
