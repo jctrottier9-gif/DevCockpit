@@ -74,7 +74,9 @@ function DevExecutionCard({
       </div>
       <div><dt>CI</dt><dd>{item.ci?.state ?? 'non observée'}</dd></div>
       <div><dt>Base</dt><dd>{item.pull_request?.base_branch ?? '—'}</dd></div>
+      <div><dt>Tip base</dt><dd title={item.pull_request?.base_sha ?? undefined}>{compactSha(item.pull_request?.base_sha ?? null)}</dd></div>
       <div><dt>Derrière base</dt><dd>{item.pull_request?.behind_by ?? '—'}</dd></div>
+      <div><dt>Mergeable state</dt><dd>{item.pull_request?.mergeable_state ?? '—'}</dd></div>
       <div><dt>Interaction</dt><dd><InteractionStatus interaction={item.interaction} compact /></dd></div>
       <div>
         <dt>Réponse importée</dt>

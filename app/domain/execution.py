@@ -259,7 +259,10 @@ def derive_execution_projection(
                 ci=ci,
             )
 
-        if ci.state is CiState.GREEN and (pull_request.behind_by or 0) > 0:
+        if ci.state is CiState.GREEN and (
+            (pull_request.behind_by or 0) > 0
+            or pull_request.mergeable_state == "behind"
+        ):
             return ExecutionProjection(
                 work_item=work_item,
                 state=ExecutionState.BASE_OUTDATED,
@@ -271,9 +274,10 @@ def derive_execution_projection(
                     ExecutionDiagnostic(
                         code="BASE_OUTDATED",
                         message=(
-                            "Current-head CI is green, but the pull-request branch "
-                            f"is {pull_request.behind_by} commit(s) behind "
-                            f"{pull_request.base_branch or evidence.default_branch}."
+                            "Current-head CI is green, but GitHub reports the pull-request "
+                            f"branch as behind {pull_request.base_branch or evidence.default_branch} "
+                            f"(behind_by={pull_request.behind_by}, "
+                            f"mergeable_state={pull_request.mergeable_state or 'unknown'})."
                         ),
                     ),
                 ),

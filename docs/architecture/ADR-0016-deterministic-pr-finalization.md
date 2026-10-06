@@ -22,9 +22,9 @@ GitHub remains authoritative for PR state, head/base identity, CI, mergeability 
 
 ### Branch synchronization
 
-Execution evidence records the PR base branch/SHA and the compare behind_by value. A current-head-green PR with behind_by > 0 projects BASE_OUTDATED / SYNC_BRANCH.
+Execution evidence records the PR base branch, resolves that branch to its current GitHub tip SHA, and compares that current tip to the PR head. A current-head-green PR with `behind_by > 0` or GitHub `mergeable_state = behind` projects BASE_OUTDATED / SYNC_BRANCH. The `base.sha` embedded in a PR payload is not authoritative for current-base freshness because it can remain historical after the base branch advances.
 
-The synchronization attempt identity is project + WorkItem + PR + head SHA + base SHA. Only one mutation attempt is allowed for that immutable evidence pair. A later base SHA creates new evidence and may authorize one new attempt.
+The synchronization attempt identity is project + WorkItem + PR + head SHA + observed current base-tip SHA. Only one mutation attempt is allowed for that immutable evidence pair. Immediately before synchronization or merge, DevCockpit resolves `base.ref` again and fails closed if its current tip no longer matches the observed base-tip SHA. A later base tip creates new evidence and may authorize one new attempt.
 
 A successful branch update invalidates every CI result attached to the old head. The normal reader then observes the new head and waits for CI on that head. A conflict or GitHub refusal is persisted as BRANCH_SYNC_BLOCKED; only a conflict that actually requires source resolution may create a targeted same-session DEV follow-up.
 

@@ -179,13 +179,21 @@ class GitHubExecutionReader:
         if mergeable_state is not None and not isinstance(mergeable_state, str):
             raise ExecutionPayloadError("GitHub pull-request mergeable_state must be text or null")
 
+        current_base_sha = detail.base_sha
+        if detail.base_branch is not None:
+            current_base_sha = self._read_branch_tip_sha(
+                client,
+                base_url,
+                detail.base_branch,
+            )
+
         behind_by: int | None = None
-        if detail.base_sha is not None:
+        if current_base_sha is not None:
             compare = self._request_json(
                 client,
                 (
                     f"{base_url}/compare/"
-                    f"{quote(detail.base_sha, safe='')}...{quote(detail.head_sha, safe='')}"
+                    f"{quote(current_base_sha, safe='')}...{quote(detail.head_sha, safe='')}"
                 ),
             )
             if not isinstance(compare, dict):
@@ -199,9 +207,27 @@ class GitHubExecutionReader:
             detail,
             mergeable=mergeable,
             mergeable_state=mergeable_state,
+            base_sha=current_base_sha,
             behind_by=behind_by,
             auto_merge_enabled=auto_merge is not None,
         )
+
+    def _read_branch_tip_sha(
+        self,
+        client: httpx.Client,
+        base_url: str,
+        branch: str,
+    ) -> str:
+        payload = self._request_json(
+            client,
+            f"{base_url}/branches/{quote(branch, safe='')}",
+        )
+        if not isinstance(payload, dict):
+            raise ExecutionPayloadError("GitHub branch response must be an object")
+        commit = payload.get("commit")
+        if not isinstance(commit, dict):
+            raise ExecutionPayloadError("GitHub branch commit must be an object")
+        return self._require_string(commit, "sha", context="branch commit")
 
     def _read_candidate_branches(
         self,

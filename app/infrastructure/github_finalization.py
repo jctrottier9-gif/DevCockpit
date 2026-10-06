@@ -42,10 +42,17 @@ class GitHubPullRequestFinalizer:
                 stale = self._validate_open_identity(
                     detail,
                     expected_head_sha=expected_head_sha,
-                    expected_base_sha=expected_base_sha,
                 )
                 if stale is not None:
                     return stale
+                base_stale = self._validate_current_base(
+                    client,
+                    base_url,
+                    detail,
+                    expected_base_sha=expected_base_sha,
+                )
+                if base_stale is not None:
+                    return base_stale
 
                 response = client.put(
                     f"{base_url}/pulls/{pr_number}/update-branch",
@@ -86,10 +93,17 @@ class GitHubPullRequestFinalizer:
                 stale = self._validate_open_identity(
                     detail,
                     expected_head_sha=expected_head_sha,
-                    expected_base_sha=expected_base_sha,
                 )
                 if stale is not None:
                     return stale
+                base_stale = self._validate_current_base(
+                    client,
+                    base_url,
+                    detail,
+                    expected_base_sha=expected_base_sha,
+                )
+                if base_stale is not None:
+                    return base_stale
 
                 mergeable = detail.get("mergeable") if isinstance(detail, dict) else None
                 mergeable_state = detail.get("mergeable_state") if isinstance(detail, dict) else None
@@ -198,7 +212,6 @@ class GitHubPullRequestFinalizer:
         detail: object,
         *,
         expected_head_sha: str,
-        expected_base_sha: str | None,
     ) -> FinalizationMutationResult | None:
         if not isinstance(detail, dict):
             return FinalizationMutationResult(
@@ -218,20 +231,56 @@ class GitHubPullRequestFinalizer:
                 message="Pull request is no longer open.",
             )
         head = detail.get("head")
-        base = detail.get("base")
         current_head = head.get("sha") if isinstance(head, dict) else None
-        current_base = base.get("sha") if isinstance(base, dict) else None
         if current_head != expected_head_sha:
             return FinalizationMutationResult(
                 FinalizationAttemptStatus.STALE,
                 error_code="HEAD_MOVED",
                 message="Pull-request head changed before mutation.",
             )
-        if expected_base_sha is not None and current_base != expected_base_sha:
+        return None
+
+    def _validate_current_base(
+        self,
+        client: httpx.Client,
+        base_url: str,
+        detail: object,
+        *,
+        expected_base_sha: str | None,
+    ) -> FinalizationMutationResult | None:
+        if expected_base_sha is None:
+            return None
+        if not isinstance(detail, dict):
+            return FinalizationMutationResult(
+                FinalizationAttemptStatus.STALE,
+                error_code="PR_EVIDENCE_INVALID",
+                message="Pull-request detail is not an object.",
+            )
+        base = detail.get("base")
+        base_ref = base.get("ref") if isinstance(base, dict) else None
+        if not isinstance(base_ref, str) or not base_ref:
+            return FinalizationMutationResult(
+                FinalizationAttemptStatus.STALE,
+                error_code="BASE_REF_MISSING",
+                message="Pull-request base branch is unavailable before mutation.",
+            )
+        payload = self._request_json(
+            client,
+            f"{base_url}/branches/{quote(base_ref, safe='')}",
+        )
+        if not isinstance(payload, dict):
+            return FinalizationMutationResult(
+                FinalizationAttemptStatus.STALE,
+                error_code="BASE_EVIDENCE_INVALID",
+                message="Current base branch evidence is invalid.",
+            )
+        commit = payload.get("commit")
+        current_base_sha = commit.get("sha") if isinstance(commit, dict) else None
+        if current_base_sha != expected_base_sha:
             return FinalizationMutationResult(
                 FinalizationAttemptStatus.STALE,
                 error_code="BASE_MOVED",
-                message="Pull-request base changed before branch synchronization.",
+                message="Current base branch tip changed before mutation.",
             )
         return None
 

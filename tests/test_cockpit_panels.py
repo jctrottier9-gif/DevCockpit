@@ -197,6 +197,7 @@ class CapturingReviewReader:
                     mergeable=None,
                     auto_merge_enabled=False,
                     base_branch="main",
+                    mergeable_state="behind",
                     base_sha="base-par",
                     behind_by=1,
                     finalization_state=None,
@@ -314,3 +315,6 @@ def test_review_panel_preserves_work_item_pr_head_run_attempt_and_jobs(tmp_path)
     )
     assert workflow["jobs"][0]["name"] == "backend"
     assert payload["pull_requests"][0]["auto_merge_enabled"] is True
+    assert payload["pull_requests"][1]["base_sha"] == "base-par"
+    assert payload["pull_requests"][1]["mergeable_state"] == "behind"
+    assert payload["pull_requests"][1]["next_action"] is None

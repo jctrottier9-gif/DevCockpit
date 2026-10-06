@@ -36,6 +36,7 @@ def pr(
     auto_merge_enabled: bool = False,
     base_sha: str | None = None,
     behind_by: int | None = None,
+    mergeable_state: str | None = None,
 ) -> PullRequestEvidence:
     return PullRequestEvidence(
         number=number,
@@ -49,6 +50,7 @@ def pr(
         base_branch="main" if base_sha is not None else None,
         base_sha=base_sha,
         behind_by=behind_by,
+        mergeable_state=mergeable_state,
         auto_merge_enabled=auto_merge_enabled,
         url=f"https://github.example/pr/{number}",
         updated_at="2026-10-01T12:00:00Z",
@@ -181,6 +183,30 @@ def test_green_pr_behind_base_requires_branch_sync_before_merge() -> None:
     assert projection.next_action is NextAction.SYNC_BRANCH
     assert projection.pull_request.base_sha == "base-1"
     assert projection.pull_request.behind_by == 1
+
+
+def test_green_mergeable_pr_with_github_behind_state_requires_branch_sync_even_when_compare_is_zero() -> None:
+    projection = derive_execution_projection(
+        WORK_ITEM,
+        ExecutionEvidence(
+            default_branch="main",
+            pull_requests=(
+                pr(
+                    mergeable=True,
+                    auto_merge_enabled=True,
+                    base_sha="current-main",
+                    behind_by=0,
+                    mergeable_state="behind",
+                ),
+            ),
+            workflow_runs=(run(conclusion="success"),),
+        ),
+    )
+
+    assert projection.state is ExecutionState.BASE_OUTDATED
+    assert projection.next_action is NextAction.SYNC_BRANCH
+    assert projection.pull_request is not None
+    assert projection.pull_request.mergeable_state == "behind"
 
 
 def test_green_mergeable_pr_is_ready_to_merge() -> None:

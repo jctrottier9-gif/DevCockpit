@@ -28,7 +28,9 @@ def test_sync_branch_sends_expected_head_sha():
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append((request.method, request.url.path))
         if request.method == "GET" and request.url.path.endswith("/pulls/71"):
-            return httpx.Response(200, json=detail())
+            return httpx.Response(200, json=detail(base="historical-base"))
+        if request.method == "GET" and request.url.path.endswith("/branches/main"):
+            return httpx.Response(200, json={"commit": {"sha": "base-1"}})
         if request.method == "PUT" and request.url.path.endswith("/pulls/71/update-branch"):
             assert json.loads(request.content) == {"expected_head_sha": "head-1"}
             return httpx.Response(202, json={"message": "Updating pull request branch."})
@@ -46,6 +48,7 @@ def test_sync_branch_sends_expected_head_sha():
     assert result.status is FinalizationAttemptStatus.SUCCEEDED
     assert seen == [
         ("GET", "/repos/jctrottier9-gif/DevCockpit/pulls/71"),
+        ("GET", "/repos/jctrottier9-gif/DevCockpit/branches/main"),
         ("PUT", "/repos/jctrottier9-gif/DevCockpit/pulls/71/update-branch"),
     ]
 
@@ -53,7 +56,9 @@ def test_sync_branch_sends_expected_head_sha():
 def test_sync_branch_fails_closed_when_base_moved_before_mutation():
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "GET" and request.url.path.endswith("/pulls/71"):
-            return httpx.Response(200, json=detail(base="base-2"))
+            return httpx.Response(200, json=detail(base="historical-base"))
+        if request.method == "GET" and request.url.path.endswith("/branches/main"):
+            return httpx.Response(200, json={"commit": {"sha": "base-2"}})
         raise AssertionError("no mutation is permitted after base moved")
 
     result = GitHubPullRequestFinalizer(
@@ -85,7 +90,9 @@ def test_merge_revalidates_current_head_ci_and_uses_expected_sha():
                 },
             )
         if request.method == "GET" and path.endswith("/pulls/71"):
-            return httpx.Response(200, json=detail())
+            return httpx.Response(200, json=detail(base="historical-base"))
+        if request.method == "GET" and path.endswith("/branches/main"):
+            return httpx.Response(200, json={"commit": {"sha": "base-1"}})
         if request.method == "GET" and path.endswith("/actions/runs"):
             assert request.url.params["head_sha"] == "head-1"
             assert request.url.params["event"] == "pull_request"
@@ -133,7 +140,9 @@ def test_merge_fails_closed_when_base_moved():
         if request.method == "GET" and path == "/repos/jctrottier9-gif/DevCockpit":
             return httpx.Response(200, json={"allow_merge_commit": True})
         if request.method == "GET" and path.endswith("/pulls/71"):
-            return httpx.Response(200, json=detail(base="base-2"))
+            return httpx.Response(200, json=detail(base="historical-base"))
+        if request.method == "GET" and path.endswith("/branches/main"):
+            return httpx.Response(200, json={"commit": {"sha": "base-2"}})
         raise AssertionError("CI and merge must not be called after base moved")
 
     result = GitHubPullRequestFinalizer(
@@ -177,7 +186,9 @@ def test_merge_refusal_is_returned_as_observable_blocker():
         if request.method == "GET" and path == "/repos/jctrottier9-gif/DevCockpit":
             return httpx.Response(200, json={"allow_merge_commit": True})
         if request.method == "GET" and path.endswith("/pulls/71"):
-            return httpx.Response(200, json=detail())
+            return httpx.Response(200, json=detail(base="historical-base"))
+        if request.method == "GET" and path.endswith("/branches/main"):
+            return httpx.Response(200, json={"commit": {"sha": "base-1"}})
         if request.method == "GET" and path.endswith("/actions/runs"):
             return httpx.Response(
                 200,
