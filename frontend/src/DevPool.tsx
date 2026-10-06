@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useCockpitRefreshVersion } from './CockpitRefreshContext'
 import InteractionStatus from './InteractionStatus'
 import type { ParallelExecutionItem, ParallelExecutionsResponse } from './dashboardTypes'
 
@@ -144,13 +145,13 @@ export default function DevPool({
   projectId: string
   onOpenWorkItem: (workItemId: string) => void
 }) {
+  const refreshVersion = useCockpitRefreshVersion()
   const [projection, setProjection] = useState<ParallelExecutionsResponse | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     const controller = new AbortController()
-    setProjection(null)
     setError('')
     setLoading(true)
 
@@ -181,13 +182,15 @@ export default function DevPool({
 
     void load()
     return () => controller.abort()
-  }, [projectId])
+  }, [projectId, refreshVersion])
 
-  if (loading) return <p className="muted">Lecture du DEV Pool…</p>
-  if (error) return <p role="alert">{error}</p>
+  if (loading && !projection) return <p className="muted">Lecture du DEV Pool…</p>
+  if (error && !projection) return <p role="alert">{error}</p>
   if (!projection) return <p className="muted">Projection DEV indisponible.</p>
 
   return <section className="dev-pool-detail" aria-label="DEV Pool parallèle">
+    {loading && <p className="muted" role="status">Actualisation du DEV Pool…</p>}
+    {error && <p role="alert" className="panel-error">{error}</p>}
     {projection.capacity && <dl className="drawer-facts">
       <div><dt>Capacité</dt><dd>{projection.capacity.used} / {projection.capacity.limit}</dd></div>
       <div><dt>Libre</dt><dd>{projection.capacity.available}</dd></div>

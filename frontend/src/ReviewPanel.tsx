@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useCockpitRefreshVersion } from './CockpitRefreshContext'
 import type { ReviewPanelResponse } from './dashboardTypes'
 
 function stateClass(value: string | null) {
@@ -6,6 +7,7 @@ function stateClass(value: string | null) {
 }
 
 export default function ReviewPanel({ projectId }: { projectId: string }) {
+  const refreshVersion = useCockpitRefreshVersion()
   const [panel, setPanel] = useState<ReviewPanelResponse | null>(null)
   const [error, setError] = useState('')
   const generationRef = useRef(0)
@@ -13,7 +15,6 @@ export default function ReviewPanel({ projectId }: { projectId: string }) {
   useEffect(() => {
     const controller = new AbortController()
     const generation = ++generationRef.current
-    setPanel(null)
     setError('')
 
     async function load() {
@@ -41,9 +42,9 @@ export default function ReviewPanel({ projectId }: { projectId: string }) {
       generationRef.current += 1
       controller.abort()
     }
-  }, [projectId])
+  }, [projectId, refreshVersion])
 
-  if (error) return <p className="panel-error">{error}</p>
+  if (error && !panel) return <p className="panel-error">{error}</p>
   if (!panel) return <p className="muted">Chargement des PR et validations GitHub…</p>
 
   return <section className="role-detail-panel" aria-label="Supervision Reviewer">
@@ -55,6 +56,7 @@ export default function ReviewPanel({ projectId }: { projectId: string }) {
       <small>Observé {new Date(panel.observed_at).toLocaleString()}</small>
     </div>
 
+    {error && <p className="panel-error" role="status">{error}</p>}
     {!panel.complete && <div className="cockpit-warning" role="status">
       Résultats GitHub partiels : la limite de pagination a été atteinte.
     </div>}

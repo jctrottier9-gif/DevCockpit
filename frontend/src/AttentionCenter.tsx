@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { useCockpitRefreshVersion } from './CockpitRefreshContext'
 import InteractionStatus from './InteractionStatus'
 import type { InteractionSummary } from './dashboardTypes'
 
@@ -56,6 +57,7 @@ export default function AttentionCenter({
   projectId: string
   onOpenWorkItem: (workItemId: string) => void
 }) {
+  const refreshVersion = useCockpitRefreshVersion()
   const [projection, setProjection] = useState<AttentionResponse | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
@@ -166,7 +168,7 @@ export default function AttentionCenter({
     const controller = new AbortController()
     void refresh(controller.signal)
     return () => controller.abort()
-  }, [refresh])
+  }, [refresh, refreshVersion])
 
   const state = projection?.state ?? 'CLEAR'
 
