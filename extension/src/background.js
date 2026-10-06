@@ -183,6 +183,19 @@
         await queueStore.remove(entry.delivery_id);
         continue;
       }
+      if (state?.state === SEND_STATE.AMBIGUOUS) {
+        if (!isArchitectureSession(entry.session)) {
+          void sendRecovery.recover(entry.delivery_id).then(async () => {
+            await broadcast("devcockpit_queue_changed");
+            await broadcast("devcockpit_sent_prompts_changed");
+            await broadcast("devcockpit_send_state_changed");
+          }).catch(async () => {
+            await broadcast("devcockpit_send_state_changed");
+          });
+        }
+        continue;
+      }
+
       if (
         state &&
         [
