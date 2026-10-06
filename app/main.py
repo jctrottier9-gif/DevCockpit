@@ -67,6 +67,7 @@ from app.domain.roadmap import PipelineDiagnostic, PipelineParseResult, WorkItem
 from app.infrastructure.database import build_engine, build_session_factory
 from app.infrastructure.github_architecture import GitHubArchitectureDocumentReader
 from app.infrastructure.github_execution import GitHubExecutionReader
+from app.infrastructure.github_finalization import GitHubPullRequestFinalizer
 from app.infrastructure.github_flow_analytics import GitHubFlowAnalyticsReader
 from app.infrastructure.github_issues import GitHubIssueReader
 from app.infrastructure.github_review import GitHubReviewReader
@@ -434,6 +435,7 @@ def create_app(
     project_catalog: ProjectCatalog | None = None,
     roadmap_reader: RoadmapIssueReader | None = None,
     execution_reader: ExecutionEvidenceReader | None = None,
+    execution_finalizer=None,
     flow_analytics_reader: FlowAnalyticsEvidenceReader | None = None,
     roadmap_writer=None,
     issue_mapping_reader=None,
@@ -459,6 +461,10 @@ def create_app(
         timeout_seconds=active_settings.github_timeout_seconds,
     )
     active_execution_reader = execution_reader or GitHubExecutionReader(
+        token=token,
+        timeout_seconds=active_settings.github_timeout_seconds,
+    )
+    active_execution_finalizer = execution_finalizer or GitHubPullRequestFinalizer(
         token=token,
         timeout_seconds=active_settings.github_timeout_seconds,
     )
@@ -508,6 +514,7 @@ def create_app(
                         resource_lock_lease_seconds=active_settings.resource_lock_lease_seconds,
                         dev_stale_after_seconds=active_settings.dev_stale_after_seconds,
                         lease_owner_id=resource_lock_lease_owner_id,
+                        finalizer=active_execution_finalizer,
                     )
                 except asyncio.CancelledError:
                     raise
@@ -545,6 +552,7 @@ def create_app(
     application.state.project_catalog = active_project_catalog
     application.state.roadmap_reader = active_roadmap_reader
     application.state.execution_reader = active_execution_reader
+    application.state.execution_finalizer = active_execution_finalizer
     application.state.flow_analytics_reader = active_flow_analytics_reader
     application.state.roadmap_writer = active_roadmap_writer
     application.state.issue_mapping_reader = active_issue_mapping_reader
@@ -680,6 +688,7 @@ def create_app(
             resource_lock_lease_seconds=active_settings.resource_lock_lease_seconds,
             dev_stale_after_seconds=active_settings.dev_stale_after_seconds,
             lease_owner_id=resource_lock_lease_owner_id,
+            finalizer=active_execution_finalizer,
         )
         payload = _parallel_executions_payload(evaluation.projection)
         payload["prompt_dispatches"] = [
@@ -732,6 +741,7 @@ def create_app(
             resource_lock_lease_seconds=active_settings.resource_lock_lease_seconds,
             dev_stale_after_seconds=active_settings.dev_stale_after_seconds,
             lease_owner_id=resource_lock_lease_owner_id,
+            finalizer=active_execution_finalizer,
         )
         primary = evaluation.projection.items[0] if evaluation.projection.items else None
         if primary is None:
