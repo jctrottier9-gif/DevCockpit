@@ -17,6 +17,13 @@ import {
   isCurrentProjectLoad,
   resolveActiveProjectId,
 } from './projectWorkspace'
+import {
+  createThemeController,
+  readThemePreference,
+  THEME_MEDIA_QUERY,
+  type ThemeController,
+  type ThemePreference,
+} from './theme'
 
 type LoadState = 'loading' | 'ready' | 'error'
 
@@ -54,10 +61,14 @@ function App() {
   const [lastRefreshAt, setLastRefreshAt] = useState<string | null>(null)
   const [refreshError, setRefreshError] = useState('')
   const [surfaceRefreshVersion, setSurfaceRefreshVersion] = useState(0)
+  const [themePreference, setThemePreference] = useState<ThemePreference>(() =>
+    readThemePreference(window.localStorage),
+  )
   const activeProjectIdRef = useRef('')
   const loadedProjectIdRef = useRef<string | null>(null)
   const loadGenerationRef = useRef(0)
   const refreshLoopRef = useRef<CockpitRefreshLoop | null>(null)
+  const themeControllerRef = useRef<ThemeController | null>(null)
 
   function resetProjectView() {
     loadedProjectIdRef.current = null
@@ -98,6 +109,27 @@ function App() {
   function requestRefreshNow() {
     void refreshLoopRef.current?.refreshNow()
   }
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia(THEME_MEDIA_QUERY)
+    const controller = createThemeController({
+      storage: window.localStorage,
+      mediaQuery,
+      applyTheme: snapshot => {
+        document.documentElement.dataset.theme = snapshot.resolved
+        document.documentElement.dataset.themePreference = snapshot.preference
+        document.documentElement.style.colorScheme = snapshot.resolved
+        setThemePreference(snapshot.preference)
+      },
+    })
+    themeControllerRef.current = controller
+    controller.start()
+
+    return () => {
+      controller.stop()
+      if (themeControllerRef.current === controller) themeControllerRef.current = null
+    }
+  }, [])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -260,8 +292,23 @@ function App() {
             <h1>Delivery cockpit</h1>
             <p className="app-subtitle">Supervision visuelle du roadmap, des rôles et du travail observable.</p>
           </div>
-          <div className={'health health--' + state} aria-live="polite">
-            {state === 'loading' ? 'Reading project context…' : state === 'ready' ? 'Project context loaded' : error}
+          <div className="app-header-actions">
+            <label className="theme-control" htmlFor="theme-preference">
+              <span>Thème</span>
+              <select
+                id="theme-preference"
+                aria-label="Préférence de thème"
+                value={themePreference}
+                onChange={event => themeControllerRef.current?.setPreference(event.target.value as ThemePreference)}
+              >
+                <option value="system">Système</option>
+                <option value="light">Clair</option>
+                <option value="dark">Sombre</option>
+              </select>
+            </label>
+            <div className={'health health--' + state} aria-live="polite">
+              {state === 'loading' ? 'Reading project context…' : state === 'ready' ? 'Project context loaded' : error}
+            </div>
           </div>
         </header>
 
