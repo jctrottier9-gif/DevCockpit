@@ -81,8 +81,10 @@ export default function ReviewPanel({ projectId }: { projectId: string }) {
             <div><dt>Head SHA</dt><dd><code>{pr.head_sha}</code></dd></div>
             <div><dt>Branche</dt><dd>{pr.branch}</dd></div>
             <div><dt>Mergeable</dt><dd>{pr.mergeable === null ? 'inconnu' : pr.mergeable ? 'oui' : 'non'}</dd></div>
+            <div><dt>Mergeable state</dt><dd>{pr.mergeable_state ?? '—'}</dd></div>
             <div><dt>Auto-merge</dt><dd>{pr.auto_merge_enabled ? 'armé' : 'non observé'}</dd></div>
             <div><dt>Base</dt><dd>{pr.base_branch ?? '—'}</dd></div>
+            <div><dt>Tip base</dt><dd><code>{pr.base_sha ?? '—'}</code></dd></div>
             <div><dt>Derrière base</dt><dd>{pr.behind_by ?? '—'}</dd></div>
             <div><dt>Finalisation</dt><dd>{pr.finalization_state ?? 'aucune action déterministe'}</dd></div>
           </dl>
