@@ -10,6 +10,7 @@
   const { CompanionTransport, CONNECTION_STATUS } = namespace.transport;
   const {
     PromptSendCoordinator,
+    AmbiguousSendRecovery,
     canonicalConversation,
     isLegacySyntheticConversationId,
     isLegacySyntheticRouting,
@@ -38,6 +39,7 @@
     lastError: null,
   };
   let sendCoordinator = null;
+  let sendRecovery = null;
 
   async function broadcast(type) {
     try {
