@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from urllib.parse import quote
 
 import httpx
@@ -169,7 +170,12 @@ class GitHubReviewReader:
                         continue
 
                     detail, workflows, snapshot_complete = stable_snapshot
-                    behind_by = self._read_behind_by(client, base_url, detail)
+                    current_base_sha, behind_by = self._read_current_base_evidence(
+                        client,
+                        base_url,
+                        detail,
+                    )
+                    detail = replace(detail, base_sha=current_base_sha)
                     ci_state = review_ci_state(workflows)
                     finalization_state = self._finalization_state(
                         detail,
@@ -198,6 +204,7 @@ class GitHubReviewReader:
                             url=detail.url,
                             mergeable=detail.mergeable,
                             auto_merge_enabled=detail.auto_merge_enabled,
+                            mergeable_state=detail.mergeable_state,
                             base_branch=detail.base_branch,
                             base_sha=detail.base_sha,
                             behind_by=behind_by,
@@ -230,19 +237,35 @@ class GitHubReviewReader:
         except httpx.RequestError as exc:
             raise ExecutionSourceError("GitHub Reviewer request failed") from exc
 
-    def _read_behind_by(
+    def _read_current_base_evidence(
         self,
         client: httpx.Client,
         base_url: str,
         pull_request: PullRequestEvidence,
-    ) -> int | None:
-        if pull_request.base_sha is None:
-            return None
+    ) -> tuple[str | None, int | None]:
+        if pull_request.base_branch is None:
+            return pull_request.base_sha, None
+
+        branch_payload = self._request_json(
+            client,
+            f"{base_url}/branches/{quote(pull_request.base_branch, safe='')}",
+        )
+        if not isinstance(branch_payload, dict):
+            raise ExecutionPayloadError("GitHub Reviewer branch response must be object")
+        commit = branch_payload.get("commit")
+        if not isinstance(commit, dict):
+            raise ExecutionPayloadError("GitHub Reviewer branch commit must be object")
+        current_base_sha = self._require_string(
+            commit,
+            "sha",
+            context="base branch commit",
+        )
+
         payload = self._request_json(
             client,
             (
                 f"{base_url}/compare/"
-                f"{quote(pull_request.base_sha, safe='')}..."
+                f"{quote(current_base_sha, safe='')}..."
                 f"{quote(pull_request.head_sha, safe='')}"
             ),
         )
@@ -251,7 +274,7 @@ class GitHubReviewReader:
         behind_by = payload.get("behind_by")
         if not isinstance(behind_by, int):
             raise ExecutionPayloadError("GitHub Reviewer compare behind_by must be integer")
-        return behind_by
+        return current_base_sha, behind_by
 
     @staticmethod
     def _finalization_state(
@@ -262,7 +285,7 @@ class GitHubReviewReader:
     ) -> str | None:
         if ci_state != "GREEN":
             return None
-        if (behind_by or 0) > 0:
+        if (behind_by or 0) > 0 or pull_request.mergeable_state == "behind":
             return "BASE_OUTDATED"
         if pull_request.auto_merge_enabled:
             return "WAIT_AUTO_MERGE"
