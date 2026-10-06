@@ -3,6 +3,24 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <script>
+      (() => {
+        const storageKey = 'devcockpit.theme'
+        let preference = 'system'
+        try {
+          const stored = window.localStorage.getItem(storageKey)
+          if (stored === 'light' || stored === 'dark' || stored === 'system') preference = stored
+        } catch {
+          // Theme remains system when local storage is unavailable.
+        }
+        const systemDark = window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false
+        const resolved = preference === 'system' ? (systemDark ? 'dark' : 'light') : preference
+        document.documentElement.dataset.theme = resolved
+        document.documentElement.dataset.themePreference = preference
+        document.documentElement.style.colorScheme = resolved
+      })()
+    </script>
     <title>DevCockpit</title>
   </head>
   <body>
