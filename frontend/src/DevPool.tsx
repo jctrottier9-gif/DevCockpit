@@ -7,7 +7,11 @@ const actionLabels: Record<string, string> = {
   WAIT_FOR_PR: 'Attendre la PR',
   WAIT: 'Attendre',
   FIX_CI: 'Corriger la CI',
-  MERGE_PR: 'PR prête à fusionner',
+  SYNC_BRANCH: 'Synchroniser la branche',
+  WAIT_AUTO_MERGE: 'Attendre l’auto-merge GitHub',
+  MERGE_PR: 'Finalisation GitHub par DevCockpit',
+  RESOLVE_BRANCH_SYNC: 'Résoudre le conflit de synchronisation',
+  RESOLVE_MERGE_BLOCKER: 'Résoudre le blocage de merge',
   RECONCILE_ROADMAP: 'Réconcilier le roadmap',
   RESOLVE_BLOCKER: 'Résoudre le blocage',
   NONE: 'Aucune action',
@@ -68,6 +72,8 @@ function DevExecutionCard({
         </dd>
       </div>
       <div><dt>CI</dt><dd>{item.ci?.state ?? 'non observée'}</dd></div>
+      <div><dt>Base</dt><dd>{item.pull_request?.base_branch ?? '—'}</dd></div>
+      <div><dt>Derrière base</dt><dd>{item.pull_request?.behind_by ?? '—'}</dd></div>
       <div><dt>Interaction</dt><dd><InteractionStatus interaction={item.interaction} compact /></dd></div>
       <div>
         <dt>Réponse importée</dt>
