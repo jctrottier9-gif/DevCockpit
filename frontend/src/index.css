@@ -174,7 +174,7 @@ a:hover {
 .panel {
   width: min(760px, 100%);
   padding: 2.5rem;
-  background: white;
+  background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: 18px;
   box-shadow: 0 18px 60px var(--color-shadow);
@@ -364,7 +364,7 @@ details { margin: 1rem 0; }
   padding: 1rem;
   border: 1px solid var(--color-border);
   border-radius: 10px;
-  background: white;
+  background: var(--color-surface);
 }
 
 .attention-item h3 {
@@ -433,7 +433,7 @@ details { margin: 1rem 0; }
   padding: 0.8rem;
   border: 1px solid var(--color-border);
   border-radius: 10px;
-  background: white;
+  background: var(--color-surface);
 }
 
 .flow-summary span,
@@ -455,7 +455,7 @@ details { margin: 1rem 0; }
   padding: 1rem;
   border: 1px solid var(--color-border);
   border-radius: 12px;
-  background: white;
+  background: var(--color-surface);
 }
 
 .flow-delivery-heading {
