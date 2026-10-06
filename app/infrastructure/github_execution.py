@@ -175,9 +175,31 @@ class GitHubExecutionReader:
         auto_merge = payload.get("auto_merge") if isinstance(payload, dict) else None
         if auto_merge is not None and not isinstance(auto_merge, dict):
             raise ExecutionPayloadError("GitHub pull-request auto_merge must be an object or null")
+        mergeable_state = payload.get("mergeable_state") if isinstance(payload, dict) else None
+        if mergeable_state is not None and not isinstance(mergeable_state, str):
+            raise ExecutionPayloadError("GitHub pull-request mergeable_state must be text or null")
+
+        behind_by: int | None = None
+        if detail.base_sha is not None:
+            compare = self._request_json(
+                client,
+                (
+                    f"{base_url}/compare/"
+                    f"{quote(detail.base_sha, safe='')}...{quote(detail.head_sha, safe='')}"
+                ),
+            )
+            if not isinstance(compare, dict):
+                raise ExecutionPayloadError("GitHub pull-request compare response must be an object")
+            raw_behind = compare.get("behind_by")
+            if not isinstance(raw_behind, int):
+                raise ExecutionPayloadError("GitHub pull-request compare behind_by must be integer")
+            behind_by = raw_behind
+
         return replace(
             detail,
             mergeable=mergeable,
+            mergeable_state=mergeable_state,
+            behind_by=behind_by,
             auto_merge_enabled=auto_merge is not None,
         )
 
@@ -348,6 +370,9 @@ class GitHubExecutionReader:
         head = payload.get("head")
         if not isinstance(head, dict):
             raise ExecutionPayloadError("GitHub pull-request head must be an object")
+        base = payload.get("base")
+        if base is not None and not isinstance(base, dict):
+            raise ExecutionPayloadError("GitHub pull-request base must be an object or null")
         number = payload.get("number")
         if not isinstance(number, int):
             raise ExecutionPayloadError("GitHub pull-request number must be an integer")
@@ -379,6 +404,18 @@ class GitHubExecutionReader:
         auto_merge = payload.get("auto_merge")
         if auto_merge is not None and not isinstance(auto_merge, dict):
             raise ExecutionPayloadError("GitHub pull-request auto_merge must be an object or null")
+        mergeable_state = payload.get("mergeable_state")
+        if mergeable_state is not None and not isinstance(mergeable_state, str):
+            mergeable_state = None
+        base_branch = None
+        base_sha = None
+        if isinstance(base, dict):
+            raw_base_branch = base.get("ref")
+            raw_base_sha = base.get("sha")
+            if isinstance(raw_base_branch, str) and raw_base_branch:
+                base_branch = raw_base_branch
+            if isinstance(raw_base_sha, str) and raw_base_sha:
+                base_sha = raw_base_sha
         return PullRequestEvidence(
             number=number,
             title=title,
@@ -388,6 +425,9 @@ class GitHubExecutionReader:
             state=state,
             merged=merged_at is not None,
             mergeable=mergeable,
+            base_branch=base_branch,
+            base_sha=base_sha,
+            mergeable_state=mergeable_state,
             auto_merge_enabled=auto_merge is not None,
             url=url,
             updated_at=updated_at,
