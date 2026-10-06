@@ -220,7 +220,12 @@ def _execution_payload(
                 "title": pull_request.title,
                 "url": pull_request.url,
                 "mergeable": pull_request.mergeable,
+                "mergeable_state": pull_request.mergeable_state,
                 "merged": pull_request.merged,
+                "auto_merge_enabled": pull_request.auto_merge_enabled,
+                "base_branch": pull_request.base_branch,
+                "base_sha": pull_request.base_sha,
+                "behind_by": pull_request.behind_by,
             }
             if pull_request is not None
             else None
