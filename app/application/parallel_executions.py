@@ -24,6 +24,7 @@ from app.application.github_wait_watchdogs import (
     build_pr_no_ci_follow_up,
     project_execution_github_wait_watchdog,
     watchdog_dispatch_key,
+    watchdog_dispatch_prefix,
     with_recovery,
 )
 from app.application.interaction_summaries import InteractionSummary, read_interaction_summary
@@ -304,6 +305,12 @@ def evaluate_project_parallel_dev_executions(
 
         remaining_starts = projection.available_capacity
         for item in projection.items:
+            _cancel_obsolete_github_watchdog_dispatches(
+                project,
+                item,
+                uow=uow,
+                now=now,
+            )
             work_item = item.execution.work_item
             if work_item is None:
                 continue
@@ -855,6 +862,53 @@ def _restore_active_execution_locks(
             lease_seconds=lease_seconds,
         )
 
+
+
+def _cancel_obsolete_github_watchdog_dispatches(
+    project: Project,
+    item: DevExecutionItem,
+    *,
+    uow,
+    now: datetime,
+) -> None:
+    work_item = item.execution.work_item
+    if work_item is None:
+        return
+    repository = getattr(uow, "prompt_dispatches", None)
+    list_for_work_item = getattr(repository, "list_for_work_item", None)
+    save = getattr(repository, "save", None)
+    if list_for_work_item is None or save is None:
+        return
+
+    current_key = None
+    watchdog = item.github_watchdog
+    if (
+        watchdog is not None
+        and watchdog.due
+        and watchdog.kind
+        in {
+            GitHubWaitWatchdogKind.PR_NO_CI,
+            GitHubWaitWatchdogKind.CI_STALLED,
+        }
+    ):
+        current_key = watchdog_dispatch_key(project, work_item.key, watchdog)
+
+    prefix = watchdog_dispatch_prefix(project, work_item.key)
+    for dispatch in list_for_work_item(project.project_id, work_item.key):
+        if (
+            dispatch.status is not PromptDispatchStatus.PREPARED
+            or not dispatch.idempotency_key.startswith(prefix)
+            or dispatch.idempotency_key == current_key
+        ):
+            continue
+        delivery = uow.prompt_deliveries.get_by_dispatch_id(dispatch.dispatch_id)
+        if delivery is not None and delivery.is_acknowledged:
+            # The extension may already own this prompt. There is deliberately no
+            # remote-revocation protocol; the prompt itself revalidates GitHub and
+            # must fail stale. Only unsent/unacknowledged local work is cancelled.
+            continue
+        dispatch.cancel(now=now)
+        save(dispatch)
 
 
 def _selected_dev_dispatch(project: Project, execution: ExecutionProjection, *, uow):
