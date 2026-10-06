@@ -614,7 +614,34 @@
       }
     }
 
-    async _resolveInspection(entry, tab, inspection) {
+    async _validateExpectedConversation(entry, tab, expectedConversation) {
+      if (!expectedConversation) return null;
+      const observedConversation = canonicalConversation(tab?.url);
+      if (
+        !observedConversation ||
+        observedConversation.canonical_url === expectedConversation.canonical_url
+      ) {
+        return null;
+      }
+      const durableConflict = Boolean(entry.routing);
+      return this._markIntervention(
+        entry,
+        durableConflict
+          ? "CHATGPT_SEND_BINDING_CONFLICT"
+          : "ambiguous_recovery_wrong_conversation",
+        {
+          observedConversation,
+          bindingConflict: durableConflict,
+        },
+      );
+    }
+
+    async _resolveInspection(
+      entry,
+      tab,
+      inspection,
+      expectedConversation = null,
+    ) {
       if (!inspection?.ok) {
         return {
           resolved: false,
@@ -659,15 +686,18 @@
         };
       }
       if (
-        entry.routing &&
-        observedConversation.canonical_url !== entry.routing.canonical_url
+        expectedConversation &&
+        observedConversation.canonical_url !== expectedConversation.canonical_url
       ) {
+        const durableConflict = Boolean(entry.routing);
         return {
           resolved: true,
           result: await this._markIntervention(
             entry,
-            "CHATGPT_SEND_BINDING_CONFLICT",
-            { observedConversation, bindingConflict: true },
+            durableConflict
+              ? "CHATGPT_SEND_BINDING_CONFLICT"
+              : "ambiguous_recovery_wrong_conversation",
+            { observedConversation, bindingConflict: durableConflict },
           ),
         };
       }
@@ -733,6 +763,13 @@
         };
       }
 
+      const expectedConversation = entry.routing
+        ? {
+            conversation_id: entry.routing.conversation_id,
+            canonical_url: entry.routing.canonical_url,
+          }
+        : current.conversation;
+
       await this.sendStore.setRecoveryStatus(deliveryId, {
         status: RECOVERY_STATUS.INSPECTING,
       });
@@ -747,8 +784,20 @@
         return this._targetFailure(entry, error);
       }
 
+      const targetConflict = await this._validateExpectedConversation(
+        entry,
+        tab,
+        expectedConversation,
+      );
+      if (targetConflict) return targetConflict;
+
       let inspection = await this._inspect(tab.id, entry.text);
-      let resolution = await this._resolveInspection(entry, tab, inspection);
+      let resolution = await this._resolveInspection(
+        entry,
+        tab,
+        inspection,
+        expectedConversation,
+      );
       if (resolution.resolved) return resolution.result;
 
       const refreshedState = await this.sendStore.get(deliveryId);
@@ -793,8 +842,20 @@
           return this._targetFailure(entry, error);
         }
 
+        const revalidatedConflict = await this._validateExpectedConversation(
+          entry,
+          tab,
+          expectedConversation,
+        );
+        if (revalidatedConflict) return revalidatedConflict;
+
         inspection = await this._inspect(tab.id, entry.text);
-        resolution = await this._resolveInspection(entry, tab, inspection);
+        resolution = await this._resolveInspection(
+          entry,
+          tab,
+          inspection,
+          expectedConversation,
+        );
         if (resolution.resolved) return resolution.result;
         lastError = inspection?.error || lastError;
       }
@@ -809,6 +870,13 @@
       if (!current || current.state !== SEND_STATE.AMBIGUOUS) {
         return { ok: false, error: "chatgpt_send_not_ambiguous" };
       }
+
+      const expectedConversation = entry.routing
+        ? {
+            conversation_id: entry.routing.conversation_id,
+            canonical_url: entry.routing.canonical_url,
+          }
+        : current.conversation;
 
       await this.sendStore.setRecoveryStatus(deliveryId, {
         status: RECOVERY_STATUS.INSPECTING,
@@ -825,8 +893,20 @@
         return this._targetFailure(entry, error);
       }
 
+      const targetConflict = await this._validateExpectedConversation(
+        entry,
+        tab,
+        expectedConversation,
+      );
+      if (targetConflict) return targetConflict;
+
       const inspection = await this._inspect(tab.id, entry.text);
-      const resolution = await this._resolveInspection(entry, tab, inspection);
+      const resolution = await this._resolveInspection(
+        entry,
+        tab,
+        inspection,
+        expectedConversation,
+      );
       if (resolution.resolved) return resolution.result;
       return this._markIntervention(
         entry,
