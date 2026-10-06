@@ -409,12 +409,16 @@
 
       if (!result?.ok) {
         const code = result?.error || "send_confirmation_unknown";
+        const ambiguousConversation = result?.ambiguous
+          ? canonicalConversation(result.conversationUrl)
+          : null;
         await this._emit(
           await this.sendStore.transition({
             deliveryId: entry.delivery_id,
             session: entry.session,
             state: SEND_STATE.AMBIGUOUS,
             attempt,
+            conversation: ambiguousConversation,
             errorCode: code,
           }),
         );
