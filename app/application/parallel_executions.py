@@ -23,6 +23,15 @@ from app.application.prompt_dispatches import (
     UnitOfWorkFactory,
     create_prompt_dispatch_in_uow,
 )
+from app.application.pr_finalization import (
+    PullRequestFinalizer,
+    branch_sync_attempt_key,
+    branch_sync_follow_up_key,
+    build_branch_sync_blocked_follow_up,
+    finalization_idempotency_key,
+    operation_for,
+    overlay_finalization_attempt,
+)
 from app.application.roadmaps import RoadmapIssue, RoadmapIssueReader, read_project_roadmap
 from app.domain.execution import (
     ExecutionProjection,
@@ -31,6 +40,7 @@ from app.domain.execution import (
     blocked_projection,
     derive_execution_projection,
 )
+from app.domain.pr_finalization import PullRequestFinalizationAttempt
 from app.domain.project import Project
 from app.domain.prompt_dispatch import (
     PromptDispatch,
@@ -166,6 +176,7 @@ def evaluate_project_parallel_dev_executions(
     dev_stale_after_seconds: float = 3600.0,
     lease_owner_id: str = "devcockpit-process",
     clock: Callable[[], datetime] | None = None,
+    finalizer: PullRequestFinalizer | None = None,
 ) -> ParallelDevExecutionEvaluation:
     active_clock = clock or (lambda: datetime.now(timezone.utc))
     with uow_factory() as uow:
@@ -219,6 +230,14 @@ def evaluate_project_parallel_dev_executions(
                 now=now,
             )
             return ParallelDevExecutionEvaluation(projection=projection, dispatches=())
+
+        snapshots = _execute_deterministic_finalization_actions(
+            project,
+            snapshots=snapshots,
+            evidence_reader=evidence_reader,
+            uow=uow,
+            finalizer=finalizer,
+        )
 
         _reconcile_resource_locks(
             project,
@@ -275,6 +294,43 @@ def evaluate_project_parallel_dev_executions(
                             uow=uow,
                         )
                     )
+                elif item.execution.next_action is NextAction.RESOLVE_BRANCH_SYNC:
+                    attempts = getattr(uow, "pr_finalization_attempts", None)
+                    if attempts is not None:
+                        try:
+                            attempt = attempts.get_by_idempotency_key(
+                                branch_sync_attempt_key(project, item.execution)
+                            )
+                        except ValueError:
+                            attempt = None
+                        if attempt is not None and attempt.requires_dev:
+                            follow_up_key = branch_sync_follow_up_key(
+                                project,
+                                item.execution,
+                                attempt,
+                            )
+                            if (
+                                uow.prompt_dispatches.get_by_idempotency_key(
+                                    follow_up_key
+                                )
+                                is None
+                            ):
+                                dispatches.append(
+                                    create_prompt_dispatch_in_uow(
+                                        CreatePromptDispatchCommand(
+                                            project_id=project.project_id,
+                                            work_item_id=work_item.key,
+                                            role=PromptDispatchRole.DEV,
+                                            prompt_text=build_branch_sync_blocked_follow_up(
+                                                project,
+                                                item.execution,
+                                                attempt,
+                                            ),
+                                            idempotency_key=follow_up_key,
+                                        ),
+                                        uow=uow,
+                                    )
+                                )
                 elif item.execution.next_action is NextAction.RECONCILE_ROADMAP:
                     dispatches.append(
                         create_prompt_dispatch_in_uow(
@@ -379,6 +435,116 @@ def evaluate_project_parallel_dev_executions(
         projection=projection,
         dispatches=tuple(dispatches),
     )
+
+
+def _execute_deterministic_finalization_actions(
+    project: Project,
+    *,
+    snapshots: tuple[_CandidateSnapshot, ...],
+    evidence_reader: ExecutionEvidenceReader,
+    uow,
+    finalizer: PullRequestFinalizer | None,
+) -> tuple[_CandidateSnapshot, ...]:
+    attempts = getattr(uow, "pr_finalization_attempts", None)
+    if attempts is None:
+        return snapshots
+
+    updated: list[_CandidateSnapshot] = []
+    for snapshot in snapshots:
+        execution = overlay_finalization_attempt(
+            project,
+            snapshot.execution,
+            attempts=attempts,
+        )
+        if (
+            finalizer is None
+            or execution.next_action not in {NextAction.SYNC_BRANCH, NextAction.MERGE_PR}
+            or execution.work_item is None
+            or execution.pull_request is None
+            or uow.handoffs.active(project.project_id, execution.work_item.key)
+        ):
+            updated.append(_CandidateSnapshot(snapshot.scheduler, execution))
+            continue
+
+        key = finalization_idempotency_key(project, execution)
+        existing = attempts.get_by_idempotency_key(key)
+        if existing is not None:
+            updated.append(
+                _CandidateSnapshot(
+                    snapshot.scheduler,
+                    overlay_finalization_attempt(
+                        project,
+                        execution,
+                        attempts=attempts,
+                    ),
+                )
+            )
+            continue
+
+        pull_request = execution.pull_request
+        claim = PullRequestFinalizationAttempt.claim(
+            idempotency_key=key,
+            project_id=project.project_id,
+            work_item_id=execution.work_item.key,
+            pr_number=pull_request.number,
+            operation=operation_for(execution),
+            expected_head_sha=pull_request.head_sha,
+            base_sha=pull_request.base_sha,
+        )
+        attempts.add(claim)
+        uow.commit()
+
+        if execution.next_action is NextAction.SYNC_BRANCH:
+            if pull_request.base_sha is None:
+                result = None
+            else:
+                result = finalizer.sync_branch(
+                    project,
+                    pr_number=pull_request.number,
+                    expected_head_sha=pull_request.head_sha,
+                    expected_base_sha=pull_request.base_sha,
+                )
+        else:
+            result = finalizer.merge_pull_request(
+                project,
+                pr_number=pull_request.number,
+                expected_head_sha=pull_request.head_sha,
+            )
+
+        if result is None:
+            completed = claim.complete(
+                status=claim.status.BLOCKED,
+                error_code="BASE_SHA_NOT_OBSERVED",
+                message="Branch synchronization requires an observed base SHA.",
+            )
+        else:
+            completed = claim.complete(
+                status=result.status,
+                error_code=result.error_code,
+                message=result.message,
+                requires_dev=result.requires_dev,
+                resulting_head_sha=result.resulting_head_sha,
+            )
+        attempts.save(completed)
+        uow.commit()
+
+        refreshed = execution
+        if result is not None and result.status.value in {"SUCCEEDED", "STALE"}:
+            try:
+                refreshed = derive_execution_projection(
+                    execution.work_item,
+                    evidence_reader.read(project, execution.work_item),
+                )
+            except ExecutionSourceError:
+                refreshed = execution
+        refreshed = overlay_finalization_attempt(
+            project,
+            refreshed,
+            attempts=attempts,
+        )
+        updated.append(_CandidateSnapshot(snapshot.scheduler, refreshed))
+
+    return tuple(updated)
 
 
 def _read_candidate_snapshots(
@@ -794,6 +960,13 @@ def _project_parallel_state(
         recovery_state,
     ) in state:
         execution = snapshot.execution
+        attempts = getattr(uow, "pr_finalization_attempts", None)
+        if attempts is not None:
+            execution = overlay_finalization_attempt(
+                project,
+                execution,
+                attempts=attempts,
+            )
         waiting_for_lock = False
         if active:
             slot_state = DevExecutionSlotState.ACTIVE
