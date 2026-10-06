@@ -72,9 +72,14 @@
         await broadcast("devcockpit_send_state_changed");
         return;
       }
-      void sendCoordinator.enqueue(prompt.deliveryId).then(async () => {
+      void sendCoordinator.enqueue(prompt.deliveryId).then(async (result) => {
+        if (result?.state === SEND_STATE.AMBIGUOUS) {
+          await sendRecovery.recover(prompt.deliveryId);
+        }
         await broadcast("devcockpit_queue_changed");
         await broadcast("devcockpit_sent_prompts_changed");
+        await broadcast("devcockpit_send_state_changed");
+      }).catch(async () => {
         await broadcast("devcockpit_send_state_changed");
       });
     },
