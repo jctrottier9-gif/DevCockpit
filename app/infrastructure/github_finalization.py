@@ -286,12 +286,30 @@ class GitHubPullRequestFinalizer:
     ) -> FinalizationMutationResult:
         body = payload if payload is not None else self._json_or_empty(response)
         message = body.get("message") if isinstance(body, dict) else None
-        text = message if isinstance(message, str) else f"GitHub HTTP {response.status_code}"
+        details: list[str] = []
+        if isinstance(message, str):
+            details.append(message)
+        if isinstance(body, dict):
+            errors = body.get("errors")
+            if isinstance(errors, list):
+                for error in errors:
+                    if isinstance(error, str):
+                        details.append(error)
+                    elif isinstance(error, dict):
+                        for field in ("message", "code"):
+                            value = error.get(field)
+                            if isinstance(value, str):
+                                details.append(value)
+        text = " · ".join(dict.fromkeys(details)) or f"GitHub HTTP {response.status_code}"
         lower = text.lower()
         requires_dev = (
             conflict_requires_dev
             and response.status_code in {409, 422}
-            and ("conflict" in lower or "merge" in lower)
+            and (
+                "conflict" in lower
+                or "cannot be merged" in lower
+                or "cannot be cleanly" in lower
+            )
         )
         return FinalizationMutationResult(
             FinalizationAttemptStatus.BLOCKED,
