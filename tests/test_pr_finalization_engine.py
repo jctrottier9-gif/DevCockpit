@@ -58,7 +58,7 @@ class FakeFinalizer:
         self.on_sync = on_sync
         self.on_merge = on_merge
         self.sync_calls: list[tuple[int, str, str]] = []
-        self.merge_calls: list[tuple[int, str]] = []
+        self.merge_calls: list[tuple[int, str, str | None]] = []
 
     def sync_branch(
         self,
@@ -82,8 +82,9 @@ class FakeFinalizer:
         *,
         pr_number,
         expected_head_sha,
+        expected_base_sha,
     ):
-        self.merge_calls.append((pr_number, expected_head_sha))
+        self.merge_calls.append((pr_number, expected_head_sha, expected_base_sha))
         if self.on_merge is not None:
             self.on_merge()
         return self.merge_result or FinalizationMutationResult(
@@ -249,14 +250,14 @@ def test_green_up_to_date_pr_merges_in_engine_without_merge_prompt(tmp_path):
     try:
         result = evaluate(reader, finalizer, factory)
         item = result.projection.items[0]
-        assert finalizer.merge_calls == [(71, "head-1")]
+        assert finalizer.merge_calls == [(71, "head-1", "base-1")]
         assert item.execution.state is ExecutionState.ROADMAP_UPDATE_REQUIRED
         assert len(result.dispatches) == 1
         assert "réconciliation post-merge" in result.dispatches[0].prompt_text
         assert "finaliser le merge" not in result.dispatches[0].prompt_text
 
         evaluate(reader, finalizer, factory)
-        assert finalizer.merge_calls == [(71, "head-1")]
+        assert finalizer.merge_calls == [(71, "head-1", "base-1")]
     finally:
         engine.dispose()
 
@@ -277,7 +278,7 @@ def test_merge_refusal_is_persisted_and_not_retried(tmp_path):
         assert item.execution.state is ExecutionState.MERGE_BLOCKED
         assert item.execution.next_action is NextAction.RESOLVE_MERGE_BLOCKER
         assert first.dispatches == ()
-        assert finalizer.merge_calls == [(71, "head-1")]
+        assert finalizer.merge_calls == [(71, "head-1", "base-1")]
 
         second = evaluate(reader, finalizer, factory)
         assert second.projection.items[0].execution.state is ExecutionState.MERGE_BLOCKED
