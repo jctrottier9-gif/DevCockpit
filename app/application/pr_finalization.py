@@ -43,6 +43,7 @@ class PullRequestFinalizer(Protocol):
         *,
         pr_number: int,
         expected_head_sha: str,
+        expected_base_sha: str | None,
     ) -> FinalizationMutationResult: ...
 
 
