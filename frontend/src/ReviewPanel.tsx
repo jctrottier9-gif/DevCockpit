@@ -87,6 +87,17 @@ export default function ReviewPanel({ projectId }: { projectId: string }) {
             <div><dt>Finalisation</dt><dd>{pr.finalization_state ?? 'aucune action déterministe'}</dd></div>
           </dl>
           {pr.finalization_detail && <p className="cockpit-warning">{pr.finalization_detail}</p>}
+          {pr.github_watchdog && <div className="dev-execution-subsection">
+            <strong>Watchdog GitHub · {pr.github_watchdog.kind}</strong>
+            <p>Dernière activité : {new Date(pr.github_watchdog.last_activity_at).toLocaleString()}</p>
+            <p>Seuil : {Math.round(pr.github_watchdog.threshold_seconds / 60)} min</p>
+            <p>Échéance : {new Date(pr.github_watchdog.deadline_at).toLocaleString()}</p>
+            <p>
+              {pr.github_watchdog.due ? 'Échéance dépassée' : 'Dans la fenêtre'}
+              {' · '}{pr.github_watchdog.recovery_state}
+              {pr.github_watchdog.recovery_prepared ? ' · récupération préparée/tentée' : ''}
+            </p>
+          </div>}
           {pr.url && <p><a href={pr.url} target="_blank" rel="noreferrer">Ouvrir la PR sur GitHub</a></p>}
 
           <div className="workflow-list">
@@ -96,7 +107,10 @@ export default function ReviewPanel({ projectId }: { projectId: string }) {
                 <div className="workflow-heading">
                   <div>
                     <strong>{run.name}</strong>
-                    <span>run {run.run_id} · tentative {run.attempt}</span>
+                    <span>
+                      run {run.run_id} · tentative {run.attempt}
+                      {run.updated_at ? ' · activité ' + new Date(run.updated_at).toLocaleString() : ''}
+                    </span>
                   </div>
                   <span className={'job-state job-state--' + stateClass(run.conclusion ?? run.status)}>
                     {run.status}{run.conclusion ? ' · ' + run.conclusion : ''}
