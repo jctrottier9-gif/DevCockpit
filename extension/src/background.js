@@ -110,6 +110,22 @@
     emitStatus: (event) => transport.sendPendingSendStatus(event),
   });
 
+  sendRecovery = new AmbiguousSendRecovery({
+    queueStore,
+    sentPromptStore,
+    sendStore,
+    routingStore,
+    router,
+    inspectTab: (tabId, text) =>
+      browser.tabs.sendMessage(tabId, {
+        type: "devcockpit_inspect_prompt_delivery",
+        text,
+      }),
+    reloadTab: (tabId) => browser.tabs.reload(tabId),
+    emitStatus: (event) => transport.sendPendingSendStatus(event),
+    resumeSession: (session) => sendCoordinator.resumeSession(session),
+  });
+
   async function recoveredRoutingForLegacy(session, routing) {
     if (!isLegacySyntheticRouting(routing)) return routing;
     const sent = await sentPromptStore.list();
