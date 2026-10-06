@@ -298,7 +298,9 @@ DC-072 adds three independent time-bounded watchdogs to the existing execution p
 - `DEVCOCKPIT_CI_STALL_AFTER_SECONDS` defaults to 1800 seconds. A `queued / in_progress / pending / requested / waiting` current-head workflow whose attempt/update evidence stops advancing becomes `CI_STALLED`; DevCockpit prepares one bounded DEV follow-up and never starts a second CI blindly.
 - `DEVCOCKPIT_AUTO_MERGE_GRACE_SECONDS` defaults to 600 seconds. `WAIT_AUTO_MERGE` gives GitHub that grace period. After expiry, DevCockpit reuses the DC-071 finalizer: a newly-behind branch follows `BASE_OUTDATED -> SYNC_BRANCH`; otherwise the merge path immediately revalidates head, green current-head CI, mergeability and repository protections before mutation.
 
-A new head, base/workflow attempt, workflow update, merge, or other newer GitHub activity changes or removes the watchdog evidence and therefore invalidates the old recovery. DEV relaunches are idempotent through their `PromptDispatch` key; sync/merge retries reuse DC-071's durable finalization-attempt records. Reviewer, DEV Pool and Attention Center expose the watchdog kind, last relevant GitHub activity, threshold, deadline and recovery state.
+The accepted ranges are 60–86,400 seconds for PR-without-CI, 60–172,800 seconds for CI stall, and 60–86,400 seconds for auto-merge grace.
+
+A new head, base/workflow attempt, workflow update, merge, or other newer GitHub activity changes or removes the watchdog evidence and therefore invalidates the old recovery. Unacknowledged stale watchdog prompts are cancelled locally; an already-acknowledged Firefox delivery cannot be remotely revoked, so the recovery prompt is required to reread GitHub and fail stale before acting. DEV relaunches are idempotent through their `PromptDispatch` key; sync/merge retries reuse DC-071's durable finalization-attempt records. Reviewer, DEV Pool and Attention Center expose the watchdog kind, last relevant GitHub activity, threshold, deadline and recovery state.
 
 ## Parallel DEV ResourceLocks
 
