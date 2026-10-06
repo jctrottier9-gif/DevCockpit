@@ -6,6 +6,7 @@ from app.application.roadmaps import RoadmapIssue
 from app.domain.execution import (
     ExecutionEvidence,
     ExecutionState,
+    NextAction,
     PullRequestEvidence,
     WorkflowRunEvidence,
 )
