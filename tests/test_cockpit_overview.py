@@ -96,6 +96,10 @@ def test_cockpit_overview_exposes_backend_derived_horizons_and_role_shell(tmp_pa
                 "interaction": None,
                 "watchdog_stale": False,
                 "watchdog_relaunch_prepared": False,
+                "github_watchdog_kind": None,
+                "github_watchdog_due": False,
+                "github_watchdog_deadline_at": None,
+                "github_watchdog_recovery_state": None,
             },
             {
                 "work_item_id": "PAR",
@@ -106,6 +110,10 @@ def test_cockpit_overview_exposes_backend_derived_horizons_and_role_shell(tmp_pa
                 "interaction": None,
                 "watchdog_stale": False,
                 "watchdog_relaunch_prepared": False,
+                "github_watchdog_kind": None,
+                "github_watchdog_due": False,
+                "github_watchdog_deadline_at": None,
+                "github_watchdog_recovery_state": None,
             },
         ],
     }
