@@ -9,12 +9,29 @@ from typing import Protocol
 from app.application.architecture_gates import (
     architecture_gate_authorization_idempotency_key,
 )
+from app.application.github_wait_watchdogs import (
+    GitHubWaitWatchdog,
+    GitHubWaitWatchdogKind,
+    project_execution_github_wait_watchdog,
+    watchdog_dispatch_key,
+    with_recovery,
+)
+from app.application.pr_finalization import finalization_idempotency_key
 from app.application.prompt_dispatches import UnitOfWorkFactory
 from app.application.roadmap_explorer import (
     RoadmapExplorerIssueReader,
     read_project_roadmap_explorer,
 )
 from app.application.roadmaps import RoadmapIssueReader, read_project_roadmap
+from app.domain.execution import (
+    CiState,
+    CiSummary,
+    ExecutionProjection,
+    ExecutionState,
+    NextAction,
+    PullRequestEvidence,
+    WorkflowRunEvidence,
+)
 from app.domain.pr_finalization import FinalizationAttemptStatus, FinalizationOperation
 from app.domain.project import Project
 from app.domain.prompt_dispatch import PromptDispatchRole
@@ -128,6 +145,8 @@ class ReviewWorkflowEvidence:
     url: str | None
     jobs: tuple[ReviewJobEvidence, ...]
     jobs_complete: bool
+    created_at: str | None = None
+    updated_at: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,6 +168,9 @@ class ReviewPullRequestEvidence:
     finalization_detail: str | None
     ci_state: str
     workflows: tuple[ReviewWorkflowEvidence, ...]
+    created_at: str | None = None
+    updated_at: str | None = None
+    github_watchdog: GitHubWaitWatchdog | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -353,12 +375,106 @@ def read_architecture_adr_detail(
     return document_reader.read(project.repository_full_name, reference.path)
 
 
+def _review_execution_projection(
+    pull_request: ReviewPullRequestEvidence,
+    *,
+    work_item: WorkItem,
+) -> ExecutionProjection | None:
+    state_by_ci = {
+        "NOT_OBSERVED": (ExecutionState.PR_OPEN, NextAction.WAIT),
+        "RUNNING": (ExecutionState.CI_RUNNING, NextAction.WAIT),
+    }
+    projected = state_by_ci.get(pull_request.ci_state)
+    if projected is None:
+        if (
+            pull_request.ci_state == "GREEN"
+            and pull_request.finalization_state == "WAIT_AUTO_MERGE"
+        ):
+            projected = (ExecutionState.READY_TO_MERGE, NextAction.WAIT_AUTO_MERGE)
+        else:
+            return None
+
+    try:
+        ci_state = CiState(pull_request.ci_state)
+    except ValueError:
+        return None
+
+    domain_pr = PullRequestEvidence(
+        number=pull_request.number,
+        title=pull_request.title,
+        body="",
+        branch=pull_request.branch,
+        head_sha=pull_request.head_sha,
+        state="open",
+        merged=False,
+        mergeable=pull_request.mergeable,
+        base_branch=pull_request.base_branch,
+        base_sha=pull_request.base_sha,
+        behind_by=pull_request.behind_by,
+        auto_merge_enabled=pull_request.auto_merge_enabled,
+        url=pull_request.url,
+        created_at=pull_request.created_at,
+        updated_at=pull_request.updated_at,
+    )
+    domain_runs = tuple(
+        WorkflowRunEvidence(
+            run_id=run.run_id,
+            name=run.name,
+            status=run.status,
+            conclusion=run.conclusion,
+            attempt=run.attempt,
+            head_sha=run.head_sha,
+            url=run.url,
+            created_at=run.created_at,
+            updated_at=run.updated_at,
+        )
+        for run in pull_request.workflows
+    )
+    return ExecutionProjection(
+        work_item=work_item,
+        state=projected[0],
+        next_action=projected[1],
+        pull_request=domain_pr,
+        ci=CiSummary(
+            state=ci_state,
+            observed_runs=len(domain_runs),
+            failed_jobs=(),
+            runs=domain_runs,
+        ),
+    )
+
+
+def _review_watchdog(
+    project: Project,
+    pull_request: ReviewPullRequestEvidence,
+    *,
+    work_item: WorkItem,
+    now: datetime,
+    pr_no_ci_after_seconds: float,
+    ci_stall_after_seconds: float,
+    auto_merge_grace_seconds: float,
+) -> tuple[ExecutionProjection | None, GitHubWaitWatchdog | None]:
+    execution = _review_execution_projection(pull_request, work_item=work_item)
+    if execution is None:
+        return None, None
+    return execution, project_execution_github_wait_watchdog(
+        execution,
+        now=now,
+        pr_no_ci_after_seconds=pr_no_ci_after_seconds,
+        ci_stall_after_seconds=ci_stall_after_seconds,
+        auto_merge_grace_seconds=auto_merge_grace_seconds,
+    )
+
+
 def read_project_review_panel(
     project: Project,
     *,
     roadmap_reader: RoadmapIssueReader,
     review_reader: ReviewEvidenceReader,
     uow_factory: UnitOfWorkFactory | None = None,
+    pr_no_ci_after_seconds: float = 900.0,
+    ci_stall_after_seconds: float = 1800.0,
+    auto_merge_grace_seconds: float = 600.0,
     now: datetime | None = None,
 ) -> ReviewPanelProjection:
     roadmap = read_project_roadmap(project, reader=roadmap_reader)
@@ -425,14 +541,109 @@ def read_project_review_panel(
                         )
                     elif attempt.status is FinalizationAttemptStatus.STALE:
                         state = "FINALIZATION_STALE"
-                    projected.append(
-                        replace(
-                            pull_request,
-                            finalization_state=state,
-                            finalization_detail=detail,
+                    updated_pull_request = replace(
+                        pull_request,
+                        finalization_state=state,
+                        finalization_detail=detail,
+                    )
+                    work_item = next(
+                        (
+                            item
+                            for item in active_work
+                            if item.key == updated_pull_request.work_item_id
+                        ),
+                        None,
+                    )
+                    watchdog = None
+                    if work_item is not None:
+                        watchdog_execution, watchdog = _review_watchdog(
+                            project,
+                            updated_pull_request,
+                            work_item=work_item,
+                            now=now or datetime.now(timezone.utc),
+                            pr_no_ci_after_seconds=pr_no_ci_after_seconds,
+                            ci_stall_after_seconds=ci_stall_after_seconds,
+                            auto_merge_grace_seconds=auto_merge_grace_seconds,
                         )
+                        if watchdog is not None:
+                            if watchdog.kind in {
+                                GitHubWaitWatchdogKind.PR_NO_CI,
+                                GitHubWaitWatchdogKind.CI_STALLED,
+                            }:
+                                prepared = (
+                                    uow.prompt_dispatches.get_by_idempotency_key(
+                                        watchdog_dispatch_key(
+                                            project,
+                                            updated_pull_request.work_item_id,
+                                            watchdog,
+                                        )
+                                    )
+                                    is not None
+                                )
+                                watchdog = with_recovery(
+                                    watchdog,
+                                    prepared=prepared,
+                                    state=(
+                                        "DEV_RELAUNCH_PREPARED"
+                                        if prepared
+                                        else "DEV_RELAUNCH_DUE"
+                                        if watchdog.due
+                                        else "WAITING"
+                                    ),
+                                )
+                            elif watchdog_execution is not None:
+                                recovery_projection = replace(
+                                    watchdog_execution,
+                                    next_action=NextAction.MERGE_PR,
+                                )
+                                try:
+                                    recovery_key = finalization_idempotency_key(
+                                        project,
+                                        recovery_projection,
+                                    )
+                                except ValueError:
+                                    recovery_attempt = None
+                                else:
+                                    recovery_attempt = attempts.get_by_idempotency_key(
+                                        recovery_key
+                                    )
+                                watchdog = with_recovery(
+                                    watchdog,
+                                    prepared=recovery_attempt is not None,
+                                    state=(
+                                        f"FINALIZER_{recovery_attempt.status.value}"
+                                        if recovery_attempt is not None
+                                        else "FINALIZER_DUE"
+                                        if watchdog.due
+                                        else "WAITING_FOR_GITHUB"
+                                    ),
+                                )
+                    projected.append(
+                        replace(updated_pull_request, github_watchdog=watchdog)
                     )
                 pull_requests = tuple(projected)
+    elif pull_requests:
+        current = now or datetime.now(timezone.utc)
+        work_by_key = {item.key: item for item in active_work}
+        pull_requests = tuple(
+            replace(
+                pull_request,
+                github_watchdog=(
+                    _review_watchdog(
+                        project,
+                        pull_request,
+                        work_item=work_by_key[pull_request.work_item_id],
+                        now=current,
+                        pr_no_ci_after_seconds=pr_no_ci_after_seconds,
+                        ci_stall_after_seconds=ci_stall_after_seconds,
+                        auto_merge_grace_seconds=auto_merge_grace_seconds,
+                    )[1]
+                    if pull_request.work_item_id in work_by_key
+                    else None
+                ),
+            )
+            for pull_request in pull_requests
+        )
     return ReviewPanelProjection(
         project=project,
         observed_at=now or datetime.now(timezone.utc),
