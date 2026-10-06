@@ -119,11 +119,34 @@ def test_merge_revalidates_current_head_ci_and_uses_expected_sha():
         PROJECT,
         pr_number=71,
         expected_head_sha="head-1",
+        expected_base_sha="base-1",
     )
 
     assert result.status is FinalizationAttemptStatus.SUCCEEDED
     assert result.resulting_head_sha == "merge-sha"
     assert ("PUT", "/repos/jctrottier9-gif/DevCockpit/pulls/71/merge") in seen
+
+
+def test_merge_fails_closed_when_base_moved():
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if request.method == "GET" and path == "/repos/jctrottier9-gif/DevCockpit":
+            return httpx.Response(200, json={"allow_merge_commit": True})
+        if request.method == "GET" and path.endswith("/pulls/71"):
+            return httpx.Response(200, json=detail(base="base-2"))
+        raise AssertionError("CI and merge must not be called after base moved")
+
+    result = GitHubPullRequestFinalizer(
+        transport=httpx.MockTransport(handler)
+    ).merge_pull_request(
+        PROJECT,
+        pr_number=71,
+        expected_head_sha="head-1",
+        expected_base_sha="base-1",
+    )
+
+    assert result.status is FinalizationAttemptStatus.STALE
+    assert result.error_code == "BASE_MOVED"
 
 
 def test_merge_fails_closed_when_head_moved():
