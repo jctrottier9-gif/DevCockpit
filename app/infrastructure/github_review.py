@@ -205,6 +205,15 @@ class GitHubReviewReader:
                             mergeable=detail.mergeable,
                             auto_merge_enabled=detail.auto_merge_enabled,
                             mergeable_state=detail.mergeable_state,
+                            next_action=(
+                                "SYNC_BRANCH"
+                                if finalization_state == "BASE_OUTDATED"
+                                else "WAIT_AUTO_MERGE"
+                                if finalization_state == "WAIT_AUTO_MERGE"
+                                else "MERGE_PR"
+                                if finalization_state == "FINALIZE_BY_DEVCOCKPIT"
+                                else None
+                            ),
                             base_branch=detail.base_branch,
                             base_sha=detail.base_sha,
                             behind_by=behind_by,
