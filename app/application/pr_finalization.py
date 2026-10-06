@@ -46,34 +46,50 @@ class PullRequestFinalizer(Protocol):
     ) -> FinalizationMutationResult: ...
 
 
-def finalization_idempotency_key(
+def branch_sync_attempt_key(
+    project: Project,
+    projection: ExecutionProjection,
+) -> str:
+    work_item = projection.work_item
+    pull_request = projection.pull_request
+    if work_item is None or pull_request is None or not pull_request.base_sha:
+        raise ValueError("Branch synchronization requires WorkItem, PR and base SHA")
+    raw = (
+        f"finalization:{project.project_id}:{work_item.key}:"
+        f"SYNC_BRANCH:pr{pull_request.number}:"
+        f"{pull_request.head_sha}:{pull_request.base_sha}:v1"
+    )
+    if len(raw) <= 200:
+        return raw
+    return f"finalization:{sha256(raw.encode('utf-8')).hexdigest()}:v1"
+
+
+def merge_attempt_key(
     project: Project,
     projection: ExecutionProjection,
 ) -> str:
     work_item = projection.work_item
     pull_request = projection.pull_request
     if work_item is None or pull_request is None:
-        raise ValueError("PR finalization requires WorkItem and pull-request evidence")
-
-    if projection.next_action is NextAction.SYNC_BRANCH:
-        if not pull_request.base_sha:
-            raise ValueError("Branch synchronization requires an observed base SHA")
-        raw = (
-            f"finalization:{project.project_id}:{work_item.key}:"
-            f"SYNC_BRANCH:pr{pull_request.number}:"
-            f"{pull_request.head_sha}:{pull_request.base_sha}:v1"
-        )
-    elif projection.next_action is NextAction.MERGE_PR:
-        raw = (
-            f"finalization:{project.project_id}:{work_item.key}:"
-            f"MERGE_PR:pr{pull_request.number}:{pull_request.head_sha}:v1"
-        )
-    else:
-        raise ValueError("Projection does not require a deterministic PR mutation")
-
+        raise ValueError("Merge finalization requires WorkItem and PR")
+    raw = (
+        f"finalization:{project.project_id}:{work_item.key}:"
+        f"MERGE_PR:pr{pull_request.number}:{pull_request.head_sha}:v1"
+    )
     if len(raw) <= 200:
         return raw
     return f"finalization:{sha256(raw.encode('utf-8')).hexdigest()}:v1"
+
+
+def finalization_idempotency_key(
+    project: Project,
+    projection: ExecutionProjection,
+) -> str:
+    if projection.next_action is NextAction.SYNC_BRANCH:
+        return branch_sync_attempt_key(project, projection)
+    if projection.next_action is NextAction.MERGE_PR:
+        return merge_attempt_key(project, projection)
+    raise ValueError("Projection does not require a deterministic PR mutation")
 
 
 def operation_for(projection: ExecutionProjection) -> FinalizationOperation:
