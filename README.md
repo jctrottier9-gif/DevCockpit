@@ -290,6 +290,16 @@ The GET is read-only. The explicit evaluation use case, also called by the bound
 
 A merged PR with sufficiently green delivery CI while the roadmap still says `READY` is projected as `ROADMAP_UPDATE_REQUIRED`. DC-021 does not write the roadmap, merge the PR, rerun CI or start the next WorkItem implicitly.
 
+### GitHub finalization watchdogs
+
+DC-072 adds three independent time-bounded watchdogs to the existing execution poller. They are derived only from current GitHub PR/workflow timestamps and current-head identity; no ChatGPT text is treated as progress evidence.
+
+- `DEVCOCKPIT_PR_NO_CI_AFTER_SECONDS` defaults to 900 seconds. An open PR with no observed `pull_request` workflow on its current head becomes an explicit `PR_NO_CI` stall and prepares at most one same-session DEV diagnostic follow-up for that immutable PR/head/activity proof.
+- `DEVCOCKPIT_CI_STALL_AFTER_SECONDS` defaults to 1800 seconds. A `queued / in_progress / pending / requested / waiting` current-head workflow whose attempt/update evidence stops advancing becomes `CI_STALLED`; DevCockpit prepares one bounded DEV follow-up and never starts a second CI blindly.
+- `DEVCOCKPIT_AUTO_MERGE_GRACE_SECONDS` defaults to 600 seconds. `WAIT_AUTO_MERGE` gives GitHub that grace period. After expiry, DevCockpit reuses the DC-071 finalizer: a newly-behind branch follows `BASE_OUTDATED -> SYNC_BRANCH`; otherwise the merge path immediately revalidates head, green current-head CI, mergeability and repository protections before mutation.
+
+A new head, base/workflow attempt, workflow update, merge, or other newer GitHub activity changes or removes the watchdog evidence and therefore invalidates the old recovery. DEV relaunches are idempotent through their `PromptDispatch` key; sync/merge retries reuse DC-071's durable finalization-attempt records. Reviewer, DEV Pool and Attention Center expose the watchdog kind, last relevant GitHub activity, threshold, deadline and recovery state.
+
 ## Parallel DEV ResourceLocks
 
 DC-052 adds a deterministic conflict gate after the scheduler and DEV-capacity checks. ResourceLocks do not replace `DEPENDS_ON` or `DEVCOCKPIT_MAX_PARALLEL_DEV_EXECUTIONS`.
