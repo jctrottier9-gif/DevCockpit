@@ -87,6 +87,7 @@ export default function ReviewPanel({ projectId }: { projectId: string }) {
             <div><dt>Tip base</dt><dd><code>{pr.base_sha ?? '—'}</code></dd></div>
             <div><dt>Derrière base</dt><dd>{pr.behind_by ?? '—'}</dd></div>
             <div><dt>Finalisation</dt><dd>{pr.finalization_state ?? 'aucune action déterministe'}</dd></div>
+            <div><dt>Prochaine action</dt><dd>{pr.next_action ?? '—'}</dd></div>
           </dl>
           {pr.finalization_detail && <p className="cockpit-warning">{pr.finalization_detail}</p>}
           {pr.github_watchdog && <div className="dev-execution-subsection">
