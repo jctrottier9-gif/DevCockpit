@@ -746,11 +746,17 @@
 
     async _recover(deliveryId) {
       const current = await this.sendStore.get(deliveryId);
-      if (!current || current.state !== SEND_STATE.AMBIGUOUS) {
+      if (!current) {
+        return { ok: false, state: null, error: "chatgpt_send_not_found" };
+      }
+      if (current.state === SEND_STATE.SENT_CONFIRMED) {
+        return { ok: true, state: SEND_STATE.SENT_CONFIRMED };
+      }
+      if (current.state !== SEND_STATE.AMBIGUOUS) {
         return {
-          ok: current?.state === SEND_STATE.SENT_CONFIRMED,
-          state: current?.state || null,
-          error: current ? "chatgpt_send_not_ambiguous" : "chatgpt_send_not_found",
+          ok: false,
+          state: current.state,
+          error: "chatgpt_send_not_ambiguous",
         };
       }
 
