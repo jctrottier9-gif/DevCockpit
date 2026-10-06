@@ -16,6 +16,7 @@ from app.domain.execution import (
 )
 from app.domain.pr_finalization import FinalizationAttemptStatus
 from app.domain.project import Project
+from app.domain.prompt_dispatch import PromptDispatchStatus
 from app.infrastructure.database import build_engine, build_session_factory, upgrade_database
 from app.infrastructure.prompt_dispatches import SqlAlchemyUnitOfWork
 
@@ -397,6 +398,10 @@ def test_ci_stall_watchdog_resets_on_workflow_activity(tmp_path):
         assert refreshed.dispatches == ()
         assert refreshed.projection.items[0].github_watchdog is not None
         assert refreshed.projection.items[0].github_watchdog.due is False
+        with factory() as uow:
+            stale_dispatch = uow.prompt_dispatches.get(first.dispatches[0].dispatch_id)
+            assert stale_dispatch is not None
+            assert stale_dispatch.status is PromptDispatchStatus.CANCELLED
     finally:
         engine.dispose()
 
