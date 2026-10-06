@@ -164,6 +164,7 @@ def test_merge_fails_closed_when_head_moved():
         PROJECT,
         pr_number=71,
         expected_head_sha="head-1",
+        expected_base_sha="base-1",
     )
 
     assert result.status is FinalizationAttemptStatus.STALE
@@ -204,6 +205,7 @@ def test_merge_refusal_is_returned_as_observable_blocker():
         PROJECT,
         pr_number=71,
         expected_head_sha="head-1",
+        expected_base_sha="base-1",
     )
 
     assert result.status is FinalizationAttemptStatus.BLOCKED
