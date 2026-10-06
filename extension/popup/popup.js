@@ -22,7 +22,23 @@
     CONFLICT: "⚠ Un autre compagnon est déjà connecté",
   };
 
-  function localStatusLabel(status) {
+  function localStatusLabel(sendState, fallbackStatus) {
+    const recovery = sendState?.recovery || null;
+    if (
+      ["INSPECTING", "RELOADING", "WAITING_CONTENT"].includes(recovery?.status)
+    ) {
+      return "Vérification automatique en cours";
+    }
+    if (recovery?.status === "CONFIRMED") {
+      return "Envoi confirmé après resynchronisation";
+    }
+    if (recovery?.status === "VERIFIED_NOT_SENT") {
+      return "Vérifié non envoyé";
+    }
+    if (recovery?.status === "INTERVENTION_REQUIRED") {
+      return "Envoi ambigu — intervention requise";
+    }
+
     const labels = {
       QUEUED: "En file",
       ROUTING: "Routage…",
@@ -31,9 +47,23 @@
       SEND_ARMED: "Envoi armé — reprise bloquée",
       SENT_CONFIRMED: "Envoi confirmé",
       BLOCKED: "Action requise",
-      AMBIGUOUS: "Envoi ambigu — ne pas renvoyer",
+      AMBIGUOUS: "Envoi ambigu — intervention requise",
     };
-    return labels[status] || "En attente";
+    return labels[sendState?.state || fallbackStatus] || "En attente";
+  }
+
+  function bindingConflictMessage(conflict) {
+    if (!conflict) return null;
+    const expectedVersion = conflict.expected_binding_version ?? "inconnue";
+    const observedVersion = conflict.observed_binding_version ?? "inconnue";
+    return [
+      "CHATGPT_SEND_BINDING_CONFLICT",
+      "AgentSession=" + conflict.agent_session,
+      "conversation attendue=" + (conflict.expected_conversation_id || "aucune"),
+      "conversation observée=" + (conflict.observed_conversation_id || "non prouvée"),
+      "binding_version attendue=" + expectedVersion,
+      "binding_version observée=" + observedVersion,
+    ].join(" · ");
   }
 
   function isArchitectureSession(session) {
@@ -59,7 +89,7 @@
       fragment.querySelector(".session").textContent = entry.session;
       const sendState = sendByDelivery.get(entry.delivery_id) || null;
       fragment.querySelector(".local-status").textContent =
-        localStatusLabel(sendState?.state || entry.local_status);
+        localStatusLabel(sendState, entry.local_status);
       fragment.querySelector(".preview").textContent = entry.text;
       fragment.querySelector(".full-text").textContent = entry.text;
       const entryError = fragment.querySelector(".entry-error");
@@ -69,12 +99,18 @@
       const architecture = isArchitectureSession(entry.session);
       const ambiguous = sendState?.state === "AMBIGUOUS";
       const blocked = sendState?.state === "BLOCKED";
+      const recoveryInProgress =
+        ambiguous &&
+        ["INSPECTING", "RELOADING", "WAITING_CONTENT"].includes(
+          sendState?.recovery?.status,
+        );
       const manualArchReady =
         architecture &&
         !ambiguous &&
         (!sendState || sendState.state === "QUEUED" || blocked);
 
-      sendButton.hidden = !ambiguous && !blocked && !manualArchReady;
+      sendButton.hidden =
+        recoveryInProgress || (!ambiguous && !blocked && !manualArchReady);
       if (ambiguous) {
         sendButton.textContent = "Vérifier l'envoi";
         sendButton.title = "Vérifie le DOM ChatGPT sans renvoyer automatiquement.";
@@ -90,10 +126,28 @@
           "Disponible seulement après un échec certain avant SEND_ARMED.";
       }
 
-      if (ambiguous) {
+      const conflictMessage = bindingConflictMessage(
+        sendState?.recovery?.binding_conflict,
+      );
+      if (conflictMessage) {
+        showEntryError(entryError, conflictMessage);
+      } else if (recoveryInProgress) {
         showEntryError(
           entryError,
-          "Envoi potentiellement effectué. Vérifiez l’état dans l’onglet ChatGPT; aucun renvoi automatique n’est permis.",
+          "Vérification automatique en cours : inspection passive et, au maximum, un rechargement de l’onglet exact. Aucun renvoi n’est permis.",
+        );
+      } else if (
+        blocked &&
+        sendState?.recovery?.status === "VERIFIED_NOT_SENT"
+      ) {
+        showEntryError(
+          entryError,
+          "Vérifié non envoyé : aucune occurrence exacte du prompt n’a été trouvée après resynchronisation et le prompt est resté dans le composer.",
+        );
+      } else if (ambiguous) {
+        showEntryError(
+          entryError,
+          "Envoi ambigu — intervention requise. Utilisez « Vérifier l'envoi » comme dernier recours; aucun renvoi automatique n’est permis.",
         );
       } else if (manualArchReady && !sendState?.error_code) {
         showEntryError(
@@ -167,15 +221,22 @@
     };
   }
 
-  function renderSentPrompts(entries) {
+  function renderSentPrompts(entries, sendStates) {
     sentElement.replaceChildren();
     sentEmptyElement.hidden = entries.length !== 0;
+    const sendByDelivery = new Map(
+      sendStates.map((entry) => [entry.delivery_id, entry]),
+    );
 
     for (const entry of entries) {
       const fragment = sentTemplate.content.cloneNode(true);
       fragment.querySelector(".session").textContent = entry.session;
+      const sendState = sendByDelivery.get(entry.delivery_id) || null;
+      const sentAt = new Date(entry.sent_at).toLocaleString();
       fragment.querySelector(".sent-at").textContent =
-        new Date(entry.sent_at).toLocaleString();
+        sendState?.recovery?.status === "CONFIRMED"
+          ? "Envoi confirmé après resynchronisation · " + sentAt
+          : sentAt;
 
       const entryError = fragment.querySelector(".entry-error");
       const returnButton = fragment.querySelector(".return-response");
@@ -246,7 +307,10 @@
       Array.isArray(state.queue) ? state.queue : [],
       Array.isArray(state.sendStates) ? state.sendStates : [],
     );
-    renderSentPrompts(Array.isArray(state.sentPrompts) ? state.sentPrompts : []);
+    renderSentPrompts(
+      Array.isArray(state.sentPrompts) ? state.sentPrompts : [],
+      Array.isArray(state.sendStates) ? state.sendStates : [],
+    );
     renderPendingResponses(
       Array.isArray(state.pendingResponses) ? state.pendingResponses : [],
     );
