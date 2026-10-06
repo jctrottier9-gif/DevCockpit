@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCockpitRefreshVersion } from './CockpitRefreshContext'
 import type {
   RoadmapExplorerIssueDetail,
   RoadmapExplorerItem,
@@ -76,6 +77,7 @@ export default function RoadmapExplorer({
   projectId: string
   initialWorkItemId?: string | null
 }) {
+  const refreshVersion = useCockpitRefreshVersion()
   const [state, setState] = useState<LoadState>('loading')
   const [explorer, setExplorer] = useState<RoadmapExplorerResponse | null>(null)
   const [error, setError] = useState('')
@@ -84,6 +86,7 @@ export default function RoadmapExplorer({
   const [issueDetail, setIssueDetail] = useState<RoadmapExplorerIssueDetail | null>(null)
   const [issueError, setIssueError] = useState('')
   const projectRef = useRef(projectId)
+  const explorerRef = useRef<RoadmapExplorerResponse | null>(null)
   const explorerGenerationRef = useRef(0)
   const issueGenerationRef = useRef(0)
   const issueControllerRef = useRef<AbortController | null>(null)
@@ -92,15 +95,9 @@ export default function RoadmapExplorer({
     projectRef.current = projectId
     const controller = new AbortController()
     const generation = ++explorerGenerationRef.current
-    issueGenerationRef.current += 1
-    issueControllerRef.current?.abort()
-    setState('loading')
-    setExplorer(null)
+    const hadExplorer = explorerRef.current !== null
+    if (!hadExplorer) setState('loading')
     setError('')
-    setSelectedKey(null)
-    setIssueState('idle')
-    setIssueDetail(null)
-    setIssueError('')
 
     async function load() {
       try {
@@ -124,11 +121,14 @@ export default function RoadmapExplorer({
         if (payload.project?.project_id !== projectId) {
           throw new Error('Project context mismatch while loading Roadmap Explorer')
         }
+        explorerRef.current = payload
         setExplorer(payload)
         const preferred = initialWorkItemId && payload.items.some(item => item.key === initialWorkItemId)
           ? initialWorkItemId
           : payload.horizons.now
-        setSelectedKey(preferred ?? payload.items[0]?.key ?? null)
+        setSelectedKey(current => current && payload.items.some(item => item.key === current)
+          ? current
+          : preferred ?? payload.items[0]?.key ?? null)
         setState('ready')
       } catch (caught: unknown) {
         if (caught instanceof DOMException && caught.name === 'AbortError') return
@@ -137,13 +137,13 @@ export default function RoadmapExplorer({
           || projectRef.current !== projectId
         ) return
         setError(caught instanceof Error ? caught.message : 'Roadmap Explorer indisponible')
-        setState('error')
+        setState(hadExplorer ? 'ready' : 'error')
       }
     }
 
     void load()
     return () => controller.abort()
-  }, [projectId, initialWorkItemId])
+  }, [projectId, initialWorkItemId, refreshVersion])
 
   useEffect(() => () => issueControllerRef.current?.abort(), [])
 
@@ -235,6 +235,8 @@ export default function RoadmapExplorer({
     {!explorer.pipeline.valid && <div className="roadmap-explorer-warning" role="alert">
       Pipeline invalide : le scheduler reste fail-closed.
     </div>}
+
+    {error && <div className="roadmap-explorer-warning" role="status">{error}</div>}
 
     {diagnostics.length > 0 && <details className="roadmap-explorer-diagnostics" open={!explorer.pipeline.valid}>
       <summary>Diagnostics ({diagnostics.length})</summary>
