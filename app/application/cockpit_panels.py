@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from hashlib import sha256
 import re
@@ -15,6 +15,7 @@ from app.application.roadmap_explorer import (
     read_project_roadmap_explorer,
 )
 from app.application.roadmaps import RoadmapIssueReader, read_project_roadmap
+from app.domain.pr_finalization import FinalizationAttemptStatus, FinalizationOperation
 from app.domain.project import Project
 from app.domain.prompt_dispatch import PromptDispatchRole
 from app.domain.roadmap import WorkItem, WorkItemStatus, WorkItemType
@@ -141,6 +142,11 @@ class ReviewPullRequestEvidence:
     url: str | None
     mergeable: bool | None
     auto_merge_enabled: bool
+    base_branch: str | None
+    base_sha: str | None
+    behind_by: int | None
+    finalization_state: str | None
+    finalization_detail: str | None
     ci_state: str
     workflows: tuple[ReviewWorkflowEvidence, ...]
 
@@ -352,6 +358,7 @@ def read_project_review_panel(
     *,
     roadmap_reader: RoadmapIssueReader,
     review_reader: ReviewEvidenceReader,
+    uow_factory: UnitOfWorkFactory | None = None,
     now: datetime | None = None,
 ) -> ReviewPanelProjection:
     roadmap = read_project_roadmap(project, reader=roadmap_reader)
@@ -376,12 +383,62 @@ def read_project_review_panel(
         if item.type is WorkItemType.WORK and item.status is WorkItemStatus.READY
     )
     evidence = review_reader.read(project, active_work)
+    pull_requests = evidence.pull_requests
+    if uow_factory is not None:
+        with uow_factory() as uow:
+            attempts = getattr(uow, "pr_finalization_attempts", None)
+            if attempts is not None:
+                projected = []
+                for pull_request in pull_requests:
+                    matching = [
+                        attempt
+                        for attempt in attempts.list_for_pr(
+                            project.project_id,
+                            pull_request.work_item_id,
+                            pull_request.number,
+                        )
+                        if attempt.expected_head_sha == pull_request.head_sha
+                        and (
+                            attempt.operation is FinalizationOperation.MERGE_PR
+                            or attempt.base_sha == pull_request.base_sha
+                        )
+                    ]
+                    attempt = matching[0] if matching else None
+                    if attempt is None:
+                        projected.append(pull_request)
+                        continue
+                    state = pull_request.finalization_state
+                    detail = attempt.message or attempt.error_code
+                    if attempt.status is FinalizationAttemptStatus.BLOCKED:
+                        state = (
+                            "BRANCH_SYNC_BLOCKED"
+                            if attempt.operation is FinalizationOperation.SYNC_BRANCH
+                            else "MERGE_BLOCKED"
+                        )
+                    elif attempt.status is FinalizationAttemptStatus.IN_PROGRESS:
+                        state = "FINALIZATION_IN_PROGRESS"
+                    elif attempt.status is FinalizationAttemptStatus.SUCCEEDED:
+                        state = (
+                            "SYNC_BRANCH_ACCEPTED"
+                            if attempt.operation is FinalizationOperation.SYNC_BRANCH
+                            else "MERGE_ACCEPTED"
+                        )
+                    elif attempt.status is FinalizationAttemptStatus.STALE:
+                        state = "FINALIZATION_STALE"
+                    projected.append(
+                        replace(
+                            pull_request,
+                            finalization_state=state,
+                            finalization_detail=detail,
+                        )
+                    )
+                pull_requests = tuple(projected)
     return ReviewPanelProjection(
         project=project,
         observed_at=now or datetime.now(timezone.utc),
         roadmap_updated_at=roadmap.issue.updated_at,
         revision=sha256(roadmap.issue.body.encode("utf-8")).hexdigest(),
-        pull_requests=evidence.pull_requests,
+        pull_requests=pull_requests,
         complete=evidence.complete,
         diagnostics=evidence.diagnostics,
     )
