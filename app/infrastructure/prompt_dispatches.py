@@ -14,6 +14,9 @@ from app.infrastructure.conversation_bindings import SqlAlchemyConversationBindi
 from app.infrastructure.database import Base
 from app.infrastructure.handoffs import SqlAlchemyDecisionRepository, SqlAlchemyHandoffRepository
 from app.infrastructure.prompt_deliveries import SqlAlchemyPromptDeliveryRepository
+from app.infrastructure.pr_finalization_attempts import (
+    SqlAlchemyPullRequestFinalizationAttemptRepository,
+)
 from app.infrastructure.resource_locks import SqlAlchemyResourceLockRepository
 from app.infrastructure.roadmap_changes import (
     SqlAlchemyRoadmapChangeProposalRepository,
@@ -122,6 +125,7 @@ class SqlAlchemyUnitOfWork:
         self.roadmap_change_application_attempts: SqlAlchemyRoadmapChangeApplicationAttemptRepository
         self.roadmap_target_fences: SqlAlchemyRoadmapTargetFenceRepository
         self.roadmap_writeback_authorizations: SqlAlchemyRoadmapWritebackAuthorizationRepository
+        self.pr_finalization_attempts: SqlAlchemyPullRequestFinalizationAttemptRepository
 
     def __enter__(self) -> SqlAlchemyUnitOfWork:
         self._session = self._session_factory()
@@ -144,6 +148,7 @@ class SqlAlchemyUnitOfWork:
         self.roadmap_change_application_attempts = SqlAlchemyRoadmapChangeApplicationAttemptRepository(self._session)
         self.roadmap_target_fences = SqlAlchemyRoadmapTargetFenceRepository(self._session)
         self.roadmap_writeback_authorizations = SqlAlchemyRoadmapWritebackAuthorizationRepository(self._session)
+        self.pr_finalization_attempts = SqlAlchemyPullRequestFinalizationAttemptRepository(self._session)
         self.prompt_dispatches = SqlAlchemyPromptDispatchRepository(self._session)
         self.prompt_deliveries = SqlAlchemyPromptDeliveryRepository(self._session)
         self.chatgpt_responses = SqlAlchemyImportedChatGptResponseRepository(self._session)
