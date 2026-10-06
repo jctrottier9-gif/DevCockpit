@@ -10,6 +10,7 @@ from app.infrastructure import (  # noqa: F401
     handoffs,
     prompt_deliveries,
     prompt_dispatches,
+    pr_finalization_attempts,
     resource_locks,
 )
 

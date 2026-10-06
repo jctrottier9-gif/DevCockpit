@@ -253,6 +253,7 @@ def build_cockpit_router(
                 active_project,
                 roadmap_reader=roadmap_reader,
                 review_reader=review_reader,
+                uow_factory=uow_factory,
             )
         except (RoadmapSourceError, ExecutionSourceError) as exc:
             code = getattr(exc, "code", "GITHUB_UNAVAILABLE")

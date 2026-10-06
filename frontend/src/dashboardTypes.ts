@@ -163,7 +163,12 @@ export type ParallelExecutionItem = {
     title: string
     url: string | null
     mergeable: boolean | null
+    mergeable_state: string | null
     merged: boolean
+    auto_merge_enabled: boolean
+    base_branch: string | null
+    base_sha: string | null
+    behind_by: number | null
   }
   head_sha: string | null
   ci: null | {
@@ -404,6 +409,11 @@ export type ReviewPullRequest = {
   url: string | null
   mergeable: boolean | null
   auto_merge_enabled: boolean
+  base_branch: string | null
+  base_sha: string | null
+  behind_by: number | null
+  finalization_state: string | null
+  finalization_detail: string | null
   ci_state: string
   workflows: ReviewWorkflow[]
 }

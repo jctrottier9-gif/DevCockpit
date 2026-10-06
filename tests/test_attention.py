@@ -31,6 +31,11 @@ from app.domain.execution import (
     PullRequestEvidence,
     WorkflowRunEvidence,
 )
+from app.domain.pr_finalization import (
+    FinalizationAttemptStatus,
+    FinalizationOperation,
+    PullRequestFinalizationAttempt,
+)
 from app.domain.project import Project
 from app.domain.resource_lock import (
     ResourceLockMode,
@@ -96,6 +101,68 @@ class RedEvidence:
                     failed_jobs=("backend",),
                 ),
             ),
+        )
+
+
+class BehindGreenEvidence:
+    def read(self, project, work_item) -> ExecutionEvidence:
+        return ExecutionEvidence(
+            default_branch="main",
+            pull_requests=(
+                PullRequestEvidence(
+                    number=42,
+                    title=f"{work_item.key} — implementation",
+                    body="",
+                    branch=f"{work_item.key.lower()}-implementation",
+                    head_sha="ghi789",
+                    state="open",
+                    merged=False,
+                    mergeable=True,
+                    base_branch="main",
+                    base_sha="base789",
+                    behind_by=1,
+                    auto_merge_enabled=False,
+                    url="https://github.example/pr/42",
+                ),
+            ),
+            workflow_runs=(
+                WorkflowRunEvidence(
+                    run_id=420,
+                    name="CI",
+                    status="completed",
+                    conclusion="success",
+                    attempt=1,
+                    head_sha="ghi789",
+                    url="https://github.example/actions/420",
+                ),
+            ),
+        )
+
+
+class GreenMergeableEvidence:
+    def read(self, project, work_item) -> ExecutionEvidence:
+        evidence = BehindGreenEvidence().read(project, work_item)
+        pr = evidence.pull_requests[0]
+        return ExecutionEvidence(
+            default_branch="main",
+            pull_requests=(
+                PullRequestEvidence(
+                    number=pr.number,
+                    title=pr.title,
+                    body=pr.body,
+                    branch=pr.branch,
+                    head_sha=pr.head_sha,
+                    state=pr.state,
+                    merged=pr.merged,
+                    mergeable=True,
+                    base_branch=pr.base_branch,
+                    base_sha=pr.base_sha,
+                    behind_by=0,
+                    auto_merge_enabled=False,
+                    url=pr.url,
+                ),
+            ),
+            workflow_runs=evidence.workflow_runs,
         )
 
 
@@ -418,6 +485,49 @@ def test_distinct_actions_on_same_work_item_are_not_merged(tmp_path):
     assert ("DEV", "FIX_CI") in actions
     assert ("ARCH", "REVIEW_DECISION") in actions
     assert len(result.items) == 2
+
+
+def test_base_outdated_is_visible_as_watch_without_manual_prompt(tmp_path):
+    app = application(tmp_path, evidence=BehindGreenEvidence())
+
+    result = projection(app, companion_connected=True)
+
+    assert result.state is AttentionState.WATCH
+    assert len(result.items) == 1
+    item = result.items[0]
+    assert item.kind is AttentionKind.PR_FINALIZATION
+    assert item.level is AttentionLevel.WATCH
+    assert item.primary_action.kind == "SYNC_BRANCH"
+    assert item.pr_number == 42
+
+
+def test_persisted_merge_refusal_is_visible_as_action(tmp_path):
+    app = application(tmp_path, evidence=GreenMergeableEvidence())
+    attempt = PullRequestFinalizationAttempt.claim(
+        idempotency_key=(
+            "finalization:DevCockpit:DC-060:MERGE_PR:pr42:ghi789:v1"
+        ),
+        project_id="DevCockpit",
+        work_item_id="DC-060",
+        pr_number=42,
+        operation=FinalizationOperation.MERGE_PR,
+        expected_head_sha="ghi789",
+        base_sha="base789",
+    ).complete(
+        status=FinalizationAttemptStatus.BLOCKED,
+        error_code="MERGE_BLOCKED",
+        message="Required approving review is missing",
+    )
+    with app.state.uow_factory() as uow:
+        uow.pr_finalization_attempts.add(attempt)
+        uow.commit()
+
+    result = projection(app, companion_connected=True)
+
+    assert result.state is AttentionState.ACTION
+    item = next(candidate for candidate in result.items if candidate.kind is AttentionKind.PR_FINALIZATION)
+    assert item.primary_action.kind == "MERGE_BLOCKED"
+    assert "approving review" in item.reason
 
 
 def test_roadmap_update_required_is_explicit_and_links_pr_evidence(tmp_path):

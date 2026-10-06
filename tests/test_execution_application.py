@@ -6,6 +6,7 @@ from app.application.roadmaps import RoadmapIssue
 from app.domain.execution import (
     ExecutionEvidence,
     ExecutionState,
+    NextAction,
     PullRequestEvidence,
     WorkflowRunEvidence,
 )
@@ -229,7 +230,7 @@ def test_distinct_ci_attempt_can_create_a_new_follow_up_in_same_session() -> Non
     assert len(repository.by_key) == 2
 
 
-def test_ready_to_merge_creates_one_idempotent_same_session_follow_up() -> None:
+def test_ready_to_merge_no_longer_creates_a_dev_merge_prompt() -> None:
     repository = InMemoryDispatchRepository()
     evidence = ExecutionEvidence(
         default_branch="main",
@@ -250,25 +251,18 @@ def test_ready_to_merge_creates_one_idempotent_same_session_follow_up() -> None:
         ),
         workflow_runs=(green_run(),),
     )
-    kwargs = {
-        "roadmap_reader": RoadmapReader(),
-        "evidence_reader": EvidenceReader(evidence),
-        "uow_factory": uow_factory(repository),
-    }
 
-    first = evaluate_project_execution(PROJECT, **kwargs)
-    second = evaluate_project_execution(PROJECT, **kwargs)
+    result = evaluate_project_execution(
+        PROJECT,
+        roadmap_reader=RoadmapReader(),
+        evidence_reader=EvidenceReader(evidence),
+        uow_factory=uow_factory(repository),
+    )
 
-    assert first.projection.state is ExecutionState.READY_TO_MERGE
-    assert first.dispatch is not None
-    assert second.dispatch is not None
-    assert first.dispatch.dispatch_id == second.dispatch.dispatch_id
-    assert first.dispatch.agent_session == "DevCockpit:DEV:DC-021"
-    assert "toujours ouverte" in first.dispatch.prompt_text
-    assert "Head SHA observé : abc123" in first.dispatch.prompt_text
-    assert "fusionne la PR avec une méthode autorisée par le dépôt" in first.dispatch.prompt_text
-    assert "Ne modifie aucun fichier" in first.dispatch.prompt_text
-    assert len(repository.by_key) == 1
+    assert result.projection.state is ExecutionState.READY_TO_MERGE
+    assert result.projection.next_action is NextAction.MERGE_PR
+    assert result.dispatch is None
+    assert repository.by_key == {}
 
 
 def test_ready_to_merge_with_auto_merge_armed_creates_no_dispatch() -> None:

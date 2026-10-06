@@ -132,6 +132,7 @@ class GitHubReviewReader:
                         confirm = self._parse_pull_request(confirm_payload)
                         if (
                             confirm.head_sha != detail.head_sha
+                            or confirm.base_sha != detail.base_sha
                             or not pull_request_matches_work_item(confirm, work_item.key)
                         ):
                             continue
@@ -168,6 +169,13 @@ class GitHubReviewReader:
                         continue
 
                     detail, workflows, snapshot_complete = stable_snapshot
+                    behind_by = self._read_behind_by(client, base_url, detail)
+                    ci_state = review_ci_state(workflows)
+                    finalization_state = self._finalization_state(
+                        detail,
+                        ci_state=ci_state,
+                        behind_by=behind_by,
+                    )
                     counts[work_item.key] = counts.get(work_item.key, 0) + 1
                     complete = complete and snapshot_complete
                     if not snapshot_complete:
@@ -190,7 +198,12 @@ class GitHubReviewReader:
                             url=detail.url,
                             mergeable=detail.mergeable,
                             auto_merge_enabled=detail.auto_merge_enabled,
-                            ci_state=review_ci_state(workflows),
+                            base_branch=detail.base_branch,
+                            base_sha=detail.base_sha,
+                            behind_by=behind_by,
+                            finalization_state=finalization_state,
+                            finalization_detail=None,
+                            ci_state=ci_state,
                             workflows=workflows,
                         )
                     )
@@ -214,6 +227,46 @@ class GitHubReviewReader:
                 )
         except httpx.RequestError as exc:
             raise ExecutionSourceError("GitHub Reviewer request failed") from exc
+
+    def _read_behind_by(
+        self,
+        client: httpx.Client,
+        base_url: str,
+        pull_request: PullRequestEvidence,
+    ) -> int | None:
+        if pull_request.base_sha is None:
+            return None
+        payload = self._request_json(
+            client,
+            (
+                f"{base_url}/compare/"
+                f"{quote(pull_request.base_sha, safe='')}..."
+                f"{quote(pull_request.head_sha, safe='')}"
+            ),
+        )
+        if not isinstance(payload, dict):
+            raise ExecutionPayloadError("GitHub Reviewer compare response must be object")
+        behind_by = payload.get("behind_by")
+        if not isinstance(behind_by, int):
+            raise ExecutionPayloadError("GitHub Reviewer compare behind_by must be integer")
+        return behind_by
+
+    @staticmethod
+    def _finalization_state(
+        pull_request: PullRequestEvidence,
+        *,
+        ci_state: str,
+        behind_by: int | None,
+    ) -> str | None:
+        if ci_state != "GREEN":
+            return None
+        if (behind_by or 0) > 0:
+            return "BASE_OUTDATED"
+        if pull_request.auto_merge_enabled:
+            return "WAIT_AUTO_MERGE"
+        if pull_request.mergeable is True:
+            return "FINALIZE_BY_DEVCOCKPIT"
+        return None
 
     def _read_workflows(
         self,
@@ -432,6 +485,9 @@ class GitHubReviewReader:
         head = payload.get("head")
         if not isinstance(head, dict):
             raise ExecutionPayloadError("GitHub pull-request head must be an object")
+        base = payload.get("base")
+        if base is not None and not isinstance(base, dict):
+            raise ExecutionPayloadError("GitHub pull-request base must be object or null")
         number = payload.get("number")
         if not isinstance(number, int):
             raise ExecutionPayloadError("GitHub pull-request number must be integer")
@@ -449,13 +505,25 @@ class GitHubReviewReader:
         url = payload.get("html_url")
         mergeable = payload.get("mergeable")
         auto_merge = payload.get("auto_merge")
+        mergeable_state = payload.get("mergeable_state")
         if mergeable is not None and not isinstance(mergeable, bool):
             mergeable = None
+        if mergeable_state is not None and not isinstance(mergeable_state, str):
+            mergeable_state = None
         if auto_merge is not None and not isinstance(auto_merge, dict):
             raise ExecutionPayloadError("GitHub pull-request auto_merge must be object or null")
         for value, field in ((merged_at, "merged_at"), (updated_at, "updated_at"), (url, "html_url")):
             if value is not None and not isinstance(value, str):
                 raise ExecutionPayloadError(f"GitHub pull-request {field} must be text or null")
+        base_branch = None
+        base_sha = None
+        if isinstance(base, dict):
+            raw_base_branch = base.get("ref")
+            raw_base_sha = base.get("sha")
+            if isinstance(raw_base_branch, str) and raw_base_branch:
+                base_branch = raw_base_branch
+            if isinstance(raw_base_sha, str) and raw_base_sha:
+                base_sha = raw_base_sha
         return PullRequestEvidence(
             number=number,
             title=title,
@@ -465,6 +533,9 @@ class GitHubReviewReader:
             state=state,
             merged=merged_at is not None,
             mergeable=mergeable,
+            base_branch=base_branch,
+            base_sha=base_sha,
+            mergeable_state=mergeable_state,
             auto_merge_enabled=auto_merge is not None,
             url=url,
             updated_at=updated_at,

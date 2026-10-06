@@ -37,6 +37,7 @@ class AttentionKind(StrEnum):
     RESOURCE_LOCK_CONFLICT = "RESOURCE_LOCK_CONFLICT"
     ARCHITECTURE_GATE_AUTHORIZATION = "ARCHITECTURE_GATE_AUTHORIZATION"
     CHATGPT_SEND = "CHATGPT_SEND"
+    PR_FINALIZATION = "PR_FINALIZATION"
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,6 +244,135 @@ def _execution_items(
                         if candidate.execution.ci is not None
                         else [],
                     },
+                ),
+            )
+
+        if candidate.execution.state in {
+            ExecutionState.BRANCH_SYNC_BLOCKED,
+            ExecutionState.MERGE_BLOCKED,
+        }:
+            blocked_state = candidate.execution.state.value
+            reason = (
+                candidate.execution.diagnostics[-1].message
+                if candidate.execution.diagnostics
+                else "GitHub refused deterministic PR finalization."
+            )
+            _add(
+                items,
+                AttentionItem(
+                    stable_key=_stable_key(
+                        project_id,
+                        "DEV",
+                        work_item.key,
+                        blocked_state,
+                    ),
+                    level=AttentionLevel.ACTION,
+                    kind=AttentionKind.PR_FINALIZATION,
+                    title=f"DEV · {work_item.key} · {blocked_state}",
+                    reason=reason,
+                    project_id=project_id,
+                    work_item_id=work_item.key,
+                    role="DEV",
+                    agent_session=candidate.agent_session,
+                    primary_action=AttentionAction(
+                        kind=blocked_state,
+                        label="Ouvrir la PR et examiner le blocage",
+                        target="pull_request" if pull_request and pull_request.url else "orchestration",
+                        work_item_id=work_item.key,
+                        href=pull_request.url if pull_request else None,
+                    ),
+                    pr_number=pull_request.number if pull_request else None,
+                    pr_url=pull_request.url if pull_request else None,
+                    evidence=(
+                        AttentionEvidence(
+                            "ExecutionProjection",
+                            f"{work_item.key}:{blocked_state}",
+                            reason,
+                        ),
+                    ),
+                ),
+            )
+
+        if candidate.execution.state is ExecutionState.BASE_OUTDATED:
+            _add(
+                items,
+                AttentionItem(
+                    stable_key=_stable_key(
+                        project_id,
+                        "DEV",
+                        work_item.key,
+                        "SYNC_BRANCH",
+                    ),
+                    level=AttentionLevel.WATCH,
+                    kind=AttentionKind.PR_FINALIZATION,
+                    title=f"DEV · {work_item.key} · branche derrière la base",
+                    reason=(
+                        "DevCockpit synchronise mécaniquement la branche avec la base observée "
+                        "avant de réévaluer la CI."
+                    ),
+                    project_id=project_id,
+                    work_item_id=work_item.key,
+                    role="DEV",
+                    agent_session=candidate.agent_session,
+                    primary_action=AttentionAction(
+                        kind="SYNC_BRANCH",
+                        label="Ouvrir la PR",
+                        target="pull_request" if pull_request and pull_request.url else "orchestration",
+                        work_item_id=work_item.key,
+                        href=pull_request.url if pull_request else None,
+                    ),
+                    pr_number=pull_request.number if pull_request else None,
+                    pr_url=pull_request.url if pull_request else None,
+                    evidence=(
+                        AttentionEvidence(
+                            "ExecutionProjection",
+                            f"{work_item.key}:BASE_OUTDATED",
+                        ),
+                    ),
+                ),
+            )
+
+        if (
+            candidate.execution.state is ExecutionState.READY_TO_MERGE
+            and candidate.execution.next_action.value in {"WAIT_AUTO_MERGE", "MERGE_PR"}
+        ):
+            waiting_on_github = candidate.execution.next_action.value == "WAIT_AUTO_MERGE"
+            _add(
+                items,
+                AttentionItem(
+                    stable_key=_stable_key(
+                        project_id,
+                        "DEV",
+                        work_item.key,
+                        candidate.execution.next_action.value,
+                    ),
+                    level=AttentionLevel.WATCH,
+                    kind=AttentionKind.PR_FINALIZATION,
+                    title=f"DEV · {work_item.key} · PR prête à finaliser",
+                    reason=(
+                        "L'auto-merge est armé; GitHub est responsable du merge."
+                        if waiting_on_github
+                        else "DevCockpit finalisera le merge après revalidation des preuves courantes."
+                    ),
+                    project_id=project_id,
+                    work_item_id=work_item.key,
+                    role="DEV",
+                    agent_session=candidate.agent_session,
+                    primary_action=AttentionAction(
+                        kind=candidate.execution.next_action.value,
+                        label="Ouvrir la PR",
+                        target="pull_request" if pull_request and pull_request.url else "orchestration",
+                        work_item_id=work_item.key,
+                        href=pull_request.url if pull_request else None,
+                    ),
+                    pr_number=pull_request.number if pull_request else None,
+                    pr_url=pull_request.url if pull_request else None,
+                    evidence=(
+                        AttentionEvidence(
+                            "ExecutionProjection",
+                            f"{work_item.key}:{candidate.execution.next_action.value}",
+                        ),
+                    ),
                 ),
             )
 

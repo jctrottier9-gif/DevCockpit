@@ -34,6 +34,8 @@ def pr(
     mergeable: bool | None = None,
     merged_at: str | None = None,
     auto_merge_enabled: bool = False,
+    base_sha: str | None = None,
+    behind_by: int | None = None,
 ) -> PullRequestEvidence:
     return PullRequestEvidence(
         number=number,
@@ -44,6 +46,9 @@ def pr(
         state=state,
         merged=merged,
         mergeable=mergeable,
+        base_branch="main" if base_sha is not None else None,
+        base_sha=base_sha,
+        behind_by=behind_by,
         auto_merge_enabled=auto_merge_enabled,
         url=f"https://github.example/pr/{number}",
         updated_at="2026-10-01T12:00:00Z",
@@ -155,6 +160,29 @@ def test_old_sha_failure_is_not_mixed_with_current_head() -> None:
     assert projection.state is ExecutionState.CI_RUNNING
 
 
+def test_green_pr_behind_base_requires_branch_sync_before_merge() -> None:
+    projection = derive_execution_projection(
+        WORK_ITEM,
+        ExecutionEvidence(
+            default_branch="main",
+            pull_requests=(
+                pr(
+                    mergeable=True,
+                    auto_merge_enabled=True,
+                    base_sha="base-1",
+                    behind_by=1,
+                ),
+            ),
+            workflow_runs=(run(conclusion="success"),),
+        ),
+    )
+
+    assert projection.state is ExecutionState.BASE_OUTDATED
+    assert projection.next_action is NextAction.SYNC_BRANCH
+    assert projection.pull_request.base_sha == "base-1"
+    assert projection.pull_request.behind_by == 1
+
+
 def test_green_mergeable_pr_is_ready_to_merge() -> None:
     projection = derive_execution_projection(
         WORK_ITEM,
@@ -180,7 +208,7 @@ def test_green_mergeable_pr_with_auto_merge_armed_waits_without_follow_up() -> N
     )
 
     assert projection.state is ExecutionState.READY_TO_MERGE
-    assert projection.next_action is NextAction.WAIT
+    assert projection.next_action is NextAction.WAIT_AUTO_MERGE
 
 
 def test_merged_green_pr_while_roadmap_ready_requires_reconciliation() -> None:

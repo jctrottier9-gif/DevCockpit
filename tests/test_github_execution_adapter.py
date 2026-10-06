@@ -34,8 +34,10 @@ def pull_payload(
     merged_at=None,
     mergeable=None,
     auto_merge=None,
+    base_sha=None,
+    mergeable_state=None,
 ):
-    return {
+    payload = {
         "number": number,
         "title": title,
         "body": body,
@@ -45,8 +47,12 @@ def pull_payload(
         "html_url": f"https://github.example/pr/{number}",
         "mergeable": mergeable,
         "auto_merge": auto_merge,
+        "mergeable_state": mergeable_state,
         "head": {"ref": branch, "sha": sha},
     }
+    if base_sha is not None:
+        payload["base"] = {"ref": "main", "sha": base_sha}
+    return payload
 
 
 def test_reads_current_pr_head_ci_and_failed_jobs() -> None:
@@ -145,7 +151,62 @@ def test_reads_auto_merge_state_from_pull_request_detail() -> None:
     assert evidence.pull_requests[0].auto_merge_enabled is True
     projection = derive_execution_projection(WORK_ITEM, evidence)
     assert projection.state is ExecutionState.READY_TO_MERGE
-    assert projection.next_action.value == "WAIT"
+    assert projection.next_action.value == "WAIT_AUTO_MERGE"
+
+
+def test_reads_base_sha_and_behind_count_for_open_pr() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/repos/jctrottier9-gif/DevCockpit":
+            return httpx.Response(200, json={"default_branch": "main"})
+        if path == "/repos/jctrottier9-gif/DevCockpit/pulls":
+            return httpx.Response(
+                200,
+                json=[pull_payload(base_sha="base123")],
+            )
+        if path == "/repos/jctrottier9-gif/DevCockpit/pulls/22":
+            return httpx.Response(
+                200,
+                json=pull_payload(
+                    base_sha="base123",
+                    mergeable=True,
+                    mergeable_state="behind",
+                ),
+            )
+        if path == "/repos/jctrottier9-gif/DevCockpit/compare/base123...abc123":
+            return httpx.Response(
+                200,
+                json={"behind_by": 1, "ahead_by": 2},
+            )
+        if path == "/repos/jctrottier9-gif/DevCockpit/actions/runs":
+            return httpx.Response(
+                200,
+                json={
+                    "workflow_runs": [
+                        {
+                            "id": 456,
+                            "name": "CI",
+                            "status": "completed",
+                            "conclusion": "success",
+                            "run_attempt": 1,
+                            "head_sha": "abc123",
+                            "html_url": "https://github.example/actions/456",
+                        }
+                    ]
+                },
+            )
+        raise AssertionError(f"unexpected GitHub request: {request.url}")
+
+    evidence = reader_for(handler).read(PROJECT, WORK_ITEM)
+    pull_request = evidence.pull_requests[0]
+    projection = derive_execution_projection(WORK_ITEM, evidence)
+
+    assert pull_request.base_branch == "main"
+    assert pull_request.base_sha == "base123"
+    assert pull_request.behind_by == 1
+    assert pull_request.mergeable_state == "behind"
+    assert projection.state is ExecutionState.BASE_OUTDATED
+    assert projection.next_action.value == "SYNC_BRANCH"
 
 
 def test_branch_is_developing_only_when_compare_reports_ahead() -> None:
