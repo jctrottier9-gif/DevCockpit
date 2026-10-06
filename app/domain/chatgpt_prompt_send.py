@@ -74,7 +74,10 @@ _ALLOWED_TRANSITIONS = {
     ChatGptPromptSendState.BLOCKED: {
         ChatGptPromptSendState.ROUTING,
     },
-    ChatGptPromptSendState.AMBIGUOUS: set(),
+    ChatGptPromptSendState.AMBIGUOUS: {
+        ChatGptPromptSendState.SENT_CONFIRMED,
+        ChatGptPromptSendState.BLOCKED,
+    },
 }
 
 
@@ -273,8 +276,24 @@ class ChatGptPromptSend:
             and _STATE_PHASE[event.state] < _STATE_PHASE[self._state]
         ):
             return False
-        if self.is_terminal:
+        resolving_ambiguous = (
+            self._state is ChatGptPromptSendState.AMBIGUOUS
+            and event.state
+            in {
+                ChatGptPromptSendState.SENT_CONFIRMED,
+                ChatGptPromptSendState.BLOCKED,
+            }
+        )
+        if self.is_terminal and not resolving_ambiguous:
             return False
+        if (
+            resolving_ambiguous
+            and event.state is ChatGptPromptSendState.BLOCKED
+            and event.error_code != "verified_not_sent"
+        ):
+            raise InvalidChatGptPromptSendTransition(
+                "AMBIGUOUS may become BLOCKED only after verified_not_sent proof"
+            )
 
         if event.state is not self._state and event.state not in _ALLOWED_TRANSITIONS[self._state]:
             raise InvalidChatGptPromptSendTransition(
