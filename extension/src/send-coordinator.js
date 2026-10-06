@@ -745,6 +745,15 @@
     }
 
     async _recover(deliveryId) {
+      const current = await this.sendStore.get(deliveryId);
+      if (!current || current.state !== SEND_STATE.AMBIGUOUS) {
+        return {
+          ok: current?.state === SEND_STATE.SENT_CONFIRMED,
+          state: current?.state || null,
+          error: current ? "chatgpt_send_not_ambiguous" : "chatgpt_send_not_found",
+        };
+      }
+
       const entry = await this._queueEntry(deliveryId);
       if (!entry) return { ok: false, error: "delivery_not_found:" + deliveryId };
       if (isArchitectureSession(entry.session)) {
@@ -752,14 +761,6 @@
           ok: false,
           state: SEND_STATE.AMBIGUOUS,
           error: "manual_arch_recovery_required",
-        };
-      }
-      const current = await this.sendStore.get(deliveryId);
-      if (!current || current.state !== SEND_STATE.AMBIGUOUS) {
-        return {
-          ok: current?.state === SEND_STATE.SENT_CONFIRMED,
-          state: current?.state || null,
-          error: current ? "chatgpt_send_not_ambiguous" : "chatgpt_send_not_found",
         };
       }
 
