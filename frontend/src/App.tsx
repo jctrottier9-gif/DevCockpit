@@ -6,6 +6,7 @@ import ContextDrawer from './ContextDrawer'
 import Orchestration from './Orchestration'
 import TechnicalSurfaces from './TechnicalSurfaces'
 import {
+  classifyCockpitRefreshFailure,
   createCockpitRefreshLoop,
   resolveCockpitRefreshInterval,
   type CockpitRefreshLoop,
@@ -186,7 +187,7 @@ function App() {
         )) return
 
         const message = caught instanceof Error ? caught.message : 'Unable to load cockpit overview'
-        if (loadedProjectIdRef.current === projectId) {
+        if (classifyCockpitRefreshFailure(projectId, loadedProjectIdRef.current) === 'stale') {
           setRefreshError(message)
           setState('ready')
         } else {
