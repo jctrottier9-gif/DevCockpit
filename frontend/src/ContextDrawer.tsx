@@ -1,4 +1,5 @@
 import { type ReactNode, useEffect, useRef } from 'react'
+import { nextFocusIndex } from './focusNavigation'
 
 type ContextDrawerProps = {
   projectId: string
@@ -10,6 +11,15 @@ type ContextDrawerProps = {
   children: ReactNode
 }
 
+const FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'button:not([disabled])',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',')
+
 export default function ContextDrawer({
   projectId,
   contextKind,
@@ -19,26 +29,56 @@ export default function ContextDrawer({
   onClose,
   children,
 }: ContextDrawerProps) {
+  const drawerRef = useRef<HTMLElement | null>(null)
   const closeRef = useRef<HTMLButtonElement | null>(null)
+  const onCloseRef = useRef(onClose)
+
+  useEffect(() => {
+    onCloseRef.current = onClose
+  }, [onClose])
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow
+    const previousFocus = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null
     document.body.style.overflow = 'hidden'
     closeRef.current?.focus()
 
+    function visibleFocusableElements() {
+      if (!drawerRef.current) return []
+      return Array.from(drawerRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
+        .filter(element => element.getAttribute('aria-hidden') !== 'true' && element.getClientRects().length > 0)
+    }
+
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') onClose()
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onCloseRef.current()
+        return
+      }
+      if (event.key !== 'Tab') return
+
+      const focusable = visibleFocusableElements()
+      const currentIndex = focusable.indexOf(document.activeElement as HTMLElement)
+      const targetIndex = nextFocusIndex(currentIndex, focusable.length, event.shiftKey)
+      if (targetIndex === null) return
+
+      event.preventDefault()
+      focusable[targetIndex]?.focus()
     }
 
     window.addEventListener('keydown', onKeyDown)
     return () => {
       document.body.style.overflow = previousOverflow
       window.removeEventListener('keydown', onKeyDown)
+      previousFocus?.focus()
     }
-  }, [onClose])
+  }, [])
 
-  return <div className="context-drawer-backdrop" onMouseDown={onClose}>
+  return <div className="context-drawer-backdrop" onMouseDown={() => onCloseRef.current()}>
     <aside
+      ref={drawerRef}
       className="context-drawer"
       role="dialog"
       aria-modal="true"
@@ -57,7 +97,7 @@ export default function ContextDrawer({
           type="button"
           className="context-drawer-close"
           aria-label="Fermer le panneau"
-          onClick={onClose}
+          onClick={() => onCloseRef.current()}
         >
           ×
         </button>

@@ -23,6 +23,29 @@ select {
   font: inherit;
 }
 
+:where(button, a, input, select, textarea, summary):focus-visible {
+  outline: 3px solid #2f5d93;
+  outline-offset: 2px;
+}
+
+.skip-link {
+  position: fixed;
+  z-index: 120;
+  top: .75rem;
+  left: .75rem;
+  transform: translateY(-180%);
+  padding: .65rem .85rem;
+  border-radius: 8px;
+  background: #172033;
+  color: #fff;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.skip-link:focus {
+  transform: translateY(0);
+}
+
 .shell {
   min-height: 100vh;
   display: grid;
@@ -84,6 +107,29 @@ h1 {
   background: #f8fafc;
   font-size: 0.9rem;
   font-weight: 600;
+}
+
+.cockpit-load-state {
+  display: grid;
+  gap: .35rem;
+  margin: 1.25rem 0;
+  padding: 1rem;
+  border: 1px solid #dfe4ec;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.cockpit-load-state span {
+  color: #687386;
+}
+
+.cockpit-load-state button {
+  justify-self: start;
+}
+
+.cockpit-load-state--error {
+  border-color: #e4a4ab;
+  background: #fff7f8;
 }
 
 .diagnostics {
@@ -556,7 +602,9 @@ details { margin: 1rem 0; }
 .context-drawer {
   width: min(34rem, 94vw);
   height: 100%;
+  max-height: 100dvh;
   overflow: auto;
+  overscroll-behavior: contain;
   padding: 1.25rem;
   background: #fff;
   box-shadow: -18px 0 50px rgb(23 32 51 / 18%);
@@ -577,8 +625,8 @@ details { margin: 1rem 0; }
   overflow-wrap: anywhere;
 }
 .context-drawer-close {
-  width: 2.5rem;
-  height: 2.5rem;
+  width: 2.75rem;
+  height: 2.75rem;
   margin: 0;
   padding: 0;
   border-radius: 999px;
@@ -632,10 +680,47 @@ details { margin: 1rem 0; }
 @media (max-width: 680px) {
   .shell { padding: .65rem; }
   .panel { padding: 1rem; border-radius: 14px; }
-  .app-header { flex-direction: column; }
+  .app-header,
+  .attention-header { flex-direction: column; }
+  .health {
+    max-width: 100%;
+    border-radius: 12px;
+    white-space: normal;
+  }
+  .project-workspace {
+    margin: 1rem 0;
+    padding: .8rem;
+  }
   .role-grid { grid-template-columns: 1fr; }
+  .roadmap-summary div,
   .drawer-facts div { grid-template-columns: 1fr; gap: .2rem; }
-  .context-drawer { width: 100%; }
+  .attention-header > button,
+  .cockpit-load-state button {
+    width: 100%;
+    margin-right: 0;
+  }
+  .attention-actions > button,
+  .attention-actions > a {
+    flex: 1 1 100%;
+    text-align: center;
+  }
+  .technical-surfaces > summary {
+    align-items: flex-start;
+  }
+  .technical-surfaces > summary > span:last-child {
+    display: none;
+  }
+  .context-drawer {
+    width: 100%;
+    height: 100dvh;
+    padding: 1rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
 }
 
 

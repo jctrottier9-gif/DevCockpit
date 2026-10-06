@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import AttentionCenter from './AttentionCenter'
 import CockpitDashboard from './CockpitDashboard'
+import ContextDrawer from './ContextDrawer'
+import Orchestration from './Orchestration'
 import TechnicalSurfaces from './TechnicalSurfaces'
 import type { CockpitOverview, Project } from './dashboardTypes'
 import {
@@ -35,7 +37,8 @@ function App() {
   const [overview, setOverview] = useState<CockpitOverview | null>(null)
   const [error, setError] = useState('')
   const [technicalOpen, setTechnicalOpen] = useState(false)
-  const [technicalWorkItem, setTechnicalWorkItem] = useState('')
+  const [orchestrationWorkItem, setOrchestrationWorkItem] = useState('')
+  const [cockpitReloadVersion, setCockpitReloadVersion] = useState(0)
   const activeProjectIdRef = useRef('')
   const loadGenerationRef = useRef(0)
 
@@ -45,7 +48,7 @@ function App() {
     setError('')
     setState('loading')
     setTechnicalOpen(false)
-    setTechnicalWorkItem('')
+    setOrchestrationWorkItem('')
   }
 
   function selectProject(projectId: string) {
@@ -67,11 +70,7 @@ function App() {
   }
 
   function openWorkItem(workItemId: string) {
-    setTechnicalWorkItem(workItemId)
-    setTechnicalOpen(true)
-    window.requestAnimationFrame(() => {
-      document.getElementById('technical-orchestration')?.scrollIntoView({ behavior: 'smooth' })
-    })
+    setOrchestrationWorkItem(workItemId)
   }
 
   useEffect(() => {
@@ -150,13 +149,14 @@ function App() {
 
     void loadCockpit()
     return () => controller.abort()
-  }, [activeProjectId])
+  }, [activeProjectId, cockpitReloadVersion])
 
   const activeProject = projects.find(project => project.project_id === activeProjectId) ?? null
   const currentOverview = loadedProjectId === activeProjectId ? overview : null
 
   return <main className="shell">
-    <div className="panel">
+    <a className="skip-link" href="#cockpit-content">Aller au cockpit</a>
+    <div id="cockpit-content" className="panel" tabIndex={-1}>
       <header className="app-header">
         <div>
           <p className="eyebrow">DEVCOCKPIT</p>
@@ -167,6 +167,24 @@ function App() {
           {state === 'loading' ? 'Reading project context…' : state === 'ready' ? 'Project context loaded' : error}
         </div>
       </header>
+
+      {state !== 'ready' && <section
+        className={'cockpit-load-state cockpit-load-state--' + state}
+        role={state === 'error' ? 'alert' : 'status'}
+        aria-live="polite"
+        aria-busy={state === 'loading'}
+      >
+        <strong>{state === 'loading' ? 'Chargement du cockpit…' : 'Cockpit indisponible'}</strong>
+        <span>{state === 'loading'
+          ? (activeProjectId ? 'Lecture des projections du projet actif.' : 'Lecture des projets configurés.')
+          : error}</span>
+        {state === 'error' && activeProjectId && <button
+          type="button"
+          onClick={() => setCockpitReloadVersion(version => version + 1)}
+        >
+          Réessayer
+        </button>}
+      </section>}
 
       {projects.length > 0 && <section className="project-workspace" aria-label="Contexte projet">
         <label htmlFor="active-project">Projet actif
@@ -195,6 +213,24 @@ function App() {
         onOpenTechnical={openTechnical}
       />}
 
+      {activeProject && orchestrationWorkItem && <ContextDrawer
+        projectId={activeProject.project_id}
+        contextKind="work-item"
+        contextId={orchestrationWorkItem}
+        eyebrow="ORCHESTRATION"
+        title={'Orchestration · ' + orchestrationWorkItem}
+        onClose={() => setOrchestrationWorkItem('')}
+      >
+        <p className="drawer-note">
+          Vue opérationnelle principale du WorkItem. Les diagnostics bruts restent disponibles séparément.
+        </p>
+        <Orchestration
+          key={activeProject.project_id + ':' + orchestrationWorkItem}
+          projectId={activeProject.project_id}
+          workItem={orchestrationWorkItem}
+        />
+      </ContextDrawer>}
+
       {activeProject && <details
         id="technical-surfaces"
         className="technical-surfaces"
@@ -203,15 +239,14 @@ function App() {
       >
         <summary>
           <span>
-            <strong>Vues techniques existantes</strong>
-            <small>Scheduler, exécutions, Flow Analytics, Orchestration et réponses importées</small>
+            <strong>Diagnostics techniques</strong>
+            <small>Données brutes scheduler/exécutions, Flow Analytics et réponses importées</small>
           </span>
           <span aria-hidden="true">⌄</span>
         </summary>
         {technicalOpen && <TechnicalSurfaces
           key={'technical:' + activeProject.project_id}
           project={activeProject}
-          requestedWorkItem={technicalWorkItem}
         />}
       </details>}
     </div>
