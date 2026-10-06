@@ -342,7 +342,7 @@ class GitHubReviewReader:
         client: httpx.Client,
         base_url: str,
         head_sha: str,
-    ) -> tuple[tuple[tuple[int, int, str, str | None, str], ...], bool]:
+    ) -> tuple[tuple[tuple[int, int, str, str | None, str, str | None, str | None], ...], bool]:
         raw_runs, complete = self._paged_items(
             client,
             f"{base_url}/actions/runs",
@@ -350,7 +350,9 @@ class GitHubReviewReader:
             payload_key="workflow_runs",
             max_pages=10,
         )
-        signature: list[tuple[int, int, str, str | None, str]] = []
+        signature: list[
+            tuple[int, int, str, str | None, str, str | None, str | None]
+        ] = []
         for item in raw_runs:
             if not isinstance(item, dict):
                 raise ExecutionPayloadError("GitHub workflow run must be an object")
@@ -365,13 +367,24 @@ class GitHubReviewReader:
             conclusion = item.get("conclusion")
             if conclusion is not None and not isinstance(conclusion, str):
                 raise ExecutionPayloadError("GitHub workflow conclusion must be text or null")
-            signature.append((run_id, attempt, status, conclusion, run_head_sha))
+            created_at = item.get("created_at")
+            updated_at = item.get("updated_at")
+            if created_at is not None and not isinstance(created_at, str):
+                raise ExecutionPayloadError("GitHub workflow created_at must be text or null")
+            if updated_at is not None and not isinstance(updated_at, str):
+                raise ExecutionPayloadError("GitHub workflow updated_at must be text or null")
+            signature.append(
+                (run_id, attempt, status, conclusion, run_head_sha, created_at, updated_at)
+            )
         return tuple(sorted(signature)), complete
 
     @staticmethod
     def _workflow_signature(
         workflows: tuple[ReviewWorkflowEvidence, ...],
-    ) -> tuple[tuple[int, int, str, str | None, str], ...]:
+    ) -> tuple[
+        tuple[int, int, str, str | None, str, str | None, str | None],
+        ...,
+    ]:
         return tuple(
             sorted(
                 (
@@ -380,6 +393,8 @@ class GitHubReviewReader:
                     item.status,
                     item.conclusion,
                     item.head_sha,
+                    item.created_at,
+                    item.updated_at,
                 )
                 for item in workflows
             )
