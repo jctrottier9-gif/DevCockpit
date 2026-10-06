@@ -20,7 +20,10 @@ class ExecutionState(StrEnum):
     PR_OPEN = "PR_OPEN"
     CI_RUNNING = "CI_RUNNING"
     CI_RED = "CI_RED"
+    BASE_OUTDATED = "BASE_OUTDATED"
+    BRANCH_SYNC_BLOCKED = "BRANCH_SYNC_BLOCKED"
     READY_TO_MERGE = "READY_TO_MERGE"
+    MERGE_BLOCKED = "MERGE_BLOCKED"
     MERGED = "MERGED"
     ROADMAP_UPDATE_REQUIRED = "ROADMAP_UPDATE_REQUIRED"
     BLOCKED = "BLOCKED"
@@ -31,7 +34,11 @@ class NextAction(StrEnum):
     WAIT_FOR_PR = "WAIT_FOR_PR"
     WAIT = "WAIT"
     FIX_CI = "FIX_CI"
+    SYNC_BRANCH = "SYNC_BRANCH"
+    WAIT_AUTO_MERGE = "WAIT_AUTO_MERGE"
     MERGE_PR = "MERGE_PR"
+    RESOLVE_BRANCH_SYNC = "RESOLVE_BRANCH_SYNC"
+    RESOLVE_MERGE_BLOCKER = "RESOLVE_MERGE_BLOCKER"
     RECONCILE_ROADMAP = "RECONCILE_ROADMAP"
     RESOLVE_BLOCKER = "RESOLVE_BLOCKER"
     NONE = "NONE"
@@ -69,6 +76,10 @@ class PullRequestEvidence:
     state: str
     merged: bool
     mergeable: bool | None
+    base_branch: str | None = None
+    base_sha: str | None = None
+    behind_by: int | None = None
+    mergeable_state: str | None = None
     auto_merge_enabled: bool = False
     url: str | None = None
     updated_at: str | None = None
@@ -248,12 +259,32 @@ def derive_execution_projection(
                 ci=ci,
             )
 
+        if ci.state is CiState.GREEN and (pull_request.behind_by or 0) > 0:
+            return ExecutionProjection(
+                work_item=work_item,
+                state=ExecutionState.BASE_OUTDATED,
+                next_action=NextAction.SYNC_BRANCH,
+                branch=_branch_for(evidence.branches, pull_request.branch),
+                pull_request=pull_request,
+                ci=ci,
+                diagnostics=(
+                    ExecutionDiagnostic(
+                        code="BASE_OUTDATED",
+                        message=(
+                            "Current-head CI is green, but the pull-request branch "
+                            f"is {pull_request.behind_by} commit(s) behind "
+                            f"{pull_request.base_branch or evidence.default_branch}."
+                        ),
+                    ),
+                ),
+            )
+
         if ci.state is CiState.GREEN and pull_request.mergeable is True:
             return ExecutionProjection(
                 work_item=work_item,
                 state=ExecutionState.READY_TO_MERGE,
                 next_action=(
-                    NextAction.WAIT
+                    NextAction.WAIT_AUTO_MERGE
                     if pull_request.auto_merge_enabled
                     else NextAction.MERGE_PR
                 ),
