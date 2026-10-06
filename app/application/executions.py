@@ -248,17 +248,6 @@ def evaluate_project_execution(
                 ),
                 uow=uow,
             )
-        elif projection.next_action is NextAction.MERGE_PR:
-            dispatch = create_prompt_dispatch_in_uow(
-                CreatePromptDispatchCommand(
-                    project_id=project.project_id,
-                    work_item_id=work_item.key,
-                    role=PromptDispatchRole.DEV,
-                    prompt_text=build_ready_to_merge_follow_up(project, projection),
-                    idempotency_key=_ready_to_merge_idempotency_key(project, projection),
-                ),
-                uow=uow,
-            )
         elif projection.next_action is NextAction.RECONCILE_ROADMAP:
             dispatch = create_prompt_dispatch_in_uow(
                 CreatePromptDispatchCommand(
