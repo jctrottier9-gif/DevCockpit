@@ -544,3 +544,60 @@ test("manual target validation accepts only the explicitly selected ChatGPT tab"
     (error) => error?.code === "manual_target_not_chatgpt",
   );
 });
+
+
+test("ambiguous recovery reuses the exact provisional tab after it acquires a conversation", async () => {
+  const value = await setup();
+  const routed = await value.router.route({
+    session: "DevCockpit:DEV:DC-072B",
+    routing: null,
+  });
+  const tab = value.tabs.find((candidate) => candidate.id === routed.tabId);
+  tab.url = "https://chatgpt.com/c/recovered-conversation";
+
+  const recovered = await value.router.recoveryTarget({
+    session: "DevCockpit:DEV:DC-072B",
+    routing: null,
+  });
+
+  assert.equal(recovered.id, routed.tabId);
+  assert.equal(recovered.url, "https://chatgpt.com/c/recovered-conversation");
+  assert.equal(value.created.length, 1);
+});
+
+test("ambiguous recovery never creates a replacement tab when cached target is missing", async () => {
+  const value = await setup();
+  await assert.rejects(
+    () =>
+      value.router.recoveryTarget({
+        session: "DevCockpit:DEV:DC-072B",
+        routing: null,
+      }),
+    (error) => error?.code === "recovery_target_missing",
+  );
+  assert.equal(value.created.length, 0);
+});
+
+test("bound ambiguous recovery fails closed when cached tab is on another conversation", async () => {
+  const value = await setup({
+    initialTabs: [{ id: 7, url: "https://chatgpt.com/c/conv-a" }],
+  });
+  await value.router.route({
+    session: "DevCockpit:DEV:DC-072B",
+    routing: ROUTING,
+  });
+  value.tabs[0].url = "https://chatgpt.com/c/conv-b";
+
+  await assert.rejects(
+    () =>
+      value.router.recoveryTarget({
+        session: "DevCockpit:DEV:DC-072B",
+        routing: ROUTING,
+      }),
+    (error) =>
+      error?.code === "bound_target_changed" &&
+      /expected=conv-a/.test(error.message) &&
+      /observed=conv-b/.test(error.message),
+  );
+  assert.equal(value.created.length, 0);
+});

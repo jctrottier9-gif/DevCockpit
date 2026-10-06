@@ -10,6 +10,7 @@
   const { CompanionTransport, CONNECTION_STATUS } = namespace.transport;
   const {
     PromptSendCoordinator,
+    AmbiguousSendRecovery,
     canonicalConversation,
     isLegacySyntheticConversationId,
     isLegacySyntheticRouting,
@@ -38,6 +39,7 @@
     lastError: null,
   };
   let sendCoordinator = null;
+  let sendRecovery = null;
 
   async function broadcast(type) {
     try {
@@ -70,9 +72,14 @@
         await broadcast("devcockpit_send_state_changed");
         return;
       }
-      void sendCoordinator.enqueue(prompt.deliveryId).then(async () => {
+      void sendCoordinator.enqueue(prompt.deliveryId).then(async (result) => {
+        if (result?.state === SEND_STATE.AMBIGUOUS) {
+          await sendRecovery.recover(prompt.deliveryId);
+        }
         await broadcast("devcockpit_queue_changed");
         await broadcast("devcockpit_sent_prompts_changed");
+        await broadcast("devcockpit_send_state_changed");
+      }).catch(async () => {
         await broadcast("devcockpit_send_state_changed");
       });
     },
@@ -106,6 +113,22 @@
     router,
     sendToTab: (tabId, message) => browser.tabs.sendMessage(tabId, message),
     emitStatus: (event) => transport.sendPendingSendStatus(event),
+  });
+
+  sendRecovery = new AmbiguousSendRecovery({
+    queueStore,
+    sentPromptStore,
+    sendStore,
+    routingStore,
+    router,
+    inspectTab: (tabId, text) =>
+      browser.tabs.sendMessage(tabId, {
+        type: "devcockpit_inspect_prompt_delivery",
+        text,
+      }),
+    reloadTab: (tabId) => browser.tabs.reload(tabId),
+    emitStatus: (event) => transport.sendPendingSendStatus(event),
+    resumeSession: (session) => sendCoordinator.resumeSession(session),
   });
 
   async function recoveredRoutingForLegacy(session, routing) {
@@ -160,6 +183,19 @@
         await queueStore.remove(entry.delivery_id);
         continue;
       }
+      if (state?.state === SEND_STATE.AMBIGUOUS) {
+        if (!isArchitectureSession(entry.session)) {
+          void sendRecovery.recover(entry.delivery_id).then(async () => {
+            await broadcast("devcockpit_queue_changed");
+            await broadcast("devcockpit_sent_prompts_changed");
+            await broadcast("devcockpit_send_state_changed");
+          }).catch(async () => {
+            await broadcast("devcockpit_send_state_changed");
+          });
+        }
+        continue;
+      }
+
       if (
         state &&
         [
@@ -255,86 +291,13 @@
   }
 
   async function resolveAmbiguousSend(deliveryId) {
-    const queue = await queueStore.list();
-    const entry = queue.find((candidate) => candidate.delivery_id === deliveryId);
-    if (!entry) {
-      return { ok: false, error: "delivery_not_found:" + deliveryId };
-    }
-    const sendState = await sendStore.get(deliveryId);
-    if (!sendState || sendState.state !== SEND_STATE.AMBIGUOUS) {
-      return { ok: false, error: "chatgpt_send_not_ambiguous" };
-    }
-
     try {
       const tab = await activeChatGptTab();
-      if (
-        entry.routing &&
-        canonicalConversation(tab.url)?.canonical_url !== entry.routing.canonical_url
-      ) {
-        return {
-          ok: false,
-          error: "ambiguous_resolution_wrong_conversation",
-        };
-      }
-
-      const inspection = await browser.tabs.sendMessage(tab.id, {
-        type: "devcockpit_inspect_prompt_delivery",
-        text: entry.text,
-      });
-      if (!inspection?.ok) {
-        return {
-          ok: false,
-          error: inspection?.error || "delivery_evidence_ambiguous",
-        };
-      }
-
-      if (inspection.state === "NOT_SENT") {
-        const resolved = await sendStore.resolveAmbiguous({
-          deliveryId,
-          state: SEND_STATE.BLOCKED,
-          errorCode: "verified_not_sent",
-        });
-        transport.sendPendingSendStatus(resolved.event);
-        await broadcast("devcockpit_send_state_changed");
-        return { ok: true, state: SEND_STATE.BLOCKED, evidence: "NOT_SENT" };
-      }
-
-      if (inspection.state === "SENT") {
-        const conversation =
-          canonicalConversation(inspection.conversationUrl) ||
-          canonicalConversation(tab.url);
-        if (!conversation) {
-          return {
-            ok: false,
-            error: "verified_send_missing_conversation_identity",
-          };
-        }
-        const resolved = await sendStore.resolveAmbiguous({
-          deliveryId,
-          state: SEND_STATE.SENT_CONFIRMED,
-          conversation,
-        });
-        transport.sendPendingSendStatus(resolved.event);
-        await sentPromptStore.recordSent({
-          deliveryId: entry.delivery_id,
-          session: entry.session,
-          tabId: tab.id,
-          conversationUrl: conversation.canonical_url,
-        });
-        await queueStore.remove(entry.delivery_id);
-        void sendCoordinator.resumeSession(entry.session);
-        await broadcast("devcockpit_queue_changed");
-        await broadcast("devcockpit_sent_prompts_changed");
-        await broadcast("devcockpit_send_state_changed");
-        return {
-          ok: true,
-          state: SEND_STATE.SENT_CONFIRMED,
-          evidence: "SENT",
-          conversation,
-        };
-      }
-
-      return { ok: false, error: "delivery_evidence_ambiguous" };
+      const result = await sendRecovery.verify(deliveryId, { tabId: tab.id });
+      await broadcast("devcockpit_queue_changed");
+      await broadcast("devcockpit_sent_prompts_changed");
+      await broadcast("devcockpit_send_state_changed");
+      return result;
     } catch (error) {
       return {
         ok: false,

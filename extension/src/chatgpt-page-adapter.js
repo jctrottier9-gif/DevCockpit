@@ -491,6 +491,26 @@
     return button;
   }
 
+  function promptConfirmationObserved(document, baseline) {
+    const userTurns = groupLogicalUserTurns(document);
+    const matchingMessage = userTurns
+      .slice(baseline.user_message_count)
+      .some((group) => userTurnMatchesText(group, baseline.expected_text));
+    let composerChanged = true;
+    try {
+      composerChanged =
+        !sameText(elementText(exactComposer(document)), baseline.expected_text);
+    } catch (error) {
+      if (
+        error instanceof ChatGptAdapterError &&
+        !error.code.startsWith("composer_not_found")
+      ) {
+        throw error;
+      }
+    }
+    return matchingMessage && composerChanged;
+  }
+
   function canonicalConversationUrl(rawUrl) {
     if (typeof rawUrl !== "string") return null;
     try {
@@ -537,6 +557,8 @@
         sleep = (delay) => new Promise((resolve) => setTimeout(resolve, delay)),
         confirmationPollMs = 200,
         confirmationPollCount = 25,
+        passiveConfirmationPollMs = 250,
+        passiveConfirmationPollCount = 8,
         location = globalThis.location,
       } = {},
     ) {
@@ -545,6 +567,8 @@
       this.sleep = sleep;
       this.confirmationPollMs = confirmationPollMs;
       this.confirmationPollCount = confirmationPollCount;
+      this.passiveConfirmationPollMs = passiveConfirmationPollMs;
+      this.passiveConfirmationPollCount = passiveConfirmationPollCount;
       this.location = location;
     }
 
@@ -601,23 +625,23 @@
 
         for (let index = 0; index < this.confirmationPollCount; index += 1) {
           await this.sleep(this.confirmationPollMs);
-          const userTurns = groupLogicalUserTurns(this.document);
-          const matchingMessage = userTurns
-            .slice(baseline.user_message_count)
-            .some((group) => userTurnMatchesText(group, baseline.expected_text));
-          let composerChanged = true;
-          try {
-            composerChanged =
-              !sameText(elementText(exactComposer(this.document)), baseline.expected_text);
-          } catch (error) {
-            if (
-              error instanceof ChatGptAdapterError &&
-              !error.code.startsWith("composer_not_found")
-            ) {
-              throw error;
-            }
+          if (promptConfirmationObserved(this.document, baseline)) {
+            return {
+              ok: true,
+              conversationUrl: canonicalConversationUrl(this.location?.href) || null,
+            };
           }
-          if (matchingMessage && composerChanged) {
+        }
+
+        // DC-072B: after the normal confirmation window, observe only. No
+        // composer mutation and no second Send actuation are permitted here.
+        for (
+          let index = 0;
+          index < this.passiveConfirmationPollCount;
+          index += 1
+        ) {
+          await this.sleep(this.passiveConfirmationPollMs);
+          if (promptConfirmationObserved(this.document, baseline)) {
             return {
               ok: true,
               conversationUrl: canonicalConversationUrl(this.location?.href) || null,
@@ -633,6 +657,8 @@
               ? error.code
               : "chatgpt_adapter_failed",
           ambiguous: clicked,
+          conversationUrl:
+            clicked ? canonicalConversationUrl(this.location?.href) || null : null,
         };
       }
     }
@@ -766,6 +792,7 @@
     USER_MESSAGE_SELECTOR,
     ASSISTANT_RESPONSE_SELECTOR,
     ChatGptAdapterError,
+    promptConfirmationObserved,
     ChatGptPageAdapter,
   };
 })();

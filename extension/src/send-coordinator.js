@@ -2,9 +2,10 @@
   "use strict";
 
   const namespace = (globalThis.DevCockpitCompanion ||= {});
-  const { SEND_STATE } = namespace.sendStore;
+  const { SEND_STATE, RECOVERY_STATUS } = namespace.sendStore;
 
   const DEFAULT_RETRY_DELAYS_MS = Object.freeze([250, 750, 1500, 2500, 4000]);
+  const DEFAULT_RECOVERY_READY_DELAYS_MS = Object.freeze([0, 100, 250, 500, 1000, 2000]);
   const RETRYABLE_READY_ERRORS = new Set([
     "composer_not_found",
     "send_button_not_found",
@@ -88,6 +89,41 @@
     } catch {
       return null;
     }
+  }
+
+  function bindingConflictDetails({
+    session,
+    expectedRouting = null,
+    observedConversation = null,
+    observedBindingVersion = null,
+  }) {
+    return {
+      agent_session: session,
+      expected_conversation_id: expectedRouting?.conversation_id || null,
+      expected_canonical_url: expectedRouting?.canonical_url || null,
+      expected_binding_version: expectedRouting?.binding_version || null,
+      observed_conversation_id: observedConversation?.conversation_id || null,
+      observed_canonical_url: observedConversation?.canonical_url || null,
+      observed_binding_version:
+        Number.isInteger(observedBindingVersion) ? observedBindingVersion : null,
+    };
+  }
+
+  function observedConversationFromRoutingError(error) {
+    const details = typeof error?.details === "string" ? error.details : errorText(error);
+    const match = details.match(/(?:^|,)observed=([^,]+)/);
+    if (!match) return null;
+    const conversationId = match[1];
+    if (
+      !conversationId ||
+      ["unknown", "non_conversation"].includes(conversationId)
+    ) {
+      return null;
+    }
+    return {
+      conversation_id: conversationId,
+      canonical_url: "https://chatgpt.com/c/" + conversationId,
+    };
   }
 
   class PromptSendCoordinator {
@@ -373,20 +409,54 @@
 
       if (!result?.ok) {
         const code = result?.error || "send_confirmation_unknown";
+        const ambiguousConversation = result?.ambiguous
+          ? canonicalConversation(result.conversationUrl)
+          : null;
         await this._emit(
           await this.sendStore.transition({
             deliveryId: entry.delivery_id,
             session: entry.session,
             state: SEND_STATE.AMBIGUOUS,
             attempt,
+            conversation: ambiguousConversation,
             errorCode: code,
           }),
         );
         return { ok: false, state: SEND_STATE.AMBIGUOUS, error: code };
       }
 
+      const observedConversation = canonicalConversation(result.conversationUrl);
+      if (
+        entry.routing &&
+        observedConversation &&
+        observedConversation.canonical_url !== entry.routing.canonical_url
+      ) {
+        const ambiguous = await this.sendStore.transition({
+          deliveryId: entry.delivery_id,
+          session: entry.session,
+          state: SEND_STATE.AMBIGUOUS,
+          attempt,
+          errorCode: "CHATGPT_SEND_BINDING_CONFLICT",
+        });
+        await this._emit(ambiguous);
+        await this.sendStore.setRecoveryStatus(entry.delivery_id, {
+          status: RECOVERY_STATUS.INTERVENTION_REQUIRED,
+          errorCode: "CHATGPT_SEND_BINDING_CONFLICT",
+          bindingConflict: bindingConflictDetails({
+            session: entry.session,
+            expectedRouting: entry.routing,
+            observedConversation,
+          }),
+        });
+        return {
+          ok: false,
+          state: SEND_STATE.AMBIGUOUS,
+          error: "CHATGPT_SEND_BINDING_CONFLICT",
+        };
+      }
+
       const conversation =
-        canonicalConversation(result.conversationUrl) ||
+        observedConversation ||
         (entry.routing
           ? {
               conversation_id: entry.routing.conversation_id,
@@ -435,14 +505,434 @@
     }
   }
 
+  class AmbiguousSendRecovery {
+    constructor({
+      queueStore,
+      sentPromptStore,
+      sendStore,
+      routingStore,
+      router,
+      inspectTab,
+      reloadTab,
+      emitStatus = () => false,
+      resumeSession = async () => ({ ok: true }),
+      sleep = (delay) => new Promise((resolve) => setTimeout(resolve, delay)),
+      readyDelaysMs = DEFAULT_RECOVERY_READY_DELAYS_MS,
+    }) {
+      this.queueStore = queueStore;
+      this.sentPromptStore = sentPromptStore;
+      this.sendStore = sendStore;
+      this.routingStore = routingStore;
+      this.router = router;
+      this.inspectTab = inspectTab;
+      this.reloadTab = reloadTab;
+      this.emitStatus = emitStatus;
+      this.resumeSession = resumeSession;
+      this.sleep = sleep;
+      this.readyDelaysMs = readyDelaysMs;
+      this.workers = new Map();
+    }
+
+    async _queueEntry(deliveryId) {
+      const queue = await this.queueStore.list();
+      return queue.find((entry) => entry.delivery_id === deliveryId) || null;
+    }
+
+    async _emit(result) {
+      try {
+        this.emitStatus(result.event);
+      } catch {
+        // Durable status outbox remains authoritative.
+      }
+      return result;
+    }
+
+    async _markIntervention(
+      entry,
+      errorCode,
+      { observedConversation = null, bindingConflict = false } = {},
+    ) {
+      const cached = await this.routingStore.get(entry.session);
+      const conflict = bindingConflict
+        ? bindingConflictDetails({
+            session: entry.session,
+            expectedRouting: entry.routing,
+            observedConversation:
+              observedConversation ||
+              (
+                cached?.conversation_id
+                  ? {
+                      conversation_id: cached.conversation_id,
+                      canonical_url: cached.canonical_url,
+                    }
+                  : null
+              ),
+            observedBindingVersion:
+              Number.isInteger(cached?.binding_version)
+                ? cached.binding_version
+                : null,
+          })
+        : null;
+      await this.sendStore.setRecoveryStatus(entry.delivery_id, {
+        status: RECOVERY_STATUS.INTERVENTION_REQUIRED,
+        errorCode,
+        bindingConflict: conflict,
+      });
+      return {
+        ok: false,
+        state: SEND_STATE.AMBIGUOUS,
+        error: errorCode,
+        bindingConflict: conflict,
+      };
+    }
+
+    async _targetFailure(entry, error) {
+      const code = error?.code || preSendErrorCode(error);
+      const bindingConflict = [
+        "bound_target_changed",
+        "binding_snapshot_conflict",
+        "stale_binding_snapshot",
+      ].includes(code);
+      return this._markIntervention(
+        entry,
+        bindingConflict ? "CHATGPT_SEND_BINDING_CONFLICT" : code,
+        {
+          observedConversation: observedConversationFromRoutingError(error),
+          bindingConflict,
+        },
+      );
+    }
+
+    async _inspect(tabId, text) {
+      try {
+        return await this.inspectTab(tabId, text);
+      } catch (error) {
+        return {
+          ok: false,
+          error: preSendErrorCode(error),
+        };
+      }
+    }
+
+    async _validateExpectedConversation(entry, tab, expectedConversation) {
+      if (!expectedConversation) return null;
+      const observedConversation = canonicalConversation(tab?.url);
+      if (
+        !observedConversation ||
+        observedConversation.canonical_url === expectedConversation.canonical_url
+      ) {
+        return null;
+      }
+      const durableConflict = Boolean(entry.routing);
+      return this._markIntervention(
+        entry,
+        durableConflict
+          ? "CHATGPT_SEND_BINDING_CONFLICT"
+          : "ambiguous_recovery_wrong_conversation",
+        {
+          observedConversation,
+          bindingConflict: durableConflict,
+        },
+      );
+    }
+
+    async _resolveInspection(
+      entry,
+      tab,
+      inspection,
+      expectedConversation = null,
+    ) {
+      if (!inspection?.ok) {
+        return {
+          resolved: false,
+          error: inspection?.error || "delivery_evidence_ambiguous",
+        };
+      }
+
+      if (inspection.state === "NOT_SENT") {
+        await this.sendStore.setRecoveryStatus(entry.delivery_id, {
+          status: RECOVERY_STATUS.VERIFIED_NOT_SENT,
+        });
+        const resolved = await this.sendStore.resolveAmbiguous({
+          deliveryId: entry.delivery_id,
+          state: SEND_STATE.BLOCKED,
+          errorCode: "verified_not_sent",
+        });
+        await this._emit(resolved);
+        return {
+          resolved: true,
+          result: {
+            ok: true,
+            state: SEND_STATE.BLOCKED,
+            evidence: "NOT_SENT",
+          },
+        };
+      }
+
+      if (inspection.state !== "SENT") {
+        return { resolved: false, error: "delivery_evidence_ambiguous" };
+      }
+
+      const observedConversation =
+        canonicalConversation(inspection.conversationUrl) ||
+        canonicalConversation(tab?.url);
+      if (!observedConversation) {
+        return {
+          resolved: true,
+          result: await this._markIntervention(
+            entry,
+            "verified_send_missing_conversation_identity",
+          ),
+        };
+      }
+      if (
+        expectedConversation &&
+        observedConversation.canonical_url !== expectedConversation.canonical_url
+      ) {
+        const durableConflict = Boolean(entry.routing);
+        return {
+          resolved: true,
+          result: await this._markIntervention(
+            entry,
+            durableConflict
+              ? "CHATGPT_SEND_BINDING_CONFLICT"
+              : "ambiguous_recovery_wrong_conversation",
+            { observedConversation, bindingConflict: durableConflict },
+          ),
+        };
+      }
+
+      await this.sendStore.setRecoveryStatus(entry.delivery_id, {
+        status: RECOVERY_STATUS.CONFIRMED,
+      });
+      const resolved = await this.sendStore.resolveAmbiguous({
+        deliveryId: entry.delivery_id,
+        state: SEND_STATE.SENT_CONFIRMED,
+        conversation: observedConversation,
+      });
+      await this._emit(resolved);
+      try {
+        await this.sentPromptStore.recordSent({
+          deliveryId: entry.delivery_id,
+          session: entry.session,
+          tabId: tab.id,
+          conversationUrl: observedConversation.canonical_url,
+        });
+        await this.queueStore.remove(entry.delivery_id);
+      } catch {
+        // SENT_CONFIRMED is already durable. Never replay the send.
+      }
+      void Promise.resolve(this.resumeSession(entry.session));
+      return {
+        resolved: true,
+        result: {
+          ok: true,
+          state: SEND_STATE.SENT_CONFIRMED,
+          evidence: "SENT",
+          conversation: observedConversation,
+        },
+      };
+    }
+
+    recover(deliveryId) {
+      const existing = this.workers.get(deliveryId);
+      if (existing) return existing;
+      const worker = this._recover(deliveryId).finally(() => {
+        this.workers.delete(deliveryId);
+      });
+      this.workers.set(deliveryId, worker);
+      return worker;
+    }
+
+    async _recover(deliveryId) {
+      const current = await this.sendStore.get(deliveryId);
+      if (!current) {
+        return { ok: false, state: null, error: "chatgpt_send_not_found" };
+      }
+      if (current.state === SEND_STATE.SENT_CONFIRMED) {
+        return { ok: true, state: SEND_STATE.SENT_CONFIRMED };
+      }
+      if (current.state !== SEND_STATE.AMBIGUOUS) {
+        return {
+          ok: false,
+          state: current.state,
+          error: "chatgpt_send_not_ambiguous",
+        };
+      }
+
+      const entry = await this._queueEntry(deliveryId);
+      if (!entry) return { ok: false, error: "delivery_not_found:" + deliveryId };
+      if (isArchitectureSession(entry.session)) {
+        return {
+          ok: false,
+          state: SEND_STATE.AMBIGUOUS,
+          error: "manual_arch_recovery_required",
+        };
+      }
+
+      const expectedConversation = entry.routing
+        ? {
+            conversation_id: entry.routing.conversation_id,
+            canonical_url: entry.routing.canonical_url,
+          }
+        : current.conversation;
+
+      await this.sendStore.setRecoveryStatus(deliveryId, {
+        status: RECOVERY_STATUS.INSPECTING,
+      });
+
+      let tab;
+      try {
+        tab = await this.router.recoveryTarget({
+          session: entry.session,
+          routing: entry.routing,
+        });
+      } catch (error) {
+        return this._targetFailure(entry, error);
+      }
+
+      const targetConflict = await this._validateExpectedConversation(
+        entry,
+        tab,
+        expectedConversation,
+      );
+      if (targetConflict) return targetConflict;
+
+      let inspection = await this._inspect(tab.id, entry.text);
+      let resolution = await this._resolveInspection(
+        entry,
+        tab,
+        inspection,
+        expectedConversation,
+      );
+      if (resolution.resolved) return resolution.result;
+
+      const refreshedState = await this.sendStore.get(deliveryId);
+      if (refreshedState?.recovery?.reload_attempted) {
+        return this._markIntervention(
+          entry,
+          inspection?.error || "delivery_evidence_ambiguous",
+        );
+      }
+
+      const reloadBarrier = await this.sendStore.markRecoveryReloadAttempted(deliveryId);
+      if (!reloadBarrier.started) {
+        return this._markIntervention(
+          entry,
+          inspection?.error || "delivery_evidence_ambiguous",
+        );
+      }
+
+      try {
+        await this.reloadTab(tab.id);
+      } catch (error) {
+        return this._markIntervention(
+          entry,
+          "recovery_reload_failed:" + preSendErrorCode(error),
+        );
+      }
+
+      await this.sendStore.setRecoveryStatus(deliveryId, {
+        status: RECOVERY_STATUS.WAITING_CONTENT,
+      });
+
+      let lastError = inspection?.error || "delivery_evidence_ambiguous";
+      for (const delay of this.readyDelaysMs) {
+        await this.sleep(delay);
+        try {
+          tab = await this.router.revalidateRecoveryTarget({
+            session: entry.session,
+            routing: entry.routing,
+            tabId: tab.id,
+          });
+        } catch (error) {
+          return this._targetFailure(entry, error);
+        }
+
+        const revalidatedConflict = await this._validateExpectedConversation(
+          entry,
+          tab,
+          expectedConversation,
+        );
+        if (revalidatedConflict) return revalidatedConflict;
+
+        inspection = await this._inspect(tab.id, entry.text);
+        resolution = await this._resolveInspection(
+          entry,
+          tab,
+          inspection,
+          expectedConversation,
+        );
+        if (resolution.resolved) return resolution.result;
+        lastError = inspection?.error || lastError;
+      }
+
+      return this._markIntervention(entry, lastError);
+    }
+
+    async verify(deliveryId, { tabId }) {
+      const entry = await this._queueEntry(deliveryId);
+      if (!entry) return { ok: false, error: "delivery_not_found:" + deliveryId };
+      const current = await this.sendStore.get(deliveryId);
+      if (!current || current.state !== SEND_STATE.AMBIGUOUS) {
+        return { ok: false, error: "chatgpt_send_not_ambiguous" };
+      }
+
+      const expectedConversation = entry.routing
+        ? {
+            conversation_id: entry.routing.conversation_id,
+            canonical_url: entry.routing.canonical_url,
+          }
+        : current.conversation;
+
+      await this.sendStore.setRecoveryStatus(deliveryId, {
+        status: RECOVERY_STATUS.INSPECTING,
+      });
+
+      let tab;
+      try {
+        tab = await this.router.revalidateRecoveryTarget({
+          session: entry.session,
+          routing: entry.routing,
+          tabId,
+        });
+      } catch (error) {
+        return this._targetFailure(entry, error);
+      }
+
+      const targetConflict = await this._validateExpectedConversation(
+        entry,
+        tab,
+        expectedConversation,
+      );
+      if (targetConflict) return targetConflict;
+
+      const inspection = await this._inspect(tab.id, entry.text);
+      const resolution = await this._resolveInspection(
+        entry,
+        tab,
+        inspection,
+        expectedConversation,
+      );
+      if (resolution.resolved) return resolution.result;
+      return this._markIntervention(
+        entry,
+        inspection?.error || "delivery_evidence_ambiguous",
+      );
+    }
+  }
+
   namespace.send = {
     DEFAULT_RETRY_DELAYS_MS,
+    DEFAULT_RECOVERY_READY_DELAYS_MS,
     preSendErrorCode,
     isArchitectureSession,
     isLegacySyntheticConversationId,
     isLegacySyntheticRouting,
     routingFromActiveConversation,
     canonicalConversation,
+    bindingConflictDetails,
     PromptSendCoordinator,
+    AmbiguousSendRecovery,
   };
 })();

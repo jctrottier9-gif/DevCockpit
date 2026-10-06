@@ -1179,3 +1179,46 @@ test("two-turn DC-070B inspection accepts flattened ordered-list markers only in
     "https://chatgpt.com/c/dc070b-flattened-list",
   );
 });
+
+
+test("post-click confirmation keeps a bounded passive window without a second send", async () => {
+  const composer = new FakeElement({ attributes: { contenteditable: "true" } });
+  const button = new FakeElement({ tagName: "BUTTON" });
+  const userMessage = new FakeElement({ text: "Delayed exact prompt" });
+  const selectorMap = new Map([
+    ['#prompt-textarea', [composer]],
+    ['button[data-testid="send-button"]', [button]],
+    ['[data-message-author-role="user"]', []],
+  ]);
+  const { adapter } = await adapterFor(selectorMap);
+  adapter.location = { href: "https://chatgpt.com/c/passive-confirmation" };
+  adapter.confirmationPollCount = 1;
+  adapter.passiveConfirmationPollCount = 2;
+  adapter.confirmationPollMs = 0;
+  adapter.passiveConfirmationPollMs = 0;
+
+  let sleeps = 0;
+  let clicks = 0;
+  button.click = () => {
+    clicks += 1;
+    button.clicked = true;
+  };
+  adapter.sleep = async () => {
+    sleeps += 1;
+    composer.textContent = "";
+    if (sleeps === 2) {
+      selectorMap.set('[data-message-author-role="user"]', [userMessage]);
+    }
+  };
+
+  const prepared = await adapter.preparePrompt("Delayed exact prompt");
+  const result = await adapter.commitPreparedPrompt(
+    "Delayed exact prompt",
+    prepared.baseline,
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.conversationUrl, "https://chatgpt.com/c/passive-confirmation");
+  assert.equal(sleeps, 2);
+  assert.equal(clicks, 1);
+});
