@@ -21,7 +21,8 @@ import {
 type LoadState = 'loading' | 'ready' | 'error'
 
 const cockpitRefreshIntervalMs = resolveCockpitRefreshInterval(
-  import.meta.env.VITE_COCKPIT_REFRESH_INTERVAL_MS,
+  (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env
+    ?.VITE_COCKPIT_REFRESH_INTERVAL_MS,
 )
 
 function readPreferredProjectId() {
