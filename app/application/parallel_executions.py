@@ -908,7 +908,7 @@ def _cancel_obsolete_github_watchdog_dispatches(
             # remote-revocation protocol; the prompt itself revalidates GitHub and
             # must fail stale. Only unsent/unacknowledged local work is cancelled.
             continue
-        dispatch.cancel(now=now)
+        dispatch.cancel(now=max(now, dispatch.updated_at))
         save(dispatch)
 
 
