@@ -112,7 +112,7 @@ def test_migration_0008_preserves_existing_data_and_is_reversible(tmp_path: Path
             text("SELECT prompt_text FROM prompt_dispatches WHERE dispatch_id=:id"),
             {"id": dispatch_id},
         ).scalar_one() == "historical"
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0009_chatgpt_prompt_send"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0010_pr_finalization_attempts"
         assert connection.execute(text("PRAGMA foreign_key_check")).all() == []
     engine.dispose()
 
