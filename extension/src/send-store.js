@@ -14,6 +14,15 @@
     BLOCKED: "BLOCKED",
     AMBIGUOUS: "AMBIGUOUS",
   });
+  const RECOVERY_STATUS = Object.freeze({
+    PENDING: "PENDING",
+    INSPECTING: "INSPECTING",
+    RELOADING: "RELOADING",
+    WAITING_CONTENT: "WAITING_CONTENT",
+    CONFIRMED: "CONFIRMED",
+    VERIFIED_NOT_SENT: "VERIFIED_NOT_SENT",
+    INTERVENTION_REQUIRED: "INTERVENTION_REQUIRED",
+  });
 
   class ChatGptSendStorageError extends Error {
     constructor(message) {
@@ -24,6 +33,59 @@
 
   function clone(value) {
     return JSON.parse(JSON.stringify(value));
+  }
+
+  function newRecovery(timestamp) {
+    return {
+      status: RECOVERY_STATUS.PENDING,
+      reload_attempted: false,
+      reload_attempted_at: null,
+      last_error: null,
+      binding_conflict: null,
+      updated_at: timestamp,
+    };
+  }
+
+  function validateBindingConflict(value) {
+    if (value === null || value === undefined) return value;
+    if (
+      !value ||
+      typeof value !== "object" ||
+      typeof value.agent_session !== "string" ||
+      value.agent_session.trim() === "" ||
+      !(value.expected_conversation_id === null || typeof value.expected_conversation_id === "string") ||
+      !(value.expected_canonical_url === null || typeof value.expected_canonical_url === "string") ||
+      !(
+        value.expected_binding_version === null ||
+        (Number.isInteger(value.expected_binding_version) && value.expected_binding_version >= 1)
+      ) ||
+      !(value.observed_conversation_id === null || typeof value.observed_conversation_id === "string") ||
+      !(value.observed_canonical_url === null || typeof value.observed_canonical_url === "string") ||
+      !(
+        value.observed_binding_version === null ||
+        (Number.isInteger(value.observed_binding_version) && value.observed_binding_version >= 1)
+      )
+    ) {
+      throw new ChatGptSendStorageError("stored_binding_conflict_invalid");
+    }
+    return value;
+  }
+
+  function validateRecovery(value) {
+    if (value === null || value === undefined) return value;
+    if (
+      !value ||
+      typeof value !== "object" ||
+      !Object.values(RECOVERY_STATUS).includes(value.status) ||
+      typeof value.reload_attempted !== "boolean" ||
+      !(value.reload_attempted_at === null || typeof value.reload_attempted_at === "string") ||
+      !(value.last_error === null || typeof value.last_error === "string") ||
+      typeof value.updated_at !== "string"
+    ) {
+      throw new ChatGptSendStorageError("stored_chatgpt_recovery_invalid");
+    }
+    validateBindingConflict(value.binding_conflict);
+    return value;
   }
 
   function validateState(entry) {
@@ -39,6 +101,7 @@
     ) {
       throw new ChatGptSendStorageError("stored_chatgpt_send_invalid");
     }
+    validateRecovery(entry.recovery);
     return entry;
   }
 
@@ -130,6 +193,7 @@
           conversation: null,
           error_code: null,
           next_retry_at: null,
+          recovery: null,
           updated_at: this.now().toISOString(),
         };
         states.push(entry);
@@ -182,6 +246,9 @@
         entry.conversation = conversation ? clone(conversation) : null;
         entry.error_code = errorCode;
         entry.next_retry_at = nextRetryAt;
+        if (state === SEND_STATE.AMBIGUOUS && !entry.recovery) {
+          entry.recovery = newRecovery(occurredAt);
+        }
         entry.updated_at = occurredAt;
 
         const event = {
@@ -210,6 +277,63 @@
         }
         await this._saveUnsafe(states, next);
         return true;
+      });
+    }
+
+    async setRecoveryStatus(
+      deliveryId,
+      {
+        status,
+        errorCode = null,
+        bindingConflict = null,
+      },
+    ) {
+      if (!Object.values(RECOVERY_STATUS).includes(status)) {
+        throw new ChatGptSendStorageError("invalid_chatgpt_recovery_status");
+      }
+      validateBindingConflict(bindingConflict);
+      return this._mutate(async () => {
+        const { states, outbox } = await this._loadUnsafe();
+        const entry = states.find((item) => item.delivery_id === deliveryId);
+        if (!entry || entry.state !== SEND_STATE.AMBIGUOUS) {
+          throw new ChatGptSendStorageError("chatgpt_send_not_ambiguous");
+        }
+        const occurredAt = this.now().toISOString();
+        entry.recovery ||= newRecovery(occurredAt);
+        entry.recovery.status = status;
+        entry.recovery.last_error = errorCode;
+        entry.recovery.binding_conflict = bindingConflict
+          ? clone(bindingConflict)
+          : null;
+        entry.recovery.updated_at = occurredAt;
+        if (errorCode) entry.error_code = errorCode;
+        entry.updated_at = occurredAt;
+        await this._saveUnsafe(states, outbox);
+        return clone(entry);
+      });
+    }
+
+    async markRecoveryReloadAttempted(deliveryId) {
+      return this._mutate(async () => {
+        const { states, outbox } = await this._loadUnsafe();
+        const entry = states.find((item) => item.delivery_id === deliveryId);
+        if (!entry || entry.state !== SEND_STATE.AMBIGUOUS) {
+          throw new ChatGptSendStorageError("chatgpt_send_not_ambiguous");
+        }
+        const occurredAt = this.now().toISOString();
+        entry.recovery ||= newRecovery(occurredAt);
+        if (entry.recovery.reload_attempted) {
+          return { started: false, entry: clone(entry) };
+        }
+        entry.recovery.reload_attempted = true;
+        entry.recovery.reload_attempted_at = occurredAt;
+        entry.recovery.status = RECOVERY_STATUS.RELOADING;
+        entry.recovery.last_error = null;
+        entry.recovery.binding_conflict = null;
+        entry.recovery.updated_at = occurredAt;
+        entry.updated_at = occurredAt;
+        await this._saveUnsafe(states, outbox);
+        return { started: true, entry: clone(entry) };
       });
     }
 
@@ -291,6 +415,7 @@
     SENDS_STORAGE_KEY,
     OUTBOX_STORAGE_KEY,
     SEND_STATE,
+    RECOVERY_STATUS,
     ChatGptSendStorageError,
     ChatGptSendStore,
   };
