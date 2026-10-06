@@ -75,6 +75,10 @@ class CockpitDevPoolItemSummary:
     interaction: InteractionSummary | None
     watchdog_stale: bool
     watchdog_relaunch_prepared: bool
+    github_watchdog_kind: str | None
+    github_watchdog_due: bool
+    github_watchdog_deadline_at: str | None
+    github_watchdog_recovery_state: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -313,6 +317,22 @@ def _dev_pool_summary(
                 watchdog_relaunch_prepared=(
                     item.watchdog.relaunch_prepared if item.watchdog is not None else False
                 ),
+                github_watchdog_kind=(
+                    item.github_watchdog.kind.value if item.github_watchdog is not None else None
+                ),
+                github_watchdog_due=(
+                    item.github_watchdog.due if item.github_watchdog is not None else False
+                ),
+                github_watchdog_deadline_at=(
+                    item.github_watchdog.deadline_at.isoformat()
+                    if item.github_watchdog is not None
+                    else None
+                ),
+                github_watchdog_recovery_state=(
+                    item.github_watchdog.recovery_state
+                    if item.github_watchdog is not None
+                    else None
+                ),
             )
             for item in projection.items
         ),
@@ -328,6 +348,9 @@ def read_project_cockpit_overview(
     max_parallel_dev_executions: int,
     companion_connected: bool,
     dev_stale_after_seconds: float = 3600.0,
+    pr_no_ci_after_seconds: float = 900.0,
+    ci_stall_after_seconds: float = 1800.0,
+    auto_merge_grace_seconds: float = 600.0,
     now: datetime | None = None,
 ) -> CockpitOverviewProjection:
     observed_at = now or datetime.now(timezone.utc)
@@ -367,6 +390,9 @@ def read_project_cockpit_overview(
             uow_factory=uow_factory,
             max_parallel_dev_executions=max_parallel_dev_executions,
             dev_stale_after_seconds=dev_stale_after_seconds,
+            pr_no_ci_after_seconds=pr_no_ci_after_seconds,
+            ci_stall_after_seconds=ci_stall_after_seconds,
+            auto_merge_grace_seconds=auto_merge_grace_seconds,
             now=observed_at,
         )
     except RoadmapSourceError as exc:
@@ -392,6 +418,10 @@ def read_project_cockpit_overview(
             uow_factory=uow_factory,
             max_parallel_dev_executions=max_parallel_dev_executions,
             companion_connected=companion_connected,
+            dev_stale_after_seconds=dev_stale_after_seconds,
+            pr_no_ci_after_seconds=pr_no_ci_after_seconds,
+            ci_stall_after_seconds=ci_stall_after_seconds,
+            auto_merge_grace_seconds=auto_merge_grace_seconds,
         )
     except RoadmapSourceError as exc:
         attention = None
