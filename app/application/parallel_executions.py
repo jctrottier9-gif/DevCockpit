@@ -40,7 +40,10 @@ from app.domain.execution import (
     blocked_projection,
     derive_execution_projection,
 )
-from app.domain.pr_finalization import PullRequestFinalizationAttempt
+from app.domain.pr_finalization import (
+    FinalizationAttemptStatus,
+    PullRequestFinalizationAttempt,
+)
 from app.domain.project import Project
 from app.domain.prompt_dispatch import (
     PromptDispatch,
@@ -513,7 +516,7 @@ def _execute_deterministic_finalization_actions(
 
         if result is None:
             completed = claim.complete(
-                status=claim.status.BLOCKED,
+                status=FinalizationAttemptStatus.BLOCKED,
                 error_code="BASE_SHA_NOT_OBSERVED",
                 message="Branch synchronization requires an observed base SHA.",
             )
@@ -774,6 +777,22 @@ def _selected_dev_dispatch(project: Project, execution: ExecutionProjection, *, 
             candidate_keys.append(_ci_red_idempotency_key(project, execution))
         except ValueError:
             pass
+    elif execution.state is ExecutionState.BRANCH_SYNC_BLOCKED:
+        attempts = getattr(uow, "pr_finalization_attempts", None)
+        if attempts is not None:
+            try:
+                attempt = attempts.get_by_idempotency_key(
+                    branch_sync_attempt_key(project, execution)
+                )
+            except ValueError:
+                attempt = None
+            if attempt is not None and attempt.requires_dev:
+                try:
+                    candidate_keys.append(
+                        branch_sync_follow_up_key(project, execution, attempt)
+                    )
+                except ValueError:
+                    pass
     elif execution.state is ExecutionState.ROADMAP_UPDATE_REQUIRED:
         try:
             candidate_keys.append(_roadmap_reconcile_idempotency_key(project, execution))
