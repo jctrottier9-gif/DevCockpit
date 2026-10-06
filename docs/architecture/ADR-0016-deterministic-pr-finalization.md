@@ -42,6 +42,18 @@ Mutation attempts are claimed durably before the network mutation. Re-observing 
 
 This local attempt record is orchestration evidence only. It never replaces GitHub as delivery authority and never marks a WorkItem DONE.
 
+### DC-072 temporal recovery
+
+DC-072 extends this decision with three watchdogs evaluated by the existing execution poller:
+
+1. an open PR with no workflow on its current head after a configurable delay prepares one same-session DEV diagnostic follow-up;
+2. a current-head workflow that remains in a running/waiting status without a newer attempt or update timestamp after a separate delay prepares one same-session DEV diagnostic follow-up;
+3. `WAIT_AUTO_MERGE` has a separate grace period, after which the engine reuses this ADR's existing branch-sync/merge finalizer rather than waiting indefinitely.
+
+The watchdog identity includes the current PR head and the GitHub activity evidence relevant to the wait. A new head, workflow attempt/update or other newer GitHub proof invalidates the previous identity. DEV follow-ups use deterministic `PromptDispatch` idempotency keys, while auto-merge fallback reuses the durable `PullRequestFinalizationAttempt` identity and fail-closed revalidation defined above.
+
+No watchdog authorizes a bypass: zero workflows is never green, a stalled CI watchdog does not launch a concurrent workflow blindly, and auto-merge fallback still requires current-head green CI, mergeability and repository protections immediately before merge. These states are projections only and are surfaced in Reviewer, DEV Pool and Attention Center.
+
 ## Consequences
 
 - The nominal READY_TO_MERGE -> DEV MERGE_PR prompt path is removed.
