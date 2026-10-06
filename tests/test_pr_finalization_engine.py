@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime, timezone
 
 from app.application.parallel_executions import evaluate_project_parallel_dev_executions
 from app.application.pr_finalization import FinalizationMutationResult
@@ -283,6 +284,187 @@ def test_merge_refusal_is_persisted_and_not_retried(tmp_path):
         second = evaluate(reader, finalizer, factory)
         assert second.projection.items[0].execution.state is ExecutionState.MERGE_BLOCKED
         assert second.dispatches == ()
+        assert finalizer.merge_calls == [(71, "head-1", "base-1")]
+    finally:
+        engine.dispose()
+
+
+def timed_evidence(
+    *,
+    ci_status: str | None = None,
+    ci_conclusion: str | None = None,
+    auto_merge_enabled: bool = False,
+    behind_by: int = 0,
+    activity_at: str = "2026-10-06T12:00:00Z",
+) -> ExecutionEvidence:
+    base = evidence(
+        auto_merge_enabled=auto_merge_enabled,
+        behind_by=behind_by,
+        with_green_ci=ci_status is None,
+    )
+    pr = replace(
+        base.pull_requests[0],
+        created_at=activity_at,
+        updated_at=activity_at,
+    )
+    if ci_status is None:
+        run = replace(
+            base.workflow_runs[0],
+            created_at=activity_at,
+            updated_at=activity_at,
+        )
+        runs = (run,)
+    elif ci_status == "absent":
+        runs = ()
+    else:
+        runs = (
+            WorkflowRunEvidence(
+                run_id=720,
+                name="CI",
+                status=ci_status,
+                conclusion=ci_conclusion,
+                attempt=1,
+                head_sha=pr.head_sha,
+                created_at=activity_at,
+                updated_at=activity_at,
+            ),
+        )
+    return replace(base, pull_requests=(pr,), workflow_runs=runs)
+
+
+def evaluate_watchdogs(reader, finalizer, factory, *, now):
+    return evaluate_project_parallel_dev_executions(
+        PROJECT,
+        roadmap_reader=RoadmapReader(),
+        evidence_reader=reader,
+        uow_factory=factory,
+        max_parallel_dev_executions=1,
+        pr_no_ci_after_seconds=60,
+        ci_stall_after_seconds=60,
+        auto_merge_grace_seconds=60,
+        clock=lambda: now,
+        finalizer=finalizer,
+    )
+
+
+def test_pr_without_ci_watchdog_dispatches_same_evidence_once(tmp_path):
+    reader = MutableEvidenceReader(
+        timed_evidence(ci_status="absent", activity_at="2026-10-06T12:00:00Z")
+    )
+    finalizer = FakeFinalizer()
+    engine, factory = uow_factory(tmp_path)
+    now = datetime(2026, 10, 6, 14, 0, tzinfo=timezone.utc)
+    try:
+        first = evaluate_watchdogs(reader, finalizer, factory, now=now)
+        assert len(first.dispatches) == 1
+        assert "aucun workflow pull_request" in first.dispatches[0].prompt_text
+        assert first.projection.items[0].github_watchdog is not None
+        assert first.projection.items[0].github_watchdog.recovery_prepared is True
+
+        second = evaluate_watchdogs(reader, finalizer, factory, now=now)
+        assert second.dispatches == ()
+    finally:
+        engine.dispose()
+
+
+def test_ci_stall_watchdog_resets_on_workflow_activity(tmp_path):
+    reader = MutableEvidenceReader(
+        timed_evidence(
+            ci_status="in_progress",
+            activity_at="2026-10-06T12:00:00Z",
+        )
+    )
+    finalizer = FakeFinalizer()
+    engine, factory = uow_factory(tmp_path)
+    now = datetime(2026, 10, 6, 14, 0, tzinfo=timezone.utc)
+    try:
+        first = evaluate_watchdogs(reader, finalizer, factory, now=now)
+        assert len(first.dispatches) == 1
+        assert "reste en cours sans progression" in first.dispatches[0].prompt_text
+
+        current_run = reader.evidence.workflow_runs[0]
+        reader.evidence = replace(
+            reader.evidence,
+            workflow_runs=(
+                replace(
+                    current_run,
+                    attempt=2,
+                    updated_at="2026-10-06T13:59:30Z",
+                ),
+            ),
+        )
+        refreshed = evaluate_watchdogs(reader, finalizer, factory, now=now)
+        assert refreshed.dispatches == ()
+        assert refreshed.projection.items[0].github_watchdog is not None
+        assert refreshed.projection.items[0].github_watchdog.due is False
+    finally:
+        engine.dispose()
+
+
+def test_auto_merge_grace_falls_back_to_existing_finalizer(tmp_path):
+    reader = MutableEvidenceReader(
+        timed_evidence(
+            auto_merge_enabled=True,
+            activity_at="2026-10-06T12:00:00Z",
+        )
+    )
+
+    def mark_merged():
+        reader.evidence = evidence(merged=True)
+
+    finalizer = FakeFinalizer(on_merge=mark_merged)
+    engine, factory = uow_factory(tmp_path)
+    now = datetime(2026, 10, 6, 14, 0, tzinfo=timezone.utc)
+    try:
+        result = evaluate_watchdogs(reader, finalizer, factory, now=now)
+        assert finalizer.merge_calls == [(71, "head-1", "base-1")]
+        assert result.projection.items[0].execution.state is ExecutionState.ROADMAP_UPDATE_REQUIRED
+    finally:
+        engine.dispose()
+
+
+def test_auto_merge_grace_reuses_dc071_branch_sync_when_branch_is_behind(tmp_path):
+    reader = MutableEvidenceReader(
+        timed_evidence(
+            auto_merge_enabled=True,
+            behind_by=1,
+            activity_at="2026-10-06T12:00:00Z",
+        )
+    )
+    finalizer = FakeFinalizer()
+    engine, factory = uow_factory(tmp_path)
+    now = datetime(2026, 10, 6, 14, 0, tzinfo=timezone.utc)
+    try:
+        evaluate_watchdogs(reader, finalizer, factory, now=now)
+        assert finalizer.sync_calls == [(71, "head-1", "base-1")]
+        assert finalizer.merge_calls == []
+    finally:
+        engine.dispose()
+
+
+def test_auto_merge_grace_merge_blocker_is_persisted_and_not_bypassed(tmp_path):
+    reader = MutableEvidenceReader(
+        timed_evidence(
+            auto_merge_enabled=True,
+            activity_at="2026-10-06T12:00:00Z",
+        )
+    )
+    finalizer = FakeFinalizer(
+        merge_result=FinalizationMutationResult(
+            FinalizationAttemptStatus.BLOCKED,
+            error_code="MERGE_BLOCKED",
+            message="Required approving review is missing",
+        )
+    )
+    engine, factory = uow_factory(tmp_path)
+    now = datetime(2026, 10, 6, 14, 0, tzinfo=timezone.utc)
+    try:
+        first = evaluate_watchdogs(reader, finalizer, factory, now=now)
+        assert first.projection.items[0].execution.state is ExecutionState.MERGE_BLOCKED
+        assert finalizer.merge_calls == [(71, "head-1", "base-1")]
+
+        second = evaluate_watchdogs(reader, finalizer, factory, now=now)
+        assert second.projection.items[0].execution.state is ExecutionState.MERGE_BLOCKED
         assert finalizer.merge_calls == [(71, "head-1", "base-1")]
     finally:
         engine.dispose()
