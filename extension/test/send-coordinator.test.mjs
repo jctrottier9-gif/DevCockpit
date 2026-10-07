@@ -59,6 +59,7 @@ async function setup({
 
   const calls = [];
   const transitions = [];
+  const wakeCalls = [];
   let routeCalls = 0;
   let revalidateCalls = 0;
   const remainingPrepareErrors = [...prepareErrors];
@@ -102,6 +103,9 @@ async function setup({
       }
       return commitResponse;
     },
+    wakeTab: async (tabId) => {
+      wakeCalls.push(tabId);
+    },
     sleep: async () => {},
     retryDelaysMs,
   });
@@ -113,6 +117,7 @@ async function setup({
     sentPromptStore,
     calls,
     transitions,
+    wakeCalls,
     routingCounts: () => ({ routeCalls, revalidateCalls }),
   };
 }
@@ -189,6 +194,7 @@ test("transient missing content script retries before SEND_ARMED and then succee
     calls,
     transitions,
     routingCounts,
+    wakeCalls,
   } = await setup({
     prepareErrors: [
       "Could not establish connection. Receiving end does not exist.",
@@ -208,6 +214,7 @@ test("transient missing content script retries before SEND_ARMED and then succee
     routeCalls: 1,
     revalidateCalls: 3,
   });
+  assert.deepEqual(wakeCalls, [7]);
   assert.ok(transitions.includes("WAITING_READY"));
   assert.ok(
     transitions.indexOf("WAITING_READY") <
@@ -217,7 +224,7 @@ test("transient missing content script retries before SEND_ARMED and then succee
 });
 
 test("missing content script exhausts bounded retries while still pre-SEND_ARMED", async () => {
-  const { coordinator, sendStore, calls, transitions } = await setup({
+  const { coordinator, sendStore, calls, transitions, wakeCalls } = await setup({
     prepareErrors: [
       "Could not establish connection. Receiving end does not exist.",
       "Could not establish connection. Receiving end does not exist.",
