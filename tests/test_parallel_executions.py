@@ -558,6 +558,157 @@ def test_stale_developing_branch_prepares_one_same_session_watchdog_follow_up():
     assert len(dispatches.by_key) == 2
 
 
+def test_orphan_developing_branch_recovers_same_session_after_inactivity_without_local_dispatch():
+    now = datetime(2026, 10, 3, 10, 0, tzinfo=timezone.utc)
+    dispatches, uow_factory = factory()
+    evidence = EvidenceReader(
+        {
+            "A": ExecutionEvidence(
+                default_branch="main",
+                branches=(
+                    BranchEvidence(
+                        name="work/a-orphaned",
+                        sha="orphan-sha",
+                        ahead_by=3,
+                        last_activity_at="2026-10-03T07:00:00Z",
+                    ),
+                ),
+            ),
+        }
+    )
+
+    result = evaluate_project_parallel_dev_executions(
+        PROJECT,
+        roadmap_reader=RoadmapReader(v3("A | WORK | READY | #1 | MAIN | A | - | -")),
+        evidence_reader=evidence,
+        uow_factory=uow_factory,
+        max_parallel_dev_executions=1,
+        dev_stale_after_seconds=3600,
+        clock=lambda: now,
+    )
+
+    item = result.projection.items[0]
+    assert item.execution.state is ExecutionState.DEVELOPING
+    assert item.watchdog is not None
+    assert item.watchdog.stale_due
+    assert item.watchdog.relaunch_prepared
+    assert item.watchdog.send_confirmed_at is None
+    assert item.watchdog.deadline_at == datetime(
+        2026, 10, 3, 8, 0, tzinfo=timezone.utc
+    )
+    assert len(result.dispatches) == 1
+    recovery = result.dispatches[0]
+    assert recovery.agent_session == "DevCockpit:DEV:A"
+    assert "work/a-orphaned" in recovery.prompt_text
+    assert "ne recommence pas la tranche depuis zéro" in recovery.prompt_text
+    assert ":DEV:STALE:" in recovery.idempotency_key
+    assert len(dispatches.by_key) == 1
+
+
+def test_orphan_developing_branch_waits_for_inactivity_threshold():
+    now = datetime(2026, 10, 3, 10, 0, tzinfo=timezone.utc)
+    dispatches, uow_factory = factory()
+
+    result = evaluate_project_parallel_dev_executions(
+        PROJECT,
+        roadmap_reader=RoadmapReader(v3("A | WORK | READY | #1 | MAIN | A | - | -")),
+        evidence_reader=EvidenceReader(
+            {
+                "A": ExecutionEvidence(
+                    default_branch="main",
+                    branches=(
+                        BranchEvidence(
+                            name="work/a-recent",
+                            sha="recent-sha",
+                            ahead_by=1,
+                            last_activity_at="2026-10-03T09:30:00Z",
+                        ),
+                    ),
+                )
+            }
+        ),
+        uow_factory=uow_factory,
+        max_parallel_dev_executions=1,
+        dev_stale_after_seconds=3600,
+        clock=lambda: now,
+    )
+
+    assert result.projection.items[0].execution.state is ExecutionState.DEVELOPING
+    assert result.projection.items[0].watchdog is not None
+    assert result.projection.items[0].watchdog.stale_due is False
+    assert result.dispatches == ()
+    assert dispatches.by_key == {}
+
+
+def test_explicit_ambiguous_send_blocks_orphan_branch_fallback():
+    started = datetime(2026, 10, 3, 7, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 10, 3, 10, 0, tzinfo=timezone.utc)
+    dispatches = DispatchRepository()
+    deliveries = Deliveries()
+    prompt_sends = PromptSends()
+
+    initial = PromptDispatch.prepare(
+        project_id=PROJECT.project_id,
+        work_item_id="A",
+        role=PromptDispatchRole.DEV,
+        prompt_text="Initial A",
+        idempotency_key="execution:DevCockpit:A:DEV:INITIAL:v1",
+        now=started,
+    )
+    dispatches.add(initial)
+    delivery = PromptDelivery.create(dispatch_id=initial.dispatch_id, now=started)
+    delivery.record_attempt(now=started + timedelta(minutes=1))
+    delivery.acknowledge(now=started + timedelta(minutes=2))
+    deliveries.save(delivery)
+    prompt_sends.save(
+        ChatGptPromptSend.rehydrate(
+            delivery_id=delivery.delivery_id,
+            session=initial.agent_session,
+            state=ChatGptPromptSendState.AMBIGUOUS,
+            attempt_count=1,
+            last_error_code="recovered_after_send_armed",
+            next_retry_at=None,
+            confirmed_at=None,
+            updated_at=started + timedelta(minutes=3),
+            last_event_id=None,
+        )
+    )
+
+    _, uow_factory = factory(
+        dispatches,
+        deliveries=deliveries,
+        prompt_sends=prompt_sends,
+    )
+    result = evaluate_project_parallel_dev_executions(
+        PROJECT,
+        roadmap_reader=RoadmapReader(v3("A | WORK | READY | #1 | MAIN | A | - | -")),
+        evidence_reader=EvidenceReader(
+            {
+                "A": ExecutionEvidence(
+                    default_branch="main",
+                    branches=(
+                        BranchEvidence(
+                            name="work/a-old",
+                            sha="old-sha",
+                            ahead_by=2,
+                            last_activity_at="2026-10-03T01:00:00Z",
+                        ),
+                    ),
+                )
+            }
+        ),
+        uow_factory=uow_factory,
+        max_parallel_dev_executions=1,
+        dev_stale_after_seconds=3600,
+        clock=lambda: now,
+    )
+
+    assert result.projection.items[0].watchdog is not None
+    assert result.projection.items[0].watchdog.stale_due is False
+    assert result.dispatches == ()
+    assert len(dispatches.by_key) == 1
+
+
 def test_stale_watchdog_waits_one_hour_after_firefox_ack_even_for_old_branch():
     started = datetime(2026, 10, 3, 9, 40, tzinfo=timezone.utc)
     now = datetime(2026, 10, 3, 10, 0, tzinfo=timezone.utc)
