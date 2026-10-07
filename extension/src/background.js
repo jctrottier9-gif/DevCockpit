@@ -137,6 +137,7 @@
     sendStore,
     router,
     sendToTab: (tabId, message) => browser.tabs.sendMessage(tabId, message),
+    wakeTab: (tabId) => browser.tabs.update(tabId, { active: true }),
     emitStatus: (event) => transport.sendPendingSendStatus(event),
   });
 
