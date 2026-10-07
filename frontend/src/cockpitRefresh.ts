@@ -25,6 +25,18 @@ export type CockpitRefreshLoop = {
   isRefreshing: () => boolean
 }
 
+type CockpitSupervisionCycleOptions<T> = {
+  evaluate: () => Promise<void>
+  readSnapshot: () => Promise<T>
+}
+
+export async function runCockpitSupervisionCycle<T>(
+  options: CockpitSupervisionCycleOptions<T>,
+): Promise<T> {
+  await options.evaluate()
+  return options.readSnapshot()
+}
+
 export function resolveCockpitRefreshInterval(
   rawValue: string | null | undefined,
   fallback = DEFAULT_COCKPIT_REFRESH_INTERVAL_MS,
