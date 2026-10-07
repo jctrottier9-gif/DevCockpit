@@ -19,6 +19,7 @@ async function setup({
   const tabs = initialTabs.map((tab) => ({ ...tab }));
   let nextId = Math.max(0, ...tabs.map((tab) => tab.id || 0)) + 1;
   const created = [];
+  const removed = [];
   const store = new ConversationRoutingStore(storage);
   const router = new ConversationRouter({
     routingStore: store,
@@ -34,6 +35,12 @@ async function setup({
       created.push({ ...tab });
       return { ...tab };
     },
+    removeTab: async (tabId) => {
+      const index = tabs.findIndex((tab) => tab.id === tabId);
+      if (index < 0) throw new Error("tab_not_found");
+      tabs.splice(index, 1);
+      removed.push(tabId);
+    },
     sleep: async () => {
       if (onSleep) {
         await onSleep({ tabs, created });
@@ -47,7 +54,7 @@ async function setup({
     },
     createdTabPollDelaysMs: pollDelaysMs,
   });
-  return { storage, context, store, router, tabs, created };
+  return { storage, context, store, router, tabs, created, removed };
 }
 
 const ROUTING = {
@@ -80,6 +87,71 @@ test("bound routing reopens canonical URL when no exact tab is open", async () =
   assert.equal(target.kind, "BOUND");
   assert.equal(created.length, 1);
   assert.equal(created[0].url, "https://chatgpt.com/c/conv-a");
+});
+
+test("companion-created bound tab is marked managed and can be closed", async () => {
+  const value = await setup();
+  const target = await value.router.route({
+    session: "DevCockpit:DEV:MANAGED",
+    routing: ROUTING,
+  });
+
+  assert.equal(target.managedByCompanion, true);
+  assert.equal(
+    (await value.store.get("DevCockpit:DEV:MANAGED")).managed_by_companion,
+    true,
+  );
+
+  const closed = await value.router.closeManagedTab({
+    session: "DevCockpit:DEV:MANAGED",
+    tabId: target.tabId,
+  });
+
+  assert.equal(closed, true);
+  assert.deepEqual(value.removed, [target.tabId]);
+  assert.equal(value.tabs.some((tab) => tab.id === target.tabId), false);
+});
+
+test("pre-existing exact ChatGPT tab is never treated as companion managed", async () => {
+  const value = await setup({
+    initialTabs: [{ id: 7, url: "https://chatgpt.com/c/conv-a" }],
+  });
+  const target = await value.router.route({
+    session: "DevCockpit:DEV:MANUAL-EXISTING",
+    routing: ROUTING,
+  });
+
+  assert.equal(target.managedByCompanion, false);
+  assert.equal(
+    (await value.store.get("DevCockpit:DEV:MANUAL-EXISTING")).managed_by_companion,
+    false,
+  );
+
+  const closed = await value.router.closeManagedTab({
+    session: "DevCockpit:DEV:MANUAL-EXISTING",
+    tabId: target.tabId,
+  });
+
+  assert.equal(closed, false);
+  assert.deepEqual(value.removed, []);
+  assert.equal(value.tabs.some((tab) => tab.id === 7), true);
+});
+
+test("provisional companion ownership survives reuse within the same session", async () => {
+  const value = await setup();
+  const first = await value.router.route({
+    session: "DevCockpit:DEV:PROVISIONAL-MANAGED",
+    routing: null,
+  });
+  const second = await value.router.route({
+    session: "DevCockpit:DEV:PROVISIONAL-MANAGED",
+    routing: null,
+  });
+
+  assert.equal(first.managedByCompanion, true);
+  assert.equal(second.managedByCompanion, true);
+  assert.equal(first.tabId, second.tabId);
+  assert.equal(value.created.length, 1);
 });
 
 test("distinct unbound sessions receive distinct dedicated provisional tabs", async () => {
