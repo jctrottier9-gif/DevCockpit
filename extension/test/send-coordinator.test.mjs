@@ -122,6 +122,47 @@ async function setup({
   };
 }
 
+test("persisted content-script BLOCKED send is safe to auto-retry only for non-ARCH", async () => {
+  const context = await loadClassicScripts(
+    ["src/send-store.js", "src/send-coordinator.js"],
+    {},
+  );
+  const { shouldAutoRetryBlockedSend } = context.DevCockpitCompanion.send;
+
+  assert.equal(
+    shouldAutoRetryBlockedSend({
+      state: "BLOCKED",
+      error_code: "content_script_unavailable",
+      session: "RessourcePlanner:DEV:618A",
+    }),
+    true,
+  );
+  assert.equal(
+    shouldAutoRetryBlockedSend({
+      state: "BLOCKED",
+      error_code: "content_script_unavailable",
+      session: "RessourcePlanner:ARCH:ASTRA-618",
+    }),
+    false,
+  );
+  assert.equal(
+    shouldAutoRetryBlockedSend({
+      state: "AMBIGUOUS",
+      error_code: "content_script_unavailable",
+      session: "RessourcePlanner:DEV:618A",
+    }),
+    false,
+  );
+  assert.equal(
+    shouldAutoRetryBlockedSend({
+      state: "BLOCKED",
+      error_code: "manual_fix_required",
+      session: "RessourcePlanner:DEV:618A",
+    }),
+    false,
+  );
+});
+
 test("automatic send persists SEND_ARMED before exactly one DOM commit", async () => {
   const { coordinator, sendStore, queueStore, calls, transitions } = await setup();
 

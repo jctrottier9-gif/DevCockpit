@@ -16,6 +16,7 @@
     isLegacySyntheticRouting,
     routingFromActiveConversation,
     isArchitectureSession,
+    shouldAutoRetryBlockedSend,
     shouldCloseManagedTabAfterAck,
     sentContextMatchesTab,
   } = namespace.send;
@@ -207,6 +208,17 @@
           conversationUrl: state.conversation?.canonical_url || null,
         });
         await queueStore.remove(entry.delivery_id);
+        continue;
+      }
+      if (shouldAutoRetryBlockedSend(state)) {
+        await sendStore.retryBlocked(entry.delivery_id);
+        void sendCoordinator.enqueue(entry.delivery_id).then(async () => {
+          await broadcast("devcockpit_queue_changed");
+          await broadcast("devcockpit_sent_prompts_changed");
+          await broadcast("devcockpit_send_state_changed");
+        }).catch(async () => {
+          await broadcast("devcockpit_send_state_changed");
+        });
         continue;
       }
       if (state?.state === SEND_STATE.AMBIGUOUS) {
