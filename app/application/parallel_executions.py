@@ -699,26 +699,42 @@ def _stale_dev_reference(
     ):
         return None
 
+    branch_activity = _parse_github_timestamp(execution.branch.last_activity_at)
+    if branch_activity is None:
+        return None
+
     initial = uow.prompt_dispatches.get_by_idempotency_key(
         _initial_idempotency_key(project, execution.work_item)
     )
     if initial is None:
-        return None
+        # GitHub already proves work exists on a branch strictly matched to this
+        # WorkItem. After a local DB/reset loss, use branch inactivity as the
+        # restart-safe lower bound for a same-session orphan recovery.
+        return branch_activity
 
+    initial_created_at = _as_utc(initial.created_at)
     delivery = uow.prompt_deliveries.get_by_dispatch_id(initial.dispatch_id)
     if delivery is None:
-        return None
+        # Local transport evidence is incomplete, but an existing GitHub branch
+        # proves the DEV execution already started. Do not immediately relaunch:
+        # respect the later of branch activity and the local dispatch creation.
+        return max(branch_activity, initial_created_at)
 
     send_repository = getattr(uow, "chatgpt_prompt_sends", None)
     if send_repository is not None:
         from app.domain.chatgpt_prompt_send import ChatGptPromptSendState
 
         prompt_send = send_repository.get(delivery.delivery_id)
+        if prompt_send is None:
+            # Same restart/rebuild recovery rule as above: absence of local send
+            # evidence may not permanently strand an authoritative GitHub branch.
+            return max(branch_activity, initial_created_at)
         if (
-            prompt_send is None
-            or prompt_send.state is not ChatGptPromptSendState.SENT_CONFIRMED
+            prompt_send.state is not ChatGptPromptSendState.SENT_CONFIRMED
             or prompt_send.confirmed_at is None
         ):
+            # Explicit browser send state remains authoritative for safety.
+            # In particular SEND_ARMED/AMBIGUOUS must never trigger another prompt.
             return None
         send_lower_bound = prompt_send.confirmed_at
     else:
@@ -728,13 +744,9 @@ def _stale_dev_reference(
             return None
         send_lower_bound = delivery.acknowledged_at
 
-    branch_activity = _parse_github_timestamp(execution.branch.last_activity_at)
-    if branch_activity is None:
-        return None
-
     return max(
         branch_activity,
-        _as_utc(initial.created_at),
+        initial_created_at,
         _as_utc(send_lower_bound),
     )
 
