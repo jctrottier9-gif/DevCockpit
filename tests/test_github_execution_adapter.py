@@ -313,6 +313,72 @@ def test_branch_is_developing_only_when_compare_reports_ahead() -> None:
     assert projection.branch.last_activity_at == "2026-10-03T08:15:00Z"
 
 
+def test_branch_discovery_paginates_until_matching_work_item_branch() -> None:
+    branch_pages: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/repos/jctrottier9-gif/DevCockpit":
+            return httpx.Response(200, json={"default_branch": "main"})
+        if path == "/repos/jctrottier9-gif/DevCockpit/pulls":
+            return httpx.Response(200, json=[])
+        if path == "/repos/jctrottier9-gif/DevCockpit/branches":
+            assert request.url.params["per_page"] == "100"
+            page = int(request.url.params["page"])
+            branch_pages.append(page)
+            if page == 1:
+                return httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "name": f"unrelated-{index:03d}",
+                            "commit": {"sha": f"sha-{index:03d}"},
+                        }
+                        for index in range(100)
+                    ],
+                )
+            if page == 2:
+                return httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "name": "work/dc-021-execution-ci",
+                            "commit": {"sha": "second-page-head"},
+                        }
+                    ],
+                )
+            raise AssertionError(f"unexpected branches page: {page}")
+        if path == "/repos/jctrottier9-gif/DevCockpit/compare/main...work/dc-021-execution-ci":
+            return httpx.Response(
+                200,
+                json={
+                    "ahead_by": 3,
+                    "commits": [
+                        {
+                            "sha": "second-page-head",
+                            "commit": {
+                                "committer": {
+                                    "date": "2026-10-06T20:40:07Z"
+                                }
+                            },
+                        }
+                    ],
+                },
+            )
+        raise AssertionError(f"unexpected GitHub request: {request.url}")
+
+    evidence = reader_for(handler).read(PROJECT, WORK_ITEM)
+    projection = derive_execution_projection(WORK_ITEM, evidence)
+
+    assert branch_pages == [1, 2]
+    assert projection.state is ExecutionState.DEVELOPING
+    assert projection.branch is not None
+    assert projection.branch.name == "work/dc-021-execution-ci"
+    assert projection.branch.sha == "second-page-head"
+    assert projection.branch.ahead_by == 3
+    assert projection.branch.last_activity_at == "2026-10-06T20:40:07Z"
+
+
 def test_incidental_body_mention_does_not_trigger_pr_ci_resolution() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path

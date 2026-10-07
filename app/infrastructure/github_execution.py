@@ -236,46 +236,55 @@ class GitHubExecutionReader:
         default_branch: str,
         work_item_key: str,
     ) -> tuple[BranchEvidence, ...]:
-        payload = self._request_json(
-            client,
-            f"{base_url}/branches",
-            params={"per_page": 100},
-        )
-        if not isinstance(payload, list):
-            raise ExecutionPayloadError("GitHub branches response must be an array")
-
+        per_page = 100
+        page = 1
         branches: list[BranchEvidence] = []
-        for item in payload:
-            if not isinstance(item, dict):
-                raise ExecutionPayloadError("GitHub branch entry must be an object")
-            name = self._require_string(item, "name", context="branch")
-            if not branch_matches_work_item(name, work_item_key):
-                continue
-            commit = item.get("commit")
-            if not isinstance(commit, dict):
-                raise ExecutionPayloadError("GitHub branch commit must be an object")
-            sha = self._require_string(commit, "sha", context="branch commit")
-            compare = self._request_json(
+
+        while True:
+            payload = self._request_json(
                 client,
-                (
-                    f"{base_url}/compare/"
-                    f"{quote(default_branch, safe='')}...{quote(name, safe='')}"
-                ),
+                f"{base_url}/branches",
+                params={"per_page": per_page, "page": page},
             )
-            if not isinstance(compare, dict):
-                raise ExecutionPayloadError("GitHub compare response must be an object")
-            ahead_by = compare.get("ahead_by")
-            if not isinstance(ahead_by, int):
-                raise ExecutionPayloadError("GitHub compare ahead_by must be an integer")
-            last_activity_at = self._latest_compare_commit_date(compare)
-            branches.append(
-                BranchEvidence(
-                    name=name,
-                    sha=sha,
-                    ahead_by=ahead_by,
-                    last_activity_at=last_activity_at,
+            if not isinstance(payload, list):
+                raise ExecutionPayloadError("GitHub branches response must be an array")
+
+            for item in payload:
+                if not isinstance(item, dict):
+                    raise ExecutionPayloadError("GitHub branch entry must be an object")
+                name = self._require_string(item, "name", context="branch")
+                if not branch_matches_work_item(name, work_item_key):
+                    continue
+                commit = item.get("commit")
+                if not isinstance(commit, dict):
+                    raise ExecutionPayloadError("GitHub branch commit must be an object")
+                sha = self._require_string(commit, "sha", context="branch commit")
+                compare = self._request_json(
+                    client,
+                    (
+                        f"{base_url}/compare/"
+                        f"{quote(default_branch, safe='')}...{quote(name, safe='')}"
+                    ),
                 )
-            )
+                if not isinstance(compare, dict):
+                    raise ExecutionPayloadError("GitHub compare response must be an object")
+                ahead_by = compare.get("ahead_by")
+                if not isinstance(ahead_by, int):
+                    raise ExecutionPayloadError("GitHub compare ahead_by must be an integer")
+                last_activity_at = self._latest_compare_commit_date(compare)
+                branches.append(
+                    BranchEvidence(
+                        name=name,
+                        sha=sha,
+                        ahead_by=ahead_by,
+                        last_activity_at=last_activity_at,
+                    )
+                )
+
+            if len(payload) < per_page:
+                break
+            page += 1
+
         return tuple(branches)
 
     @staticmethod
