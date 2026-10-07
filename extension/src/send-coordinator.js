@@ -19,6 +19,15 @@
     return parts.length === 3 && parts[1] === "ARCH" && parts[0] !== "" && parts[2] !== "";
   }
 
+  function shouldAutoRetryBlockedSend(entry) {
+    return Boolean(
+      entry &&
+      entry.state === SEND_STATE.BLOCKED &&
+      entry.error_code === "content_script_unavailable" &&
+      !isArchitectureSession(entry.session)
+    );
+  }
+
   function errorText(error) {
     return error instanceof Error ? error.message : String(error);
   }
@@ -987,6 +996,7 @@
     DEFAULT_RECOVERY_READY_DELAYS_MS,
     preSendErrorCode,
     isArchitectureSession,
+    shouldAutoRetryBlockedSend,
     isLegacySyntheticConversationId,
     isLegacySyntheticRouting,
     routingFromActiveConversation,
