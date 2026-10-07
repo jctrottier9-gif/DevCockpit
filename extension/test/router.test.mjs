@@ -105,11 +105,32 @@ test("companion-created bound tab is marked managed and can be closed", async ()
   const closed = await value.router.closeManagedTab({
     session: "DevCockpit:DEV:MANAGED",
     tabId: target.tabId,
+    conversationUrl: "https://chatgpt.com/c/conv-a",
   });
 
   assert.equal(closed, true);
   assert.deepEqual(value.removed, [target.tabId]);
   assert.equal(value.tabs.some((tab) => tab.id === target.tabId), false);
+});
+
+test("managed tab is not closed after user navigates it to another conversation", async () => {
+  const value = await setup();
+  const target = await value.router.route({
+    session: "DevCockpit:DEV:MANAGED-NAVIGATED",
+    routing: ROUTING,
+  });
+  const tab = value.tabs.find((candidate) => candidate.id === target.tabId);
+  tab.url = "https://chatgpt.com/c/user-conversation";
+
+  const closed = await value.router.closeManagedTab({
+    session: "DevCockpit:DEV:MANAGED-NAVIGATED",
+    tabId: target.tabId,
+    conversationUrl: "https://chatgpt.com/c/conv-a",
+  });
+
+  assert.equal(closed, false);
+  assert.deepEqual(value.removed, []);
+  assert.equal(value.tabs.some((candidate) => candidate.id === target.tabId), true);
 });
 
 test("pre-existing exact ChatGPT tab is never treated as companion managed", async () => {
