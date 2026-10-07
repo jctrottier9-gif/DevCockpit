@@ -16,6 +16,8 @@
     isLegacySyntheticRouting,
     routingFromActiveConversation,
     isArchitectureSession,
+    shouldCloseManagedTabAfterAck,
+    sentContextMatchesTab,
   } = namespace.send;
   const { buildChatGptResponseMessage, ProtocolError } = namespace.protocol;
 
@@ -33,6 +35,7 @@
         url: ["https://chatgpt.com/*", "https://chat.openai.com/*"],
       }),
     createTab: ({ url, active }) => browser.tabs.create({ url, active }),
+    removeTab: (tabId) => browser.tabs.remove(tabId),
   });
   let connection = {
     status: CONNECTION_STATUS.DISCONNECTED,
@@ -86,7 +89,28 @@
     getPendingResponses: () => pendingResponseStore.list(),
     getPendingSendStatuses: () => sendStore.pendingEvents(),
     onSendStatusAck: async (eventId) => {
+      const pending = await sendStore.pendingEvents();
+      const event = pending.find((item) => item.event_id === eventId) || null;
+      const sentContext =
+        event?.state === SEND_STATE.SENT_CONFIRMED
+          ? await sentPromptStore.get(event.delivery_id)
+          : null;
+      const queuedPrompts = sentContext ? await queueStore.list() : [];
+
       await sendStore.ackEvent(eventId);
+
+      if (
+        shouldCloseManagedTabAfterAck({
+          event,
+          sentContext,
+          queuedPrompts,
+        })
+      ) {
+        await router.closeManagedTab({
+          session: sentContext.session,
+          tabId: sentContext.tab_id,
+        });
+      }
       await broadcast("devcockpit_send_state_changed");
     },
     onResponseAck: async (responseId) => {
@@ -268,11 +292,11 @@
 
     try {
       const tab = await activeChatGptTab();
-      if (context.tab_id !== null && tab.id !== context.tab_id) {
+      if (!sentContextMatchesTab(context, tab)) {
         return {
           ok: false,
           error:
-            "Ouvrez l’onglet ChatGPT utilisé pour ce prompt avant de choisir une réponse",
+            "Ouvrez la conversation ChatGPT exacte utilisée pour ce prompt avant de choisir une réponse",
         };
       }
       const result = await browser.tabs.sendMessage(tab.id, {
