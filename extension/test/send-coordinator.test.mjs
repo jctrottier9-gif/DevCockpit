@@ -285,6 +285,88 @@ test("canonical conversation accepts nested ChatGPT project and workspace routes
 });
 
 
+test("managed tab cleanup waits for confirmed backend ack and an empty session queue", async () => {
+  const context = await loadClassicScripts(
+    ["src/send-store.js", "src/send-coordinator.js"],
+    {},
+  );
+  const { shouldCloseManagedTabAfterAck } = context.DevCockpitCompanion.send;
+  const sentContext = {
+    delivery_id: DELIVERY_ID,
+    session: SESSION,
+    tab_id: 7,
+    conversation_url: "https://chatgpt.com/c/conv-a",
+  };
+  const confirmedEvent = {
+    event_id: "event-confirmed",
+    delivery_id: DELIVERY_ID,
+    session: SESSION,
+    state: "SENT_CONFIRMED",
+  };
+
+  assert.equal(
+    shouldCloseManagedTabAfterAck({
+      event: confirmedEvent,
+      sentContext,
+      queuedPrompts: [],
+    }),
+    true,
+  );
+  assert.equal(
+    shouldCloseManagedTabAfterAck({
+      event: confirmedEvent,
+      sentContext,
+      queuedPrompts: [{ delivery_id: SECOND_DELIVERY_ID, session: SESSION }],
+    }),
+    false,
+  );
+  assert.equal(
+    shouldCloseManagedTabAfterAck({
+      event: { ...confirmedEvent, state: "SEND_ARMED" },
+      sentContext,
+      queuedPrompts: [],
+    }),
+    false,
+  );
+  assert.equal(
+    shouldCloseManagedTabAfterAck({
+      event: confirmedEvent,
+      sentContext: { ...sentContext, session: "DevCockpit:ARCH:ASTRA-101" },
+      queuedPrompts: [],
+    }),
+    false,
+  );
+});
+
+test("response selection accepts a reopened exact conversation and rejects another one", async () => {
+  const context = await loadClassicScripts(
+    ["src/send-store.js", "src/send-coordinator.js"],
+    {},
+  );
+  const { sentContextMatchesTab } = context.DevCockpitCompanion.send;
+  const sentContext = {
+    delivery_id: DELIVERY_ID,
+    session: SESSION,
+    tab_id: 7,
+    conversation_url: "https://chatgpt.com/c/conv-a",
+  };
+
+  assert.equal(
+    sentContextMatchesTab(sentContext, {
+      id: 99,
+      url: "https://chatgpt.com/g/g-p-project/c/conv-a?model=auto",
+    }),
+    true,
+  );
+  assert.equal(
+    sentContextMatchesTab(sentContext, {
+      id: 7,
+      url: "https://chatgpt.com/c/conv-b",
+    }),
+    false,
+  );
+});
+
 test("resumeSession wakes the next queued delivery after predecessor removal", async () => {
   const { coordinator, sendStore, queueStore, sentPromptStore } = await setup();
 
