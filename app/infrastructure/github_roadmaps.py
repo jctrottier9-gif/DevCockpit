@@ -9,9 +9,27 @@ from app.application.roadmaps import (
     RoadmapIssue,
     RoadmapIssueNotFoundError,
     RoadmapPayloadError,
+    RoadmapRateLimitError,
     RoadmapSourceError,
 )
 from app.domain.project import Project
+
+
+def _is_rate_limited(response: httpx.Response) -> bool:
+    if response.status_code == 429:
+        return True
+    if response.headers.get("x-ratelimit-remaining") == "0":
+        return True
+    if response.headers.get("retry-after") is not None:
+        return True
+    try:
+        payload = response.json()
+    except ValueError:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    message = payload.get("message")
+    return isinstance(message, str) and "rate limit" in message.lower()
 
 
 class GitHubRoadmapReader:
@@ -50,14 +68,44 @@ class GitHubRoadmapReader:
             ) as client:
                 response = client.get(url, headers=headers)
         except httpx.RequestError as exc:
-            raise RoadmapSourceError("GitHub roadmap request failed") from exc
+            raise RoadmapSourceError(
+                "GitHub roadmap request failed",
+                token_configured=bool(self._token),
+            ) from exc
 
-        if response.status_code in {401, 403}:
-            raise RoadmapAuthorizationError("GitHub rejected roadmap access")
+        error_details = {
+            "status_code": response.status_code,
+            "token_configured": bool(self._token),
+            "rate_limit_remaining": response.headers.get("x-ratelimit-remaining"),
+            "rate_limit_reset": response.headers.get("x-ratelimit-reset"),
+            "retry_after": response.headers.get("retry-after"),
+        }
+
+        if response.status_code == 401:
+            raise RoadmapAuthorizationError(
+                "GitHub rejected roadmap access",
+                **error_details,
+            )
+        if response.status_code in {403, 429}:
+            if _is_rate_limited(response):
+                raise RoadmapRateLimitError(
+                    "GitHub roadmap access is rate limited",
+                    **error_details,
+                )
+            raise RoadmapAuthorizationError(
+                "GitHub rejected roadmap access",
+                **error_details,
+            )
         if response.status_code == 404:
-            raise RoadmapIssueNotFoundError("Configured GitHub roadmap issue was not found")
+            raise RoadmapIssueNotFoundError(
+                "Configured GitHub roadmap issue was not found",
+                **error_details,
+            )
         if response.status_code >= 400:
-            raise RoadmapSourceError(f"GitHub roadmap request failed with HTTP {response.status_code}")
+            raise RoadmapSourceError(
+                f"GitHub roadmap request failed with HTTP {response.status_code}",
+                **error_details,
+            )
 
         try:
             payload = response.json()

@@ -106,6 +106,14 @@ def _project_payload(project: Project) -> dict[str, object]:
     }
 
 
+def _roadmap_error_source_payload(exc: RoadmapSourceError) -> dict[str, object]:
+    return {
+        "status": "unavailable",
+        "code": exc.code,
+        **exc.source_details(),
+    }
+
+
 def _work_item_payload(item: WorkItem) -> dict[str, object]:
     return {
         "key": item.key,
@@ -652,7 +660,7 @@ def create_app(
                 status_code=502,
                 content={
                     "project": _project_payload(project),
-                    "source": {"status": "unavailable", "code": exc.code},
+                    "source": _roadmap_error_source_payload(exc),
                     "pipeline": None,
                 },
             )
@@ -670,7 +678,7 @@ def create_app(
                 status_code=502,
                 content={
                     "project": _project_payload(project),
-                    "source": {"status": "unavailable", "code": exc.code},
+                    "source": _roadmap_error_source_payload(exc),
                     "scheduler": None,
                 },
             )
@@ -698,7 +706,7 @@ def create_app(
                 status_code=502,
                 content={
                     "project": _project_payload(project),
-                    "source": {"status": "unavailable", "code": exc.code},
+                    "source": _roadmap_error_source_payload(exc),
                     "capacity": None,
                     "executable_candidates": [],
                     "executions": [],

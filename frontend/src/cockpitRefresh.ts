@@ -53,6 +53,19 @@ export function classifyCockpitRefreshFailure(
   return loadedProjectId === requestProjectId ? 'stale' : 'fatal'
 }
 
+export function criticalCockpitSourceFailure(snapshot: {
+  sources?: {
+    roadmap?: {
+      status?: string
+      code?: string | null
+    }
+  }
+}): string | null {
+  const roadmap = snapshot.sources?.roadmap
+  if (roadmap?.status !== 'unavailable') return null
+  return 'Roadmap source unavailable: ' + (roadmap.code || 'GITHUB_UNAVAILABLE')
+}
+
 export function resolveRefreshedSelection(
   currentKey: string | null,
   availableKeys: readonly string[],

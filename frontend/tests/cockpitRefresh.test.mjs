@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   classifyCockpitRefreshFailure,
+  criticalCockpitSourceFailure,
   createCockpitRefreshLoop,
   DEFAULT_COCKPIT_REFRESH_INTERVAL_MS,
   resolveCockpitRefreshInterval,
@@ -51,6 +52,21 @@ test('keeps the current snapshot on a temporary refresh error', () => {
   assert.equal(classifyCockpitRefreshFailure('DevCockpit', 'DevCockpit'), 'stale')
   assert.equal(classifyCockpitRefreshFailure('DevCockpit', null), 'fatal')
   assert.equal(classifyCockpitRefreshFailure('DevCockpit', 'RessourcePlanner'), 'fatal')
+})
+
+test('treats an unavailable roadmap source as a failed supervision snapshot', () => {
+  assert.equal(
+    criticalCockpitSourceFailure({
+      sources: { roadmap: { status: 'unavailable', code: 'GITHUB_RATE_LIMITED' } },
+    }),
+    'Roadmap source unavailable: GITHUB_RATE_LIMITED',
+  )
+  assert.equal(
+    criticalCockpitSourceFailure({
+      sources: { roadmap: { status: 'available', code: null } },
+    }),
+    null,
+  )
 })
 
 test('preserves drawer selection while the refreshed projection still contains it', () => {
