@@ -6,6 +6,7 @@ import {
   DEFAULT_COCKPIT_REFRESH_INTERVAL_MS,
   resolveCockpitRefreshInterval,
   resolveRefreshedSelection,
+  runCockpitSupervisionCycle,
 } from '../src/cockpitRefresh.ts'
 
 function fakeTimer() {
@@ -56,6 +57,39 @@ test('preserves drawer selection while the refreshed projection still contains i
   assert.equal(resolveRefreshedSelection('DC-073', ['DC-072B', 'DC-073', 'DC-074'], 'DC-074'), 'DC-073')
   assert.equal(resolveRefreshedSelection('DC-071', ['DC-073', 'DC-074'], 'DC-074'), 'DC-074')
   assert.equal(resolveRefreshedSelection(null, ['DC-073'], null), 'DC-073')
+})
+
+test('runs deterministic evaluation before reading the refreshed cockpit snapshot', async () => {
+  const events = []
+  const snapshot = { observed_at: '2026-10-06T23:59:00Z' }
+
+  const result = await runCockpitSupervisionCycle({
+    evaluate: async () => { events.push('evaluate') },
+    readSnapshot: async () => {
+      events.push('cockpit')
+      return snapshot
+    },
+  })
+
+  assert.deepEqual(events, ['evaluate', 'cockpit'])
+  assert.equal(result, snapshot)
+})
+
+test('does not publish a new snapshot when deterministic evaluation fails', async () => {
+  let snapshotReads = 0
+
+  await assert.rejects(
+    runCockpitSupervisionCycle({
+      evaluate: async () => { throw new Error('evaluation failed') },
+      readSnapshot: async () => {
+        snapshotReads += 1
+        return {}
+      },
+    }),
+    /evaluation failed/,
+  )
+
+  assert.equal(snapshotReads, 0)
 })
 
 test('runs one coordinated periodic refresh and reschedules after completion', async () => {
