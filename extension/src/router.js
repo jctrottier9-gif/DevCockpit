@@ -117,12 +117,14 @@
       routingStore,
       queryTabs,
       createTab,
+      removeTab = null,
       sleep = (delay) => new Promise((resolve) => setTimeout(resolve, delay)),
       createdTabPollDelaysMs = DEFAULT_CREATED_TAB_POLL_DELAYS_MS,
     }) {
       this.routingStore = routingStore;
       this.queryTabs = queryTabs;
       this.createTab = createTab;
+      this.removeTab = removeTab;
       this.sleep = sleep;
       this.createdTabPollDelaysMs = createdTabPollDelaysMs;
       this.sessionChains = new Map();
@@ -210,6 +212,7 @@
       const matches = tabs.filter((tab) => tabIdentityMatches(tab, routing));
       let target = null;
       let cachedTransient = null;
+      let managedByCompanion = false;
       if (
         cached?.kind === ROUTING_KIND.BOUND &&
         Number.isInteger(cached.tab_id)
@@ -229,6 +232,7 @@
           }
           if (tabIdentityMatches(cachedTab, routing)) {
             target = cachedTab;
+            managedByCompanion = cached.managed_by_companion === true;
           } else if (
             cachedTab.url === "about:blank" ||
             isSupportedChatGptUrl(cachedTab.url)
@@ -237,7 +241,13 @@
           }
         }
       }
-      target ||= matches[0] || cachedTransient || null;
+      if (!target && matches.length > 0) {
+        target = matches[0];
+      }
+      if (!target && cachedTransient) {
+        target = cachedTransient;
+        managedByCompanion = cached?.managed_by_companion === true;
+      }
 
       if (!target) {
         const created = await this.createTab({
@@ -248,18 +258,21 @@
           created,
           (tab) => tabIdentityMatches(tab, routing),
         );
+        managedByCompanion = true;
       }
 
       await this.routingStore.setBound({
         session,
         routing,
         tabId: target.id,
+        managedByCompanion,
       });
       return {
         kind: ROUTING_KIND.BOUND,
         tabId: target.id,
         url: target.url || routing.canonical_url,
         routing,
+        managedByCompanion,
       };
     }
 
@@ -284,6 +297,7 @@
             tabId: existing.id,
             url: existing.url,
             routing: null,
+            managedByCompanion: cached.managed_by_companion === true,
           };
         }
       }
@@ -293,12 +307,15 @@
         created,
         (tab) => isProvisionalChatGptUrl(tab.url),
       );
-      await this.routingStore.setProvisional(session, target.id);
+      await this.routingStore.setProvisional(session, target.id, {
+        managedByCompanion: true,
+      });
       return {
         kind: ROUTING_KIND.PROVISIONAL,
         tabId: target.id,
         url: target.url || NEW_CHAT_URL,
         routing: null,
+        managedByCompanion: true,
       };
     }
 
@@ -462,6 +479,31 @@
         routing: normalized,
         tabId,
       });
+    }
+
+    async closeManagedTab({ session, tabId }) {
+      if (
+        typeof session !== "string" ||
+        session.trim() === "" ||
+        !Number.isInteger(tabId) ||
+        typeof this.removeTab !== "function"
+      ) {
+        return false;
+      }
+      const cached = await this.routingStore.get(session);
+      if (
+        !cached ||
+        cached.tab_id !== tabId ||
+        cached.managed_by_companion !== true
+      ) {
+        return false;
+      }
+      try {
+        await this.removeTab(tabId);
+        return true;
+      } catch {
+        return false;
+      }
     }
 
     async invalidate(session, reason) {
