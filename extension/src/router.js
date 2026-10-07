@@ -481,7 +481,7 @@
       });
     }
 
-    async closeManagedTab({ session, tabId }) {
+    async closeManagedTab({ session, tabId, conversationUrl = null }) {
       if (
         typeof session !== "string" ||
         session.trim() === "" ||
@@ -498,6 +498,24 @@
       ) {
         return false;
       }
+
+      const tabs = await this._tabs();
+      const current = tabs.find((tab) => tab.id === tabId) || null;
+      if (!current) {
+        return true;
+      }
+      if (typeof conversationUrl === "string" && conversationUrl) {
+        const expected = conversationIdentity(conversationUrl);
+        const observed = conversationIdentity(current.url);
+        if (
+          !expected ||
+          !observed ||
+          expected.canonicalUrl !== observed.canonicalUrl
+        ) {
+          return false;
+        }
+      }
+
       try {
         await this.removeTab(tabId);
         return true;
