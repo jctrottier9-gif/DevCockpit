@@ -91,6 +91,52 @@
     }
   }
 
+  function shouldCloseManagedTabAfterAck({
+    event,
+    sentContext,
+    queuedPrompts = [],
+  }) {
+    if (
+      !event ||
+      event.state !== SEND_STATE.SENT_CONFIRMED ||
+      !sentContext ||
+      sentContext.delivery_id !== event.delivery_id ||
+      !Number.isInteger(sentContext.tab_id) ||
+      isArchitectureSession(sentContext.session)
+    ) {
+      return false;
+    }
+    return !queuedPrompts.some(
+      (entry) => entry?.session === sentContext.session,
+    );
+  }
+
+  function sentContextMatchesTab(sentContext, tab) {
+    if (
+      !sentContext ||
+      !tab ||
+      !Number.isInteger(tab.id)
+    ) {
+      return false;
+    }
+    if (
+      typeof sentContext.conversation_url === "string" &&
+      sentContext.conversation_url
+    ) {
+      const expected = canonicalConversation(sentContext.conversation_url);
+      const observed = canonicalConversation(tab.url);
+      return Boolean(
+        expected &&
+        observed &&
+        expected.canonical_url === observed.canonical_url
+      );
+    }
+    if (Number.isInteger(sentContext.tab_id)) {
+      return sentContext.tab_id === tab.id;
+    }
+    return true;
+  }
+
   function bindingConflictDetails({
     session,
     expectedRouting = null,
@@ -487,7 +533,6 @@
         attempt,
         conversation,
       });
-      await this._emit(confirmed);
 
       try {
         await this.sentPromptStore.recordSent({
@@ -500,6 +545,7 @@
       } catch {
         // SENT_CONFIRMED is already durable; never replay the irreversible send.
       }
+      await this._emit(confirmed);
       void this.resumeSession(entry.session);
       return { ok: true, state: SEND_STATE.SENT_CONFIRMED, conversation };
     }
@@ -710,7 +756,6 @@
         state: SEND_STATE.SENT_CONFIRMED,
         conversation: observedConversation,
       });
-      await this._emit(resolved);
       try {
         await this.sentPromptStore.recordSent({
           deliveryId: entry.delivery_id,
@@ -722,6 +767,7 @@
       } catch {
         // SENT_CONFIRMED is already durable. Never replay the send.
       }
+      await this._emit(resolved);
       void Promise.resolve(this.resumeSession(entry.session));
       return {
         resolved: true,
@@ -931,6 +977,8 @@
     isLegacySyntheticRouting,
     routingFromActiveConversation,
     canonicalConversation,
+    shouldCloseManagedTabAfterAck,
+    sentContextMatchesTab,
     bindingConflictDetails,
     PromptSendCoordinator,
     AmbiguousSendRecovery,
