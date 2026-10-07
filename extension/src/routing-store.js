@@ -35,6 +35,10 @@
       entry.session.trim() === "" ||
       !Object.values(ROUTING_KIND).includes(entry.kind) ||
       !(entry.tab_id === null || Number.isInteger(entry.tab_id)) ||
+      !(
+        entry.managed_by_companion === undefined ||
+        typeof entry.managed_by_companion === "boolean"
+      ) ||
       typeof entry.updated_at !== "string" ||
       !(
         entry.last_error === null ||
@@ -110,7 +114,12 @@
       return entries.find((entry) => entry.session === session) || null;
     }
 
-    async setBound({ session, routing, tabId = null }) {
+    async setBound({
+      session,
+      routing,
+      tabId = null,
+      managedByCompanion = false,
+    }) {
       return this._mutate(async () => {
         const entries = await this._loadUnsafe();
         const existing = entries.find((entry) => entry.session === session);
@@ -135,6 +144,7 @@
           session,
           kind: ROUTING_KIND.BOUND,
           tab_id: Number.isInteger(tabId) ? tabId : null,
+          managed_by_companion: managedByCompanion === true,
           binding_version: routing.binding_version,
           conversation_id: routing.conversation_id,
           canonical_url: routing.canonical_url,
@@ -151,7 +161,11 @@
       });
     }
 
-    async setProvisional(session, tabId) {
+    async setProvisional(
+      session,
+      tabId,
+      { managedByCompanion = false } = {},
+    ) {
       return this._mutate(async () => {
         const entries = await this._loadUnsafe();
         const existing = entries.find((entry) => entry.session === session);
@@ -165,6 +179,7 @@
           session,
           kind: ROUTING_KIND.PROVISIONAL,
           tab_id: Number.isInteger(tabId) ? tabId : null,
+          managed_by_companion: managedByCompanion === true,
           binding_version: null,
           conversation_id: null,
           canonical_url: null,
@@ -192,6 +207,7 @@
           session,
           kind: ROUTING_KIND.INVALIDATED,
           tab_id: existing?.tab_id ?? null,
+          managed_by_companion: existing?.managed_by_companion === true,
           binding_version: existing?.binding_version ?? null,
           conversation_id: existing?.conversation_id ?? null,
           canonical_url: existing?.canonical_url ?? null,
