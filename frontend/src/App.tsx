@@ -7,6 +7,7 @@ import Orchestration from './Orchestration'
 import TechnicalSurfaces from './TechnicalSurfaces'
 import {
   classifyCockpitRefreshFailure,
+  criticalCockpitSourceFailure,
   createCockpitRefreshLoop,
   resolveCockpitRefreshInterval,
   runCockpitSupervisionCycle,
@@ -230,6 +231,11 @@ function App() {
 
         if (payload.project?.project_id !== projectId) {
           throw new Error('Project context mismatch while loading ' + projectId)
+        }
+
+        const sourceFailure = criticalCockpitSourceFailure(payload)
+        if (sourceFailure) {
+          throw new Error(sourceFailure)
         }
 
         loadedProjectIdRef.current = projectId

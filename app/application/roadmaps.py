@@ -18,9 +18,44 @@ class RoadmapIssue:
 class RoadmapSourceError(RuntimeError):
     code = "GITHUB_UNAVAILABLE"
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        token_configured: bool | None = None,
+        rate_limit_remaining: str | None = None,
+        rate_limit_reset: str | None = None,
+        retry_after: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.token_configured = token_configured
+        self.rate_limit_remaining = rate_limit_remaining
+        self.rate_limit_reset = rate_limit_reset
+        self.retry_after = retry_after
+
+    def source_details(self) -> dict[str, object]:
+        details: dict[str, object] = {}
+        if self.status_code is not None:
+            details["http_status"] = self.status_code
+        if self.token_configured is not None:
+            details["token_configured"] = self.token_configured
+        if self.rate_limit_remaining is not None:
+            details["rate_limit_remaining"] = self.rate_limit_remaining
+        if self.rate_limit_reset is not None:
+            details["rate_limit_reset"] = self.rate_limit_reset
+        if self.retry_after is not None:
+            details["retry_after"] = self.retry_after
+        return details
+
 
 class RoadmapAuthorizationError(RoadmapSourceError):
     code = "GITHUB_AUTHORIZATION_FAILED"
+
+
+class RoadmapRateLimitError(RoadmapSourceError):
+    code = "GITHUB_RATE_LIMITED"
 
 
 class RoadmapIssueNotFoundError(RoadmapSourceError):

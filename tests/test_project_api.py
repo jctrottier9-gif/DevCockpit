@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app.application.projects import ProjectCatalog
-from app.application.roadmaps import RoadmapIssue, RoadmapSourceError
+from app.application.roadmaps import RoadmapIssue, RoadmapRateLimitError, RoadmapSourceError
 from app.config import Settings
 from app.domain.project import Project
 from app.main import create_app
@@ -23,6 +23,17 @@ class FakeReader:
 class OfflineReader:
     def read(self, project: Project) -> RoadmapIssue:
         raise RoadmapSourceError("offline")
+
+
+class RateLimitedReader:
+    def read(self, project: Project) -> RoadmapIssue:
+        raise RoadmapRateLimitError(
+            "rate limited",
+            status_code=403,
+            token_configured=True,
+            rate_limit_remaining="0",
+            rate_limit_reset="1791339999",
+        )
 
 
 def client_for(reader) -> TestClient:
@@ -54,6 +65,21 @@ def test_github_failure_is_distinct_from_valid_pipeline_without_ready() -> None:
     assert response.json()["source"] == {
         "status": "unavailable",
         "code": "GITHUB_UNAVAILABLE",
+    }
+    assert response.json()["pipeline"] is None
+
+
+def test_rate_limit_failure_exposes_safe_source_diagnostics() -> None:
+    response = client_for(RateLimitedReader()).get("/api/projects/DevCockpit/roadmap")
+
+    assert response.status_code == 502
+    assert response.json()["source"] == {
+        "status": "unavailable",
+        "code": "GITHUB_RATE_LIMITED",
+        "http_status": 403,
+        "token_configured": True,
+        "rate_limit_remaining": "0",
+        "rate_limit_reset": "1791339999",
     }
     assert response.json()["pipeline"] is None
 

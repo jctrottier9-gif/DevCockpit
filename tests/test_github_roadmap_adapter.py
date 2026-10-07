@@ -5,6 +5,7 @@ from app.application.roadmaps import (
     RoadmapAuthorizationError,
     RoadmapIssueNotFoundError,
     RoadmapPayloadError,
+    RoadmapRateLimitError,
     RoadmapSourceError,
 )
 from app.domain.project import Project
@@ -44,6 +45,50 @@ def test_authorization_errors_are_typed(status: int) -> None:
 
     with pytest.raises(RoadmapAuthorizationError):
         reader.read(PROJECT)
+
+
+def test_primary_rate_limit_403_is_not_reported_as_authorization_failure() -> None:
+    reader = reader_for(
+        lambda _: httpx.Response(
+            403,
+            headers={
+                "X-RateLimit-Remaining": "0",
+                "X-RateLimit-Reset": "1791339999",
+            },
+            json={"message": "API rate limit exceeded"},
+        ),
+        token="secret-token",
+    )
+
+    with pytest.raises(RoadmapRateLimitError) as raised:
+        reader.read(PROJECT)
+
+    assert raised.value.source_details() == {
+        "http_status": 403,
+        "token_configured": True,
+        "rate_limit_remaining": "0",
+        "rate_limit_reset": "1791339999",
+    }
+
+
+def test_secondary_rate_limit_429_exposes_retry_after_without_secret() -> None:
+    reader = reader_for(
+        lambda _: httpx.Response(
+            429,
+            headers={"Retry-After": "60"},
+            json={"message": "secondary rate limit"},
+        ),
+        token="secret-token",
+    )
+
+    with pytest.raises(RoadmapRateLimitError) as raised:
+        reader.read(PROJECT)
+
+    assert raised.value.source_details() == {
+        "http_status": 429,
+        "token_configured": True,
+        "retry_after": "60",
+    }
 
 
 def test_missing_issue_is_typed() -> None:
