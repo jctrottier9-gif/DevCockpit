@@ -348,7 +348,7 @@ def test_branch_discovery_paginates_until_matching_work_item_branch() -> None:
                     ],
                 )
             raise AssertionError(f"unexpected branches page: {page}")
-        if path == "/repos/jctrottier9-gif/DevCockpit/compare/main...work%2Fdc-021-execution-ci":
+        if path == "/repos/jctrottier9-gif/DevCockpit/compare/main...work/dc-021-execution-ci":
             return httpx.Response(
                 200,
                 json={
