@@ -109,6 +109,7 @@
         await router.closeManagedTab({
           session: sentContext.session,
           tabId: sentContext.tab_id,
+          conversationUrl: sentContext.conversation_url,
         });
       }
       await broadcast("devcockpit_send_state_changed");
