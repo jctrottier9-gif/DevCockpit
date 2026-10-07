@@ -9,6 +9,7 @@ import {
   classifyCockpitRefreshFailure,
   createCockpitRefreshLoop,
   resolveCockpitRefreshInterval,
+  runCockpitSupervisionCycle,
   type CockpitRefreshLoop,
 } from './cockpitRefresh'
 import type { CockpitOverview, Project } from './dashboardTypes'
@@ -175,7 +176,6 @@ function App() {
 
       if (hasCurrentSnapshot) {
         setRefreshing(true)
-        setSurfaceRefreshVersion(version => version + 1)
       } else {
         setState('loading')
         setError('')
@@ -183,11 +183,43 @@ function App() {
       setRefreshError('')
 
       try {
-        const response = await fetch(
-          '/api/projects/' + encodeURIComponent(projectId) + '/cockpit',
-          { signal: controller.signal },
-        )
-        const payload = (await response.json()) as CockpitOverview & { detail?: unknown }
+        const encodedProjectId = encodeURIComponent(projectId)
+        const payload = await runCockpitSupervisionCycle<CockpitOverview & { detail?: unknown }>({
+          evaluate: async () => {
+            const evaluationResponse = await fetch(
+              '/api/projects/' + encodedProjectId + '/executions/evaluate',
+              { method: 'POST', signal: controller?.signal },
+            )
+            if (evaluationResponse.ok) return
+
+            let detail: unknown
+            try {
+              detail = ((await evaluationResponse.json()) as { detail?: unknown }).detail
+            } catch {
+              detail = null
+            }
+            throw new Error(
+              typeof detail === 'string'
+                ? detail
+                : 'Deterministic cockpit supervision unavailable',
+            )
+          },
+          readSnapshot: async () => {
+            const response = await fetch(
+              '/api/projects/' + encodedProjectId + '/cockpit',
+              { signal: controller?.signal },
+            )
+            const snapshot = (await response.json()) as CockpitOverview & { detail?: unknown }
+            if (!response.ok) {
+              throw new Error(
+                typeof snapshot.detail === 'string'
+                  ? snapshot.detail
+                  : 'Cockpit overview unavailable',
+              )
+            }
+            return snapshot
+          },
+        })
 
         if (!isCurrentProjectLoad(
           projectId,
@@ -196,9 +228,6 @@ function App() {
           loadGenerationRef.current,
         )) return
 
-        if (!response.ok) {
-          throw new Error(typeof payload.detail === 'string' ? payload.detail : 'Cockpit overview unavailable')
-        }
         if (payload.project?.project_id !== projectId) {
           throw new Error('Project context mismatch while loading ' + projectId)
         }
@@ -210,6 +239,7 @@ function App() {
         setError('')
         setRefreshError('')
         setState('ready')
+        setSurfaceRefreshVersion(version => version + 1)
       } catch (caught: unknown) {
         if (caught instanceof DOMException && caught.name === 'AbortError') return
         if (!isCurrentProjectLoad(
