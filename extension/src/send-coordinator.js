@@ -179,6 +179,7 @@
       sendStore,
       router,
       sendToTab,
+      wakeTab = async () => {},
       emitStatus = () => false,
       sleep = (delay) => new Promise((resolve) => setTimeout(resolve, delay)),
       retryDelaysMs = DEFAULT_RETRY_DELAYS_MS,
@@ -188,6 +189,7 @@
       this.sendStore = sendStore;
       this.router = router;
       this.sendToTab = sendToTab;
+      this.wakeTab = wakeTab;
       this.emitStatus = emitStatus;
       this.sleep = sleep;
       this.retryDelaysMs = retryDelaysMs;
@@ -392,6 +394,18 @@
         }
 
         const hasRetry = index < this.retryDelaysMs.length;
+        if (
+          hasRetry &&
+          code === "content_script_unavailable" &&
+          !Number.isInteger(manualTabId) &&
+          Number.isInteger(tab?.id)
+        ) {
+          try {
+            await this.wakeTab(tab.id);
+          } catch {
+            // Activation is best-effort. The bounded readiness retry remains authoritative.
+          }
+        }
         const nextRetryAt = hasRetry
           ? new Date(Date.now() + this.retryDelaysMs[index]).toISOString()
           : null;
