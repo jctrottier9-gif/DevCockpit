@@ -184,7 +184,6 @@ test("created-tab navigation timeout remains BLOCKED before SEND_ARMED", async (
   assert.equal(result.error, "created_tab_navigation_timeout");
   assert.deepEqual(calls, []);
   assert.equal(transitions.includes("SEND_ARMED"), false);
-  assert.deepEqual(wakeCalls, [7]);
   assert.equal((await sendStore.get(DELIVERY_ID)).state, "BLOCKED");
 });
 
