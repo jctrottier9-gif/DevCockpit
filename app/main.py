@@ -15,6 +15,7 @@ from app.api.flow_analytics import build_flow_analytics_router
 from app.api.orchestration import build_orchestration_router
 from app.api.releases import build_release_router
 from app.api.forward_ports import build_forward_port_router
+from app.api.release_panel import build_release_panel_router
 from app.application.chatgpt_prompt_sends import (
     ChatGptSendStatusError,
     RecordChatGptSendStatusCommand,
@@ -615,6 +616,14 @@ def create_app(
         roadmap_reader=active_roadmap_reader,
         uow_factory=uow_factory,
         workflow=active_forward_port_workflow,
+    ))
+
+    application.include_router(build_release_panel_router(
+        project_catalog=active_project_catalog,
+        roadmap_reader=active_roadmap_reader,
+        evidence_reader=active_execution_reader,
+        artifact_reader=active_release_workflow,
+        uow_factory=uow_factory,
     ))
 
     application.include_router(build_architecture_gate_router(
