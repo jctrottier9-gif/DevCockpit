@@ -317,6 +317,16 @@ def evaluate_project_parallel_dev_executions(
             work_item = item.execution.work_item
             if work_item is None:
                 continue
+            context = project.delivery_context_for(work_item.key)
+            if context is not None and context.mode is DeliveryMode.HOTFIX:
+                # Configured snapshots are candidates, not human acceptance.
+                # Fail closed before preparing or recovering any DEV dispatch.
+                try:
+                    accepted = uow.delivery_contexts.get(context.repository_id, work_item.key)
+                except Exception:
+                    accepted = None
+                if accepted != context:
+                    continue
 
             if item.active:
                 if (
@@ -559,6 +569,25 @@ def _execute_deterministic_finalization_actions(
             execution,
             attempts=attempts,
         )
+        context = (
+            project.delivery_context_for(execution.work_item.key)
+            if execution.work_item is not None else None
+        )
+        if context is not None and context.mode is DeliveryMode.HOTFIX:
+            try:
+                accepted = uow.delivery_contexts.get(context.repository_id, context.work_item_id)
+            except Exception:
+                accepted = None
+            if accepted != context:
+                updated.append(_CandidateSnapshot(
+                    snapshot.scheduler,
+                    blocked_projection(
+                        work_item=execution.work_item,
+                        code="HOTFIX_NOT_ACCEPTED",
+                        message="The configured hotfix context has no matching persisted acceptance.",
+                    ),
+                ))
+                continue
         if (
             finalizer is None
             or execution.next_action not in {NextAction.SYNC_BRANCH, NextAction.MERGE_PR}
