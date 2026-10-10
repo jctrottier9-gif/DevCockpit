@@ -200,12 +200,12 @@ class GitHubPullRequestFinalizer:
         """Recheck an accepted hotfix target and its protected CI before GitHub write."""
         if context is None:
             return None
-        if (context.mode is not DeliveryMode.HOTFIX
+        if (context.mode not in {DeliveryMode.HOTFIX, DeliveryMode.FORWARD_PORT}
                 or project.delivery_context_for(context.work_item_id) != context):
             return FinalizationMutationResult(
                 FinalizationAttemptStatus.BLOCKED,
                 error_code="UNSUPPORTED_RELEASE_FINALIZATION",
-                message="Only an accepted HOTFIX delivery is finalizable in DC-075B.",
+                message="Only accepted HOTFIX or FORWARD_PORT delivery is finalizable.",
             )
         head = detail.get("head") if isinstance(detail, dict) else None
         base = detail.get("base") if isinstance(detail, dict) else None
@@ -239,7 +239,7 @@ class GitHubPullRequestFinalizer:
                 timeout_seconds=self._timeout_seconds,
             )
             required = workflow.require_release_protection(
-                client, base_url, context.release_branch,
+                client, base_url, context.expected_pr_base,
             )
             if for_merge:
                 workflow.verify_release_checks(
