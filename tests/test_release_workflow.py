@@ -191,3 +191,35 @@ def test_hotfix_lock_serializes_publication_per_release():
     first = project.resource_lock_requirements_for(ctx.work_item_id)
     assert [entry.surface.key for entry in first] == ["release:5:release/1.4"]
     assert first[0].mode.value == "EXCLUSIVE"
+
+
+def test_accepted_hotfix_branch_can_have_name_without_workitem_token():
+    from app.domain.execution import (
+        BranchEvidence, ExecutionEvidence, ExecutionState,
+        derive_execution_projection,
+    )
+    from app.domain.roadmap import WorkItem, WorkItemStatus, WorkItemType
+    item = WorkItem(key="FIX-1", type=WorkItemType.WORK,
+                    status=WorkItemStatus.READY, parent="#1", lane="MAIN",
+                    title="Release hotfix")
+    branch = BranchEvidence(name="hotfix/stable-patch", sha="b" * 40, ahead_by=1)
+    result = derive_execution_projection(
+        item, ExecutionEvidence(
+            default_branch="main", branches=(branch,),
+            accepted_work_branch="hotfix/stable-patch",
+        ),
+    )
+    assert result.state is ExecutionState.DEVELOPING
+    assert result.branch.name == "hotfix/stable-patch"
+
+
+def test_hotfix_requires_protected_release_target():
+    ctx, project = fixtures()
+    transport, _, _, _ = git_simulator()
+    def unprotected(request):
+        if request.url.path.endswith("/branches/release/1.4/protection"):
+            return httpx.Response(404, json={"message": "Not Found"})
+        return transport.handle_request(request)
+    workflow = GitHubReleaseWorkflow(transport=httpx.MockTransport(unprotected))
+    with pytest.raises(ReleaseWorkflowError, match="GITHUB_HTTP_404"):
+        workflow.prepare_hotfix(project, ctx)
