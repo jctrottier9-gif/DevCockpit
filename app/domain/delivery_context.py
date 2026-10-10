@@ -162,7 +162,6 @@ class DeliveryObservation:
     repository_full_name: str
     resolved_ref: str
     source_commit_sha: str
-    pr_base_name: str
     current_base_sha: str
     working_branch: str | None = None
     working_head_sha: str | None = None
