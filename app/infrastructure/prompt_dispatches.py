@@ -12,6 +12,7 @@ from app.infrastructure.chatgpt_responses import SqlAlchemyImportedChatGptRespon
 from app.infrastructure.chatgpt_prompt_sends import SqlAlchemyChatGptPromptSendRepository
 from app.infrastructure.conversation_bindings import SqlAlchemyConversationBindingRepository
 from app.infrastructure.database import Base
+from app.infrastructure.delivery_contexts import SqlAlchemyDeliveryContextRepository
 from app.infrastructure.handoffs import SqlAlchemyDecisionRepository, SqlAlchemyHandoffRepository
 from app.infrastructure.prompt_deliveries import SqlAlchemyPromptDeliveryRepository
 from app.infrastructure.pr_finalization_attempts import (
@@ -126,6 +127,7 @@ class SqlAlchemyUnitOfWork:
         self.roadmap_target_fences: SqlAlchemyRoadmapTargetFenceRepository
         self.roadmap_writeback_authorizations: SqlAlchemyRoadmapWritebackAuthorizationRepository
         self.pr_finalization_attempts: SqlAlchemyPullRequestFinalizationAttemptRepository
+        self.delivery_contexts: SqlAlchemyDeliveryContextRepository
 
     def __enter__(self) -> SqlAlchemyUnitOfWork:
         self._session = self._session_factory()
@@ -149,6 +151,7 @@ class SqlAlchemyUnitOfWork:
         self.roadmap_target_fences = SqlAlchemyRoadmapTargetFenceRepository(self._session)
         self.roadmap_writeback_authorizations = SqlAlchemyRoadmapWritebackAuthorizationRepository(self._session)
         self.pr_finalization_attempts = SqlAlchemyPullRequestFinalizationAttemptRepository(self._session)
+        self.delivery_contexts = SqlAlchemyDeliveryContextRepository(self._session)
         self.prompt_dispatches = SqlAlchemyPromptDispatchRepository(self._session)
         self.prompt_deliveries = SqlAlchemyPromptDeliveryRepository(self._session)
         self.chatgpt_responses = SqlAlchemyImportedChatGptResponseRepository(self._session)
