@@ -110,6 +110,7 @@ class ExecutionEvidence:
     workflow_runs: tuple[WorkflowRunEvidence, ...] = ()
     requires_verified_artifact: bool = False
     artifact_verified: bool = False
+    accepted_work_branch: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -367,7 +368,10 @@ def derive_execution_projection(
     active_branches = tuple(
         branch
         for branch in evidence.branches
-        if branch.ahead_by > 0 and branch_matches_work_item(branch.name, work_item.key)
+        if branch.ahead_by > 0 and (
+            branch_matches_work_item(branch.name, work_item.key)
+            or branch.name == evidence.accepted_work_branch
+        )
     )
     if len(active_branches) > 1:
         return blocked_projection(
