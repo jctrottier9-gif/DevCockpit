@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 
 from app.application.delivery_contexts import release_automation_allowed
+from app.domain.delivery_context import DeliveryMode
 from app.application.executions import (
     ExecutionEvidenceReader,
     ExecutionSourceError,
@@ -597,7 +598,7 @@ def _execute_deterministic_finalization_actions(
         uow.commit()
 
         context = project.delivery_context_for(execution.work_item.key)
-        target_guard = {"delivery_context": context} if context is not None else {}
+        target_guard = {"delivery_context": context} if context is not None and context.mode is DeliveryMode.HOTFIX else {}
         if execution.next_action is NextAction.SYNC_BRANCH:
             if pull_request.base_sha is None:
                 result = None
