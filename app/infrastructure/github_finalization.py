@@ -7,7 +7,7 @@ import httpx
 from app.application.pr_finalization import FinalizationMutationResult
 from app.domain.pr_finalization import FinalizationAttemptStatus
 from app.domain.project import Project
-from app.domain.delivery_context import DeliveryContext, DeliveryMode
+from app.domain.delivery_context import DeliveryContext, DeliveryMode, validate_pair, DeliveryContractError
 from app.infrastructure.github_delivery_context import GitHubDeliveryReferenceReader, DeliveryReferenceError
 from app.infrastructure.github_release_workflow import GitHubReleaseWorkflow, ReleaseWorkflowError
 
@@ -200,13 +200,25 @@ class GitHubPullRequestFinalizer:
         """Recheck an accepted hotfix target and its protected CI before GitHub write."""
         if context is None:
             return None
-        if (context.mode is not DeliveryMode.HOTFIX
+        if (context.mode not in {DeliveryMode.HOTFIX, DeliveryMode.FORWARD_PORT}
                 or project.delivery_context_for(context.work_item_id) != context):
             return FinalizationMutationResult(
                 FinalizationAttemptStatus.BLOCKED,
                 error_code="UNSUPPORTED_RELEASE_FINALIZATION",
-                message="Only an accepted HOTFIX delivery is finalizable in DC-075B.",
+                message="Only accepted HOTFIX or FORWARD_PORT delivery is finalizable.",
             )
+        if context.mode is DeliveryMode.FORWARD_PORT:
+            source = project.delivery_context_for(context.linked_work_item)
+            try:
+                if source is None:
+                    raise DeliveryContractError("Missing linked HOTFIX")
+                validate_pair(source, context)
+            except DeliveryContractError as exc:
+                return FinalizationMutationResult(
+                    FinalizationAttemptStatus.BLOCKED,
+                    error_code="FORWARD_SOURCE_CONTEXT_MISMATCH",
+                    message=str(exc),
+                )
         head = detail.get("head") if isinstance(detail, dict) else None
         base = detail.get("base") if isinstance(detail, dict) else None
         head_repo = head.get("repo") if isinstance(head, dict) else None
@@ -239,7 +251,7 @@ class GitHubPullRequestFinalizer:
                 timeout_seconds=self._timeout_seconds,
             )
             required = workflow.require_release_protection(
-                client, base_url, context.release_branch,
+                client, base_url, context.expected_pr_base,
             )
             if for_merge:
                 workflow.verify_release_checks(

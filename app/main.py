@@ -14,6 +14,7 @@ from app.api.cockpit import build_cockpit_router
 from app.api.flow_analytics import build_flow_analytics_router
 from app.api.orchestration import build_orchestration_router
 from app.api.releases import build_release_router
+from app.api.forward_ports import build_forward_port_router
 from app.application.chatgpt_prompt_sends import (
     ChatGptSendStatusError,
     RecordChatGptSendStatusCommand,
@@ -70,6 +71,7 @@ from app.infrastructure.github_architecture import GitHubArchitectureDocumentRea
 from app.infrastructure.github_execution import GitHubExecutionReader
 from app.infrastructure.github_finalization import GitHubPullRequestFinalizer
 from app.infrastructure.github_release_workflow import GitHubReleaseWorkflow
+from app.infrastructure.github_forward_port import GitHubForwardPortWorkflow
 from app.infrastructure.github_flow_analytics import GitHubFlowAnalyticsReader
 from app.infrastructure.github_issues import GitHubIssueReader
 from app.infrastructure.github_review import GitHubReviewReader
@@ -501,6 +503,10 @@ def create_app(
         token=token,
         timeout_seconds=active_settings.github_timeout_seconds,
     )
+    active_forward_port_workflow = GitHubForwardPortWorkflow(
+        token=token,
+        timeout_seconds=active_settings.github_timeout_seconds,
+    )
     active_flow_analytics_reader = flow_analytics_reader or GitHubFlowAnalyticsReader(
         token=token,
         timeout_seconds=active_settings.github_timeout_seconds,
@@ -590,6 +596,7 @@ def create_app(
     application.state.execution_reader = active_execution_reader
     application.state.execution_finalizer = active_execution_finalizer
     application.state.release_workflow = active_release_workflow
+    application.state.forward_port_workflow = active_forward_port_workflow
     application.state.flow_analytics_reader = active_flow_analytics_reader
     application.state.roadmap_writer = active_roadmap_writer
     application.state.issue_mapping_reader = active_issue_mapping_reader
@@ -602,6 +609,12 @@ def create_app(
         roadmap_reader=active_roadmap_reader,
         uow_factory=uow_factory,
         workflow=active_release_workflow,
+    ))
+    application.include_router(build_forward_port_router(
+        project_catalog=active_project_catalog,
+        roadmap_reader=active_roadmap_reader,
+        uow_factory=uow_factory,
+        workflow=active_forward_port_workflow,
     ))
 
     application.include_router(build_architecture_gate_router(

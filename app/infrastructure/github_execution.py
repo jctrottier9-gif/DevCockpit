@@ -47,7 +47,7 @@ class GitHubExecutionReader:
 
     def read(self, project: Project, work_item: WorkItem) -> ExecutionEvidence:
         context = project.delivery_context_for(work_item.key)
-        if context is not None and context.mode is not DeliveryMode.HOTFIX:
+        if context is not None and context.mode not in {DeliveryMode.HOTFIX, DeliveryMode.FORWARD_PORT}:
             try:
                 GitHubDeliveryReferenceReader(
                     token=self._token,
@@ -97,7 +97,7 @@ class GitHubExecutionReader:
                 )
                 if not isinstance(pulls_payload, list):
                     raise ExecutionPayloadError("GitHub pull-request response must be an array")
-                if context is not None and context.mode is DeliveryMode.HOTFIX:
+                if context is not None and context.mode in {DeliveryMode.HOTFIX, DeliveryMode.FORWARD_PORT}:
                     # A truncated first PR page can hide an existing delivery.
                     all_pulls = list(pulls_payload)
                     page = 2
@@ -114,15 +114,18 @@ class GitHubExecutionReader:
                         if page > 100:
                             raise ExecutionPayloadError("PR pagination exceeded safety limit")
                     pulls_payload = all_pulls
+                if (context is not None and context.mode is DeliveryMode.FORWARD_PORT
+                        and default_branch != "main"):
+                    raise ExecutionPayloadError("FORWARD_PORT_REQUIRES_MAIN_DEFAULT_BRANCH")
                 pull_requests = tuple(self._parse_pull_request(item) for item in pulls_payload)
-                if context is not None and context.mode is DeliveryMode.HOTFIX:
+                if context is not None and context.mode in {DeliveryMode.HOTFIX, DeliveryMode.FORWARD_PORT}:
                     try:
                         workflow = GitHubReleaseWorkflow(
                             token=self._token, transport=self._transport,
                             timeout_seconds=self._timeout_seconds,
                         )
                         workflow.require_release_protection(
-                            client, base_url, context.release_branch,
+                            client, base_url, context.expected_pr_base,
                         )
                     except ReleaseWorkflowError as exc:
                         raise ExecutionPayloadError(
@@ -180,7 +183,7 @@ class GitHubExecutionReader:
                         ).read_verified(
                             context, pr_number=selected.number,
                             allow_merged_advance=(
-                                context.mode is DeliveryMode.HOTFIX and selected.merged
+                                context.mode in {DeliveryMode.HOTFIX, DeliveryMode.FORWARD_PORT} and selected.merged
                             ),
                         )
                     except DeliveryReferenceError as exc:
@@ -188,7 +191,7 @@ class GitHubExecutionReader:
                             "Accepted PR source/target is stale: " + str(exc)
                         ) from exc
 
-                if context is not None and context.mode is DeliveryMode.HOTFIX and selected is None:
+                if context is not None and context.mode in {DeliveryMode.HOTFIX, DeliveryMode.FORWARD_PORT} and selected is None:
                     try:
                         GitHubDeliveryReferenceReader(
                             token=self._token,
@@ -197,7 +200,7 @@ class GitHubExecutionReader:
                         ).read_verified(context)
                     except DeliveryReferenceError as exc:
                         raise ExecutionPayloadError(
-                            "Accepted hotfix target is stale: " + str(exc)
+                            "Accepted delivery target is stale: " + str(exc)
                         ) from exc
 
                 artifact_verified = False
@@ -232,10 +235,10 @@ class GitHubExecutionReader:
                         client,
                         base_url,
                         context.expected_pr_base if context is not None
-                        and context.mode is DeliveryMode.HOTFIX else default_branch,
+                        and context.mode in {DeliveryMode.HOTFIX, DeliveryMode.FORWARD_PORT} else default_branch,
                         work_item.key,
                         expected_branch=context.expected_work_branch if context is not None
-                        and context.mode is DeliveryMode.HOTFIX else None,
+                        and context.mode in {DeliveryMode.HOTFIX, DeliveryMode.FORWARD_PORT} else None,
                     )
 
                 return ExecutionEvidence(

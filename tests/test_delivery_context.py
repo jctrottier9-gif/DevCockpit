@@ -138,7 +138,7 @@ def test_legacy_normal_prompt_and_release_automation_gate():
     assert release_automation_allowed(project.delivery_context_for("other"))
     assert release_automation_allowed(normal())
     assert release_automation_allowed(hotfix())  # DC-075B guarded path
-    assert not release_automation_allowed(forward_port())
+    assert release_automation_allowed(forward_port())  # DC-075C guarded path
     assert "vrai main" in dev_target_instructions(None)
     prompt = dev_target_instructions(hotfix())
     assert "release/1.4" in prompt and "refs/heads/release/1.4" in prompt
