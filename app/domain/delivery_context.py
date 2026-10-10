@@ -178,8 +178,6 @@ def validate_observation(context: DeliveryContext, observed: DeliveryObservation
         errors.append("REF_MISMATCH")
     if observed.source_commit_sha != context.source_sha:
         errors.append("SOURCE_MOVED_OR_MISSING")
-    if observed.pr_base_name != context.expected_pr_base:
-        errors.append("BASE_NAME_MISMATCH")
     if observed.current_base_sha != context.observed_pr_base_sha:
         errors.append("BASE_TIP_STALE")
     if observed.working_branch is not None and observed.working_branch != context.expected_work_branch:
