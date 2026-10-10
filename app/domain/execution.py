@@ -166,7 +166,7 @@ def pull_request_matches_work_item(
     # branch/title names. FIX-42 must not swallow FIX-42-FWD's PR after both
     # versioned deliveries coexist. Conflicting duplicate footers fail closed.
     declared = re.findall(
-        r"^\\s*Work-Item:\\s*(\\S.*?)\\s*$",
+        r"^\s*Work-Item:\s*(\S.*?)\s*$",
         pull_request.body,
         re.IGNORECASE | re.MULTILINE,
     )
