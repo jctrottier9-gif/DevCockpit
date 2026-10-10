@@ -114,6 +114,9 @@ class GitHubExecutionReader:
                         if page > 100:
                             raise ExecutionPayloadError("PR pagination exceeded safety limit")
                     pulls_payload = all_pulls
+                if (context is not None and context.mode is DeliveryMode.FORWARD_PORT
+                        and default_branch != "main"):
+                    raise ExecutionPayloadError("FORWARD_PORT_REQUIRES_MAIN_DEFAULT_BRANCH")
                 pull_requests = tuple(self._parse_pull_request(item) for item in pulls_payload)
                 if context is not None and context.mode in {DeliveryMode.HOTFIX, DeliveryMode.FORWARD_PORT}:
                     try:
