@@ -1,6 +1,6 @@
 """Safe agent handoff for version-pinned WorkItems.
 
-DC-075A defines the contract, but cannot activate release mutations (DC-075B/C).
+DC-075A defines the contract; DC-075B/C guard their own mutations.
 """
 from __future__ import annotations
 
@@ -39,9 +39,11 @@ Aucun déploiement ni rollback SQL implicite.
 
 
 def release_automation_allowed(context: DeliveryContext | None) -> bool:
-    """Only accepted HOTFIX and legacy NORMAL may enter automated execution.
+    """Only NORMAL, HOTFIX and linked FORWARD_PORT can enter execution.
 
-    RELEASE preparation is an explicit mutation; FORWARD_PORT remains DC-075C.
-    The GitHub reader and finalizer enforce target-specific protection/CI.
+    RELEASE preparation remains explicit. GitHub readers and finalizers
+    enforce the independent accepted target, provenance, protection and CI.
     """
-    return context is None or context.mode in {DeliveryMode.NORMAL, DeliveryMode.HOTFIX}
+    return context is None or context.mode in {
+        DeliveryMode.NORMAL, DeliveryMode.HOTFIX, DeliveryMode.FORWARD_PORT,
+    }
