@@ -101,8 +101,14 @@ class GitHubForwardPortWorkflow(GitHubReleaseWorkflow):
             if (len(parents) != 2 or len(context.integrated_commits) != 1
                     or parents[0].get("sha") != source.starting_sha):
                 raise ForwardPortError("MERGE_DELTA_PARENT_UNPROVEN")
-            # The release-relative *first-parent* diff includes merge resolutions.
-            self._get(client, root + "/compare/" + source.starting_sha + "..." + integrated)
+            # The release-relative first-parent delta includes merge resolutions.
+            delta = self._get(
+                client, root + "/compare/" + source.starting_sha + "..." + integrated,
+            )
+            if (not isinstance(delta, dict) or delta.get("status") != "ahead"
+                    or not isinstance(delta.get("merge_base_commit"), dict)
+                    or delta["merge_base_commit"].get("sha") != source.starting_sha):
+                raise ForwardPortError("MERGE_DELTA_UNVERIFIED")
         else:
             if len(parents) != 1:
                 raise ForwardPortError("MERGE_COMMIT_NOT_CHERRY_PICKABLE")
