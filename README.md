@@ -190,6 +190,17 @@ python -m compileall -q app tests
 pytest -q
 ~~~
 
+## Maintained releases and forward-port
+
+DevCockpit supports separately accepted HOTFIX delivery to a maintained
+`release/x.y` and FORWARD_PORT delivery of the *integrated* fix to current
+`main`, with two WorkItems, GitHub PRs and CI histories. The cockpit's
+**Releases · hotfix · forward-port** panel displays accepted ref/tag/full SHA,
+the exact PR base and head, artifact publication evidence and external
+SQL Server compatibility/deployment warnings. It does not automatically
+deploy or migrate a consuming application. See
+[release acceptance and consumer AGENTS.md instructions](docs/maintained-release-acceptance.md).
+
 ## GitHub projects and canonical roadmap
 
 DC-020 introduces an explicit, versioned local Project configuration in \`projects.json\`. Project is configuration rather than a database table in this slice: GitHub remains authoritative for roadmap state, and no persistent Project UI/workflow is required yet.
