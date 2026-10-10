@@ -463,6 +463,23 @@ Do not create an ADR for every small implementation detail.
 
 ---
 
+## 21. Read-only release cockpit and acceptance (DC-075D)
+
+- The release panel is a **read-only** projection joining accepted persisted
+  DeliveryContext V1, the canonical roadmap and fresh GitHub execution,
+  CI and publication evidence. React/Firefox are never acceptance authorities.
+- Display HOTFIX and FORWARD_PORT as two linked, distinct WorkItems with exact
+  PR base **names**, branch heads, versions/digests and diagnostics. Never
+  infer success from roadmap DONE, a missing PR, stale CI or artifact prose.
+- A GitHub release digest is not independent registry attestation. No
+  automatic deployment, SQL Server migration or rollback. Compatibility,
+  old-app-after-new-schema behavior and backup/restore require separately
+  reviewed consumer evidence.
+- The consuming repository's own AGENTS.md alignment is a separately
+  authorized delivery, not an incidental write from DevCockpit.
+
+---
+
 ## 18. Initial product direction
 
 The initial delivery sequence is intentionally incremental:
