@@ -9,6 +9,7 @@ from app.domain.project import Project
 from app.infrastructure.github_forward_port import (
     ForwardPortError, GitHubForwardPortWorkflow,
 )
+from app.infrastructure.github_release_workflow import ReleaseWorkflowError
 from test_delivery_context import forward_port, hotfix
 
 
@@ -226,6 +227,6 @@ def test_moved_main_fails_closed_and_never_writes():
     project, fwd, hot, branches, _, seen, service = simulator(moved_main=True)
     fwd = replace(fwd, expected_work_branch="forward/FWD-1")
     project = replace(project, delivery_contexts=(hot, fwd))
-    with pytest.raises(ForwardPortError, match="SOURCE_REF_MOVED"):
+    with pytest.raises(ReleaseWorkflowError, match="SOURCE_REF_MOVED"):
         service.prepare_forward_port(project, fwd, hot)
     assert not any(verb == "POST" for verb, _ in seen)
