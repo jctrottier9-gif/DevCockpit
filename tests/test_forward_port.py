@@ -18,7 +18,8 @@ A, B, C, D = ("a" * 40, "b" * 40, "c" * 40, "d" * 40)
 def simulator(*, kind="squash", already_present=False, missing_provenance=False,
               retargeted=False, moved_main=False):
     hot = hotfix()
-    fwd = forward_port()
+    fwd = replace(forward_port(), integrated_commits=(C,),
+                  expected_work_branch="forward/FWD-1")
     if kind == "merge":
         fwd = replace(fwd, integrated_commits=(C,),
                       forward_port_method="MERGE_DELTA_ADAPT")
@@ -149,19 +150,19 @@ def test_prepare_idempotent_on_pinned_main_never_changes_release():
     project, fwd, hot, branches, _, seen, service = simulator()
     first = service.prepare_forward_port(project, fwd, hot)
     second = service.prepare_forward_port(project, fwd, hot)
-    assert first.branch == "dev/FIX-1" if False else "dev/FIX-1"
-    # Forward source and target must never share a branch (fail closed).
-    assert second == first
+    assert first == second
+    assert first.branch == "forward/FWD-1"
+    assert branches["release/1.4"] == C
+    assert sum(1 for verb, path in seen if verb == "POST" and
+               path == "/repos/owner/repo/git/refs") == 1
 
 
 def test_prepared_forward_port_uses_separate_work_branch_and_provenance():
     project, fwd, hot, branches, _, seen, service = simulator()
-    # Replace the legacy fixture's branch to satisfy independent WorkItem identity.
-    assert hot.expected_work_branch == fwd.expected_work_branch
     fwd = replace(fwd, expected_work_branch="forward/FWD-1")
     project = replace(project, delivery_contexts=(hot, fwd))
     proof = service.prepare_forward_port(project, fwd, hot)
-    assert proof.main_sha == A and proof.source_commits == (B,) if False else (C,)
+    assert proof.main_sha == A and proof.source_commits == (C,)
     assert proof.branch == "forward/FWD-1"
     assert proof.action == "APPLY_INTEGRATED_DELTA"
     assert branches["forward/FWD-1"] == A
