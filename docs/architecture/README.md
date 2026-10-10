@@ -20,6 +20,7 @@ Current decisions:
 - [ADR-0014 — Automatic ChatGPT routing, durable ConversationBinding, and fail-stop send idempotence](ADR-0014-automatic-chatgpt-routing-and-send-idempotence.md)
 - [ADR-0015 — Hybrid cockpit and application projection contracts](ADR-0015-hybrid-cockpit-and-projection-contracts.md)
 - [ADR-0016 — Deterministic pull-request finalization](ADR-0016-deterministic-pr-finalization.md)
+- [ADR-0017 — Maintained releases, isolated hotfixes and deterministic forward-port](ADR-0017-maintained-releases-and-forward-port.md)
 
 ## Rule
 
