@@ -186,6 +186,7 @@ export default function AttentionCenter({
       </button>
     </div>
 
+    <p className="attention-meta"><a href="#release-supervision">Voir la supervision des releases et forward-ports</a></p>
     {error && <p role="alert" className="diagnostics">{error}</p>}
     {notice && <p role="status" className="attention-clear">{notice}</p>}
 
