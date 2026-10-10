@@ -193,13 +193,20 @@ class GitHubForwardPortWorkflow(GitHubReleaseWorkflow):
             for source_sha in context.integrated_commits:
                 cherry = "(cherry picked from commit " + source_sha + ")"
                 adaptation = "Forward-Port-Of: " + source_sha
-                if not any(
-                    cherry in message or (
-                        adaptation in message.splitlines()
-                        and any(line.startswith("Forward-Port-Reason: ")
-                                for line in message.splitlines())
-                    ) for message in messages
-                ):
+                def documented_adaptation(message: str) -> bool:
+                    lines = message.splitlines()
+                    return (adaptation in lines
+                            and any(line.startswith("Forward-Port-Reason: ")
+                                    and line.removeprefix("Forward-Port-Reason: ").strip()
+                                    for line in lines))
+                # An integrated merge needs a reviewed release-relative delta.
+                # Never authorize an arbitrary mainline cherry-pick of the merge.
+                if context.forward_port_method == "MERGE_DELTA_ADAPT":
+                    proven = any(documented_adaptation(message) for message in messages)
+                else:
+                    proven = any(cherry in message or documented_adaptation(message)
+                                 for message in messages)
+                if not proven:
                     raise ForwardPortError("FORWARD_PATCH_PROVENANCE_MISSING")
             prs = self._matching_prs(client, root, context)
             if len(prs) > 1:
