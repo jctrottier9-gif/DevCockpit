@@ -61,7 +61,7 @@ cannot be replaced by a direct push or force merge.
 
 ## Boundaries
 
-DC-075C does not add UI, Docker deployment, migration execution, artifact
+DC-075C did not add UI (DC-075D adds read-only cockpit supervision), Docker deployment, migration execution, artifact
 publication, automatic patch application, or hidden consumer repository
 changes; these are separate responsibilities. In particular, the system
 **prepares and verifies** the GitHub branch/PR; the DEV applies the
