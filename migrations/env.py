@@ -7,6 +7,7 @@ from app.infrastructure.database import Base
 from app.infrastructure import (  # noqa: F401
     chatgpt_responses,
     conversation_bindings,
+    delivery_contexts,
     handoffs,
     prompt_deliveries,
     prompt_dispatches,
