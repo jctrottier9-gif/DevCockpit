@@ -220,6 +220,15 @@ class GitHubPullRequestFinalizer:
                 error_code="RELEASE_PR_TARGET_MISMATCH",
                 message="GitHub PR head/repository/base differs from accepted hotfix delivery.",
             )
+        body = detail.get("body") if isinstance(detail, dict) else None
+        if (not isinstance(body, str)
+                or "Work-Item: " + context.work_item_id not in body.splitlines()
+                or "Delivery-Context-SHA256: " + context.fingerprint() not in body.splitlines()):
+            return FinalizationMutationResult(
+                FinalizationAttemptStatus.STALE,
+                error_code="RELEASE_PR_FINGERPRINT_MISMATCH",
+                message="PR body lacks exact accepted hotfix WorkItem and immutable contract fingerprint.",
+            )
         try:
             GitHubDeliveryReferenceReader(
                 token=self._token, transport=self._transport,
