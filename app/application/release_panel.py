@@ -143,7 +143,6 @@ def read_project_release_panel(project, *, roadmap_reader, evidence_reader,
                 }
             row["delivery_state"] = (
                 "MERGED" if pr is not None and pr.merged
-                else "DONE" if item.status is WorkItemStatus.DONE and pr is None
                 else execution.state.value
             )
             if execution.ci is not None:
@@ -154,6 +153,10 @@ def read_project_release_panel(project, *, roadmap_reader, evidence_reader,
                     for run in execution.ci.runs
                 ]
             row["diagnostics"].extend(d.code for d in execution.diagnostics)
+            if (item.status is WorkItemStatus.DONE and pr is None
+                    and context.mode is not DeliveryMode.RELEASE):
+                row["delivery_state"] = "NOT_OBSERVED"
+                row["diagnostics"].append("DELIVERY_PR_NOT_OBSERVED")
             if context.mode is DeliveryMode.HOTFIX and pr is not None and pr.merged:
                 if not pr.merge_commit_sha:
                     row["diagnostics"].append("INTEGRATED_SHA_NOT_OBSERVED")
@@ -163,7 +166,7 @@ def read_project_release_panel(project, *, roadmap_reader, evidence_reader,
                     )
                     if artifact is not None and evidence.artifact_verified:
                         row["artifact"] = {
-                            "status": "VERIFIED", "tag": artifact.tag,
+                            "status": "GITHUB_VERIFIED", "tag": artifact.tag,
                             "source_sha": artifact.source_sha, "image": artifact.image,
                             "digest": artifact.digest,
                             "validation_check": artifact.validation_check,
