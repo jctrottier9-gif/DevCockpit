@@ -291,6 +291,6 @@ def test_structured_work_item_prevents_hotfix_forward_port_pr_aliasing():
     assert pull_request_matches_work_item(forward_pr, forward.work_item_id)
     assert not pull_request_matches_work_item(forward_pr, hotfix.work_item_id)
     assert not pull_request_matches_work_item(
-        replace(forward_pr, body=forward_pr.body + "\\nWork-Item: FIX-42"),
+        replace(forward_pr, body=forward_pr.body + "\nWork-Item: FIX-42"),
         forward.work_item_id,
     )
