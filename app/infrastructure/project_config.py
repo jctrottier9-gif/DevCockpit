@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from app.domain.delivery_context import DeliveryContext
 from app.domain.project import Project, ProjectConfigurationError
 from app.domain.resource_lock import (
     ResourceLockRequirement,
@@ -30,7 +31,7 @@ def load_projects(path: str | Path) -> tuple[Project, ...]:
             "repository_full_name",
             "roadmap_issue_number",
         }
-        allowed_keys = required_keys | {"resource_locks"}
+        allowed_keys = required_keys | {"resource_locks", "delivery_contexts"}
         if (
             not isinstance(item, dict)
             or not required_keys <= set(item)
@@ -42,6 +43,7 @@ def load_projects(path: str | Path) -> tuple[Project, ...]:
                 project_id=item["project_id"],
                 repository_full_name=item["repository_full_name"],
                 roadmap_issue_number=item["roadmap_issue_number"],
+                delivery_contexts=_parse_delivery_contexts(item.get("delivery_contexts", [])),
                 resource_locks=_parse_resource_locks(
                     item.get("resource_locks", {}),
                     project_index=index,
@@ -101,3 +103,12 @@ def _parse_resource_locks(
             )
         )
     return tuple(declarations)
+
+def _parse_delivery_contexts(payload: object) -> tuple[DeliveryContext, ...]:
+    if not isinstance(payload, list):
+        raise ProjectConfigurationError("delivery_contexts must be a list")
+    try:
+        import json
+        return tuple(DeliveryContext.from_json(json.dumps(entry)) for entry in payload)
+    except (TypeError, ValueError) as exc:
+        raise ProjectConfigurationError(f"Invalid delivery context: {exc}") from exc
