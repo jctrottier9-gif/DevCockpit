@@ -127,6 +127,18 @@ class GitHubExecutionReader:
                         ),
                     )
 
+                if context is not None and selected is not None:
+                    try:
+                        GitHubDeliveryReferenceReader(
+                            token=self._token,
+                            timeout_seconds=self._timeout_seconds,
+                            transport=self._transport,
+                        ).read_verified(context, pr_number=selected.number)
+                    except DeliveryReferenceError as exc:
+                        raise ExecutionPayloadError(
+                            "Accepted PR source/target is stale: " + str(exc)
+                        ) from exc
+
                 workflow_runs: tuple[WorkflowRunEvidence, ...] = ()
                 branches: tuple[BranchEvidence, ...] = ()
 
