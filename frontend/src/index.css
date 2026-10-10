@@ -1297,3 +1297,13 @@ details { margin: 1rem 0; }
     flex-direction: column;
   }
 }
+
+/* DC-075D: source-scoped read-only delivery panels */
+.release-supervision { margin: 1.5rem 0; }
+.release-filters { display: flex; flex-wrap: wrap; gap: 1rem; margin: 1rem 0; }
+.release-filters label { display: grid; gap: .4rem; min-width: min(100%, 15rem); }
+.release-filters input, .release-filters select { max-width: 100%; }
+.release-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 23rem), 1fr)); gap: 1rem; }
+.release-delivery { min-width: 0; }
+.release-facts code, .release-delivery a { overflow-wrap: anywhere; word-break: break-word; }
+.release-delivery .workflow-list { margin: .75rem 0; }

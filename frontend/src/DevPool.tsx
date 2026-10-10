@@ -196,6 +196,7 @@ export default function DevPool({
       <div><dt>Libre</dt><dd>{projection.capacity.available}</dd></div>
       <div><dt>Candidats</dt><dd>{projection.executions.length}</dd></div>
     </dl>}
+    <p className="drawer-note"><a href="#release-supervision">Suivre les PR et versions release / main</a></p>
     <p className="drawer-note">
       « Slot actif » décrit l’occupation de capacité DevCockpit; ce n’est pas une preuve que ChatGPT génère actuellement.
     </p>

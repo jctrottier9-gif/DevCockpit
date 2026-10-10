@@ -56,6 +56,7 @@ export default function ReviewPanel({ projectId }: { projectId: string }) {
       <small>Observé {new Date(panel.observed_at).toLocaleString()}</small>
     </div>
 
+    <p className="drawer-note"><a href="#release-supervision">Voir les livraisons release / hotfix / main et leur provenance</a></p>
     {error && <p className="panel-error" role="status">{error}</p>}
     {!panel.complete && <div className="cockpit-warning" role="status">
       Résultats GitHub partiels : la limite de pagination a été atteinte.
