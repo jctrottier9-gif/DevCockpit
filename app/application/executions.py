@@ -5,7 +5,7 @@ from hashlib import sha256
 from typing import Protocol
 
 from app.application.delivery_contexts import dev_target_instructions, release_automation_allowed
-from app.domain.delivery_context import DeliveryMode
+from app.domain.delivery_context import DeliveryMode, validate_pair, DeliveryContractError
 from app.application.prompt_dispatches import (
     CreatePromptDispatchCommand,
     UnitOfWorkFactory,
@@ -232,6 +232,25 @@ def evaluate_project_execution(
                     projection=blocked_projection(
                         work_item=work_item, code="DELIVERY_NOT_ACCEPTED",
                         message="A matching persisted human-accepted delivery contract is required.",
+                    ),
+                    dispatch=None,
+                )
+        if context is not None and context.mode is DeliveryMode.FORWARD_PORT:
+            source = project.delivery_context_for(context.linked_work_item)
+            try:
+                if source is None:
+                    raise DeliveryContractError("Missing source HOTFIX")
+                validate_pair(source, context)
+                source_accepted = uow.delivery_contexts.get(
+                    source.repository_id, source.work_item_id,
+                )
+                if source_accepted != source:
+                    raise DeliveryContractError("Source HOTFIX not accepted")
+            except (DeliveryContractError, ValueError):
+                return ExecutionEvaluation(
+                    projection=blocked_projection(
+                        work_item=work_item, code="FORWARD_SOURCE_NOT_ACCEPTED",
+                        message="The linked HOTFIX and FORWARD_PORT must be independently accepted.",
                     ),
                     dispatch=None,
                 )
