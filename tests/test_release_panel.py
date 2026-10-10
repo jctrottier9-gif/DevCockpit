@@ -282,3 +282,15 @@ def test_invalid_roadmap_blocks_all_git_evidence_reads():
     assert response["source"]["status"] == "unavailable"
     assert response["items"] == []
     assert reader.calls == []
+
+
+def test_structured_work_item_prevents_hotfix_forward_port_pr_aliasing():
+    from app.domain.execution import pull_request_matches_work_item
+    hotfix, forward = contexts()
+    forward_pr = pr(forward, number=51, head=FWD_HEAD, merged=False)
+    assert pull_request_matches_work_item(forward_pr, forward.work_item_id)
+    assert not pull_request_matches_work_item(forward_pr, hotfix.work_item_id)
+    assert not pull_request_matches_work_item(
+        replace(forward_pr, body=forward_pr.body + "\\nWork-Item: FIX-42"),
+        forward.work_item_id,
+    )
