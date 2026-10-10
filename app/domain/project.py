@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 
-from app.domain.delivery_context import DeliveryContext
+from app.domain.delivery_context import DeliveryContext, DeliveryMode
 from app.domain.resource_lock import (
     ResourceLockRequirement,
     WorkItemResourceLockDeclaration,
@@ -56,7 +56,16 @@ class Project:
         self,
         work_item_id: str,
     ) -> tuple[ResourceLockRequirement, ...]:
-        for declaration in self.resource_locks:
-            if declaration.work_item_id == work_item_id:
-                return declaration.requirements
-        return ()
+        configured = next(
+            (declaration.requirements for declaration in self.resource_locks
+             if declaration.work_item_id == work_item_id), ()
+        )
+        context = self.delivery_context_for(work_item_id)
+        if context is None or context.mode is not DeliveryMode.HOTFIX:
+            return configured
+        # Serialize work and publication for the same maintained release,
+        # without assuming differently named branches are disjoint.
+        surface = "release:" + str(context.repository_id) + ":" + context.release_branch
+        if any(requirement.surface.key == surface for requirement in configured):
+            return configured
+        return (*configured, ResourceLockRequirement.build(surface))
