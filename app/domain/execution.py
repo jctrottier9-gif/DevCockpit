@@ -84,6 +84,7 @@ class PullRequestEvidence:
     url: str | None = None
     updated_at: str | None = None
     merged_at: str | None = None
+    merge_commit_sha: str | None = None
     created_at: str | None = None
 
 
