@@ -12,6 +12,7 @@ import json
 import re
 
 _SHA = re.compile(r"^[0-9a-f]{40}$")
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _BRANCH = re.compile(r"^(?!/)(?!.*(?:\.\.|//|@\{|\\|\s))[^~^:?*\[\]]+$")
 
@@ -84,7 +85,9 @@ class DeliveryContext:
         if (not self.work_item_id or type(self.delivery_issue_number) is not int
                 or self.delivery_issue_number <= 0):
             raise DeliveryContractError("WorkItem and anchoring delivery issue are mandatory")
-        for field in ("accepted_issue_body_sha256", "source_sha", "observed_pr_base_sha", "starting_sha"):
+        if not _SHA256.fullmatch(self.accepted_issue_body_sha256):
+            raise DeliveryContractError("accepted_issue_body_sha256 requires a full SHA-256 fingerprint")
+        for field in ("source_sha", "observed_pr_base_sha", "starting_sha"):
             if not _SHA.fullmatch(getattr(self, field)):
                 raise DeliveryContractError(f"{field} requires a full immutable lowercase SHA")
         if not all((self.requested_ref, self.resolved_ref,
