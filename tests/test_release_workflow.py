@@ -223,3 +223,30 @@ def test_hotfix_requires_protected_release_target():
     workflow = GitHubReleaseWorkflow(transport=httpx.MockTransport(unprotected))
     with pytest.raises(ReleaseWorkflowError, match="GITHUB_HTTP_404"):
         workflow.prepare_hotfix(project, ctx)
+
+
+def test_publication_follow_up_is_stable_and_targets_release_not_main():
+    from app.application.executions import (
+        hotfix_publication_follow_up_key, build_hotfix_publication_follow_up,
+    )
+    from app.domain.execution import ExecutionProjection, ExecutionState, NextAction, PullRequestEvidence
+    from app.domain.roadmap import WorkItem, WorkItemStatus, WorkItemType
+    ctx, project = fixtures()
+    item = WorkItem(key="FIX-1", type=WorkItemType.WORK,
+                    status=WorkItemStatus.READY, parent="#1", lane="MAIN",
+                    title="Release fix")
+    pr = PullRequestEvidence(
+        number=88, title="FIX-1 — critical fix", body="Work-Item: FIX-1",
+        branch="dev/FIX-1", head_sha="b" * 40, state="closed",
+        merged=True, mergeable=None, base_branch="release/1.4",
+        merge_commit_sha="c" * 40,
+    )
+    projection = ExecutionProjection(work_item=item, state=ExecutionState.MERGED,
+                                     next_action=NextAction.WAIT, pull_request=pr)
+    assert hotfix_publication_follow_up_key(
+        project, projection
+    ) == hotfix_publication_follow_up_key(project, projection)
+    prompt = build_hotfix_publication_follow_up(project, projection)
+    assert "release/1.4" in prompt
+    assert "forward-port" in prompt
+    assert "c" * 40 in prompt
