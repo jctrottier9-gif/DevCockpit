@@ -596,6 +596,8 @@ def _execute_deterministic_finalization_actions(
         attempts.add(claim)
         uow.commit()
 
+        context = project.delivery_context_for(execution.work_item.key)
+        target_guard = {"delivery_context": context} if context is not None else {}
         if execution.next_action is NextAction.SYNC_BRANCH:
             if pull_request.base_sha is None:
                 result = None
@@ -605,6 +607,7 @@ def _execute_deterministic_finalization_actions(
                     pr_number=pull_request.number,
                     expected_head_sha=pull_request.head_sha,
                     expected_base_sha=pull_request.base_sha,
+                    **target_guard,
                 )
         else:
             result = finalizer.merge_pull_request(
@@ -612,6 +615,7 @@ def _execute_deterministic_finalization_actions(
                 pr_number=pull_request.number,
                 expected_head_sha=pull_request.head_sha,
                 expected_base_sha=pull_request.base_sha,
+                **target_guard,
             )
 
         if result is None:
