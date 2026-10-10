@@ -84,6 +84,7 @@ class PullRequestEvidence:
     url: str | None = None
     updated_at: str | None = None
     merged_at: str | None = None
+    merge_commit_sha: str | None = None
     created_at: str | None = None
 
 
@@ -107,6 +108,9 @@ class ExecutionEvidence:
     branches: tuple[BranchEvidence, ...] = ()
     pull_requests: tuple[PullRequestEvidence, ...] = ()
     workflow_runs: tuple[WorkflowRunEvidence, ...] = ()
+    requires_verified_artifact: bool = False
+    artifact_verified: bool = False
+    accepted_work_branch: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -322,6 +326,18 @@ def derive_execution_projection(
             key=lambda pr: (pr.merged_at or "", pr.updated_at or "", pr.number),
         )
         ci = summarize_ci(evidence.workflow_runs, head_sha=pull_request.head_sha)
+        if ci.state is CiState.GREEN and evidence.requires_verified_artifact and not evidence.artifact_verified:
+            return ExecutionProjection(
+                work_item=work_item,
+                state=ExecutionState.MERGED,
+                next_action=NextAction.WAIT,
+                pull_request=pull_request,
+                ci=ci,
+                diagnostics=(ExecutionDiagnostic(
+                    code="HOTFIX_ARTIFACT_VALIDATION_PENDING",
+                    message="Merged hotfix awaits verified version tag, immutable image digest and release validation.",
+                ),),
+            )
         if ci.state is CiState.GREEN:
             return ExecutionProjection(
                 work_item=work_item,
@@ -352,7 +368,10 @@ def derive_execution_projection(
     active_branches = tuple(
         branch
         for branch in evidence.branches
-        if branch.ahead_by > 0 and branch_matches_work_item(branch.name, work_item.key)
+        if branch.ahead_by > 0 and (
+            branch_matches_work_item(branch.name, work_item.key)
+            or branch.name == evidence.accepted_work_branch
+        )
     )
     if len(active_branches) > 1:
         return blocked_projection(

@@ -5,6 +5,7 @@ from hashlib import sha256
 from typing import Protocol
 
 from app.application.delivery_contexts import dev_target_instructions, release_automation_allowed
+from app.domain.delivery_context import DeliveryMode
 from app.application.prompt_dispatches import (
     CreatePromptDispatchCommand,
     UnitOfWorkFactory,
@@ -219,7 +220,21 @@ def evaluate_project_execution(
     if initial_fence.active_application_id is not None:
         return ExecutionEvaluation(projection=projection, dispatch=None)
 
+    context = project.delivery_context_for(work_item.key)
     with uow_factory() as uow:
+        if context is not None and context.mode is DeliveryMode.HOTFIX:
+            try:
+                accepted = uow.delivery_contexts.get(context.repository_id, work_item.key)
+            except Exception:
+                accepted = None
+            if accepted != context:
+                return ExecutionEvaluation(
+                    projection=blocked_projection(
+                        work_item=work_item, code="HOTFIX_NOT_ACCEPTED",
+                        message="A matching persisted human-accepted delivery contract is required.",
+                    ),
+                    dispatch=None,
+                )
         current_fence = uow.roadmap_target_fences.snapshot(
             project.repository_full_name,
             project.roadmap_issue_number,
@@ -508,3 +523,53 @@ def _bounded_idempotency_key(raw: str) -> str:
     if len(raw) <= 200:
         return raw
     return f"execution:{sha256(raw.encode('utf-8')).hexdigest()}:v1"
+
+
+def hotfix_publication_follow_up_key(project: Project, projection: ExecutionProjection) -> str:
+    """One publication recovery handoff per actually merged hotfix delivery."""
+    work_item, pr = projection.work_item, projection.pull_request
+    context = project.delivery_context_for(work_item.key) if work_item is not None else None
+    if (work_item is None or pr is None or context is None
+            or context.mode is not DeliveryMode.HOTFIX or not pr.merged
+            or projection.state is not ExecutionState.MERGED):
+        raise ValueError("Publication follow-up requires a merged accepted HOTFIX")
+    raw = (f"execution:{project.project_id}:{work_item.key}:DEV:HOTFIX_ARTIFACT:"
+           f"pr{pr.number}:{pr.merge_commit_sha or pr.head_sha}:"
+           f"{context.fingerprint()}:v1")
+    return _bounded_idempotency_key(raw)
+
+
+def build_hotfix_publication_follow_up(
+    project: Project, projection: ExecutionProjection,
+) -> str:
+    """Same logical DEV session; publication must be separately proven."""
+    work_item, pr = projection.work_item, projection.pull_request
+    context = project.delivery_context_for(work_item.key) if work_item is not None else None
+    if (work_item is None or pr is None or context is None
+            or context.mode is not DeliveryMode.HOTFIX or not pr.merged
+            or projection.state is not ExecutionState.MERGED):
+        raise ValueError("Publication follow-up requires a merged accepted HOTFIX")
+    return f"""Le hotfix {work_item.key} est fusionné dans la release, mais sa version testable n'est pas encore vérifiée.
+
+Repository : {project.repository_full_name}
+WorkItem : {work_item.key} — {work_item.title}
+PR hotfix : #{pr.number}
+Base release acceptée : {context.release_branch}
+Head PR livré : {pr.head_sha}
+Commit GitHub intégré : {pr.merge_commit_sha or 'indisponible — à retrouver sur GitHub'}
+
+Reprends la même session DEV pour **uniquement** terminer ou diagnostiquer
+la publication de la release corrigée. Relis AGENTS.md et le contrat immuable.
+Revalide la PR fusionnée, le commit réellement intégré et l'ascendance
+de la release actuelle (elle peut avoir avancé depuis le merge).
+Vérifie la compatibilité SQL Server et les exigences de rollback en tant
+que gate humaine : ne migre ni ne déploie rien automatiquement.
+Utilise le workflow de publication explicitement autorisé dans le dépôt
+consommateur; ne fabrique pas de digest ou de tag et n'improvise pas un
+nouveau hotfix, un merge ni un forward-port.
+Obtiens le tag correctif, SHA exact, image@sha256:digest vérifié côté
+registre et résultat de validation sur le commit intégré. Si une
+preuve manque, rapporte le blocage; la fusion seule ne termine pas le
+WorkItem. Après livraison des preuves, ARRÊTE ton tour DEV; le cockpit
+réconciliera seulement sur preuve GitHub complète.
+""" + dev_target_instructions(context)

@@ -12,6 +12,8 @@ from app.application.executions import (
     ExecutionSourceError,
 )
 from app.infrastructure.github_delivery_context import GitHubDeliveryReferenceReader, DeliveryReferenceError
+from app.infrastructure.github_release_workflow import GitHubReleaseWorkflow, ReleaseWorkflowError
+from app.domain.delivery_context import DeliveryMode
 from app.domain.execution import (
     BranchEvidence,
     ExecutionEvidence,
@@ -45,7 +47,7 @@ class GitHubExecutionReader:
 
     def read(self, project: Project, work_item: WorkItem) -> ExecutionEvidence:
         context = project.delivery_context_for(work_item.key)
-        if context is not None:
+        if context is not None and context.mode is not DeliveryMode.HOTFIX:
             try:
                 GitHubDeliveryReferenceReader(
                     token=self._token,
@@ -95,7 +97,49 @@ class GitHubExecutionReader:
                 )
                 if not isinstance(pulls_payload, list):
                     raise ExecutionPayloadError("GitHub pull-request response must be an array")
+                if context is not None and context.mode is DeliveryMode.HOTFIX:
+                    # A truncated first PR page can hide an existing delivery.
+                    all_pulls = list(pulls_payload)
+                    page = 2
+                    while len(pulls_payload) == 100:
+                        pulls_payload = self._request_json(
+                            client, f"{base_url}/pulls",
+                            params={"state": "all", "sort": "updated",
+                                    "direction": "desc", "per_page": 100, "page": page},
+                        )
+                        if not isinstance(pulls_payload, list):
+                            raise ExecutionPayloadError("Incomplete PR pagination")
+                        all_pulls.extend(pulls_payload)
+                        page += 1
+                        if page > 100:
+                            raise ExecutionPayloadError("PR pagination exceeded safety limit")
+                    pulls_payload = all_pulls
                 pull_requests = tuple(self._parse_pull_request(item) for item in pulls_payload)
+                if context is not None and context.mode is DeliveryMode.HOTFIX:
+                    try:
+                        workflow = GitHubReleaseWorkflow(
+                            token=self._token, transport=self._transport,
+                            timeout_seconds=self._timeout_seconds,
+                        )
+                        workflow.require_release_protection(
+                            client, base_url, context.release_branch,
+                        )
+                    except ReleaseWorkflowError as exc:
+                        raise ExecutionPayloadError(
+                            "Release protection unavailable: " + str(exc)
+                        ) from exc
+                    expected_identity = "Work-Item: " + context.work_item_id
+                    expected_fingerprint = "Delivery-Context-SHA256: " + context.fingerprint()
+                    for pr in pull_requests:
+                        if (pull_request_matches_work_item(pr, work_item.key)
+                                or pr.branch == context.expected_work_branch):
+                            if (pr.branch != context.expected_work_branch
+                                    or pr.base_branch != context.expected_pr_base
+                                    or expected_identity not in pr.body.splitlines()
+                                    or expected_fingerprint not in pr.body.splitlines()):
+                                raise ExecutionPayloadError(
+                                    "PR_TARGET_OR_DELIVERY_CONTEXT_MISMATCH"
+                                )
                 matching = tuple(
                     item
                     for item in pull_requests
@@ -133,12 +177,47 @@ class GitHubExecutionReader:
                             token=self._token,
                             timeout_seconds=self._timeout_seconds,
                             transport=self._transport,
-                        ).read_verified(context, pr_number=selected.number)
+                        ).read_verified(
+                            context, pr_number=selected.number,
+                            allow_merged_advance=(
+                                context.mode is DeliveryMode.HOTFIX and selected.merged
+                            ),
+                        )
                     except DeliveryReferenceError as exc:
                         raise ExecutionPayloadError(
                             "Accepted PR source/target is stale: " + str(exc)
                         ) from exc
 
+                if context is not None and context.mode is DeliveryMode.HOTFIX and selected is None:
+                    try:
+                        GitHubDeliveryReferenceReader(
+                            token=self._token,
+                            timeout_seconds=self._timeout_seconds,
+                            transport=self._transport,
+                        ).read_verified(context)
+                    except DeliveryReferenceError as exc:
+                        raise ExecutionPayloadError(
+                            "Accepted hotfix target is stale: " + str(exc)
+                        ) from exc
+
+                artifact_verified = False
+                if (context is not None and context.mode is DeliveryMode.HOTFIX
+                        and selected is not None and selected.merged):
+                    merge_sha = selected.merge_commit_sha
+                    if merge_sha is not None:
+                        try:
+                            artifact_verified = (
+                                GitHubReleaseWorkflow(
+                                    token=self._token, transport=self._transport,
+                                    timeout_seconds=self._timeout_seconds,
+                                ).find_published_artifact(
+                                    project, context, integrated_sha=merge_sha,
+                                ) is not None
+                            )
+                        except ReleaseWorkflowError as exc:
+                            raise ExecutionPayloadError(
+                                "Hotfix publication evidence invalid: " + str(exc)
+                            ) from exc
                 workflow_runs: tuple[WorkflowRunEvidence, ...] = ()
                 branches: tuple[BranchEvidence, ...] = ()
 
@@ -152,8 +231,11 @@ class GitHubExecutionReader:
                     branches = self._read_candidate_branches(
                         client,
                         base_url,
-                        default_branch,
+                        context.expected_pr_base if context is not None
+                        and context.mode is DeliveryMode.HOTFIX else default_branch,
                         work_item.key,
+                        expected_branch=context.expected_work_branch if context is not None
+                        and context.mode is DeliveryMode.HOTFIX else None,
                     )
 
                 return ExecutionEvidence(
@@ -161,6 +243,14 @@ class GitHubExecutionReader:
                     branches=branches,
                     pull_requests=pull_requests,
                     workflow_runs=workflow_runs,
+                    requires_verified_artifact=(
+                        context is not None and context.mode is DeliveryMode.HOTFIX
+                    ),
+                    artifact_verified=artifact_verified,
+                    accepted_work_branch=(
+                        context.expected_work_branch if context is not None
+                        and context.mode is DeliveryMode.HOTFIX else None
+                    ),
                 )
         except httpx.RequestError as exc:
             raise ExecutionSourceError("GitHub execution request failed") from exc
@@ -260,6 +350,7 @@ class GitHubExecutionReader:
         base_url: str,
         default_branch: str,
         work_item_key: str,
+        expected_branch: str | None = None,
     ) -> tuple[BranchEvidence, ...]:
         per_page = 100
         page = 1
@@ -278,7 +369,10 @@ class GitHubExecutionReader:
                 if not isinstance(item, dict):
                     raise ExecutionPayloadError("GitHub branch entry must be an object")
                 name = self._require_string(item, "name", context="branch")
-                if not branch_matches_work_item(name, work_item_key):
+                if expected_branch is not None:
+                    if name != expected_branch:
+                        continue
+                elif not branch_matches_work_item(name, work_item_key):
                     continue
                 commit = item.get("commit")
                 if not isinstance(commit, dict):
@@ -356,6 +450,8 @@ class GitHubExecutionReader:
         if not isinstance(raw_runs, list):
             raise ExecutionPayloadError("GitHub workflow_runs must be an array")
 
+        if payload.get("total_count", len(raw_runs)) > len(raw_runs):
+            raise ExecutionPayloadError("Workflow runs pagination incomplete")
         runs: list[WorkflowRunEvidence] = []
         for item in raw_runs:
             if not isinstance(item, dict):
@@ -500,6 +596,8 @@ class GitHubExecutionReader:
             base_sha=base_sha,
             mergeable_state=mergeable_state,
             auto_merge_enabled=auto_merge is not None,
+            merge_commit_sha=payload.get("merge_commit_sha")
+            if isinstance(payload.get("merge_commit_sha"), str) else None,
             url=url,
             updated_at=updated_at,
             merged_at=merged_at,

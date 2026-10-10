@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 
 from app.application.delivery_contexts import release_automation_allowed
+from app.domain.delivery_context import DeliveryMode
 from app.application.executions import (
     ExecutionEvidenceReader,
     ExecutionSourceError,
@@ -17,6 +18,8 @@ from app.application.executions import (
     build_initial_dev_prompt,
     build_roadmap_reconciliation_follow_up,
     build_stale_dev_follow_up,
+    build_hotfix_publication_follow_up,
+    hotfix_publication_follow_up_key,
 )
 from app.application.github_wait_watchdogs import (
     GitHubWaitWatchdog,
@@ -316,6 +319,16 @@ def evaluate_project_parallel_dev_executions(
             work_item = item.execution.work_item
             if work_item is None:
                 continue
+            context = project.delivery_context_for(work_item.key)
+            if context is not None and context.mode is DeliveryMode.HOTFIX:
+                # Configured snapshots are candidates, not human acceptance.
+                # Fail closed before preparing or recovering any DEV dispatch.
+                try:
+                    accepted = uow.delivery_contexts.get(context.repository_id, work_item.key)
+                except Exception:
+                    accepted = None
+                if accepted != context:
+                    continue
 
             if item.active:
                 if (
@@ -394,6 +407,32 @@ def evaluate_project_parallel_dev_executions(
                             uow=uow,
                         )
                     )
+                elif (
+                    context is not None
+                    and context.mode is DeliveryMode.HOTFIX
+                    and item.execution.state is ExecutionState.MERGED
+                    and any(d.code == "HOTFIX_ARTIFACT_VALIDATION_PENDING"
+                            for d in item.execution.diagnostics)
+                ):
+                    publication_key = hotfix_publication_follow_up_key(
+                        project, item.execution,
+                    )
+                    if (uow.prompt_dispatches.get_by_idempotency_key(publication_key)
+                            is None):
+                        dispatches.append(
+                            create_prompt_dispatch_in_uow(
+                                CreatePromptDispatchCommand(
+                                    project_id=project.project_id,
+                                    work_item_id=work_item.key,
+                                    role=PromptDispatchRole.DEV,
+                                    prompt_text=build_hotfix_publication_follow_up(
+                                        project, item.execution,
+                                    ),
+                                    idempotency_key=publication_key,
+                                ),
+                                uow=uow,
+                            )
+                        )
                 elif (
                     item.github_watchdog is not None
                     and item.github_watchdog.due
@@ -558,6 +597,25 @@ def _execute_deterministic_finalization_actions(
             execution,
             attempts=attempts,
         )
+        context = (
+            project.delivery_context_for(execution.work_item.key)
+            if execution.work_item is not None else None
+        )
+        if context is not None and context.mode is DeliveryMode.HOTFIX:
+            try:
+                accepted = uow.delivery_contexts.get(context.repository_id, context.work_item_id)
+            except Exception:
+                accepted = None
+            if accepted != context:
+                updated.append(_CandidateSnapshot(
+                    snapshot.scheduler,
+                    blocked_projection(
+                        work_item=execution.work_item,
+                        code="HOTFIX_NOT_ACCEPTED",
+                        message="The configured hotfix context has no matching persisted acceptance.",
+                    ),
+                ))
+                continue
         if (
             finalizer is None
             or execution.next_action not in {NextAction.SYNC_BRANCH, NextAction.MERGE_PR}
@@ -596,6 +654,8 @@ def _execute_deterministic_finalization_actions(
         attempts.add(claim)
         uow.commit()
 
+        context = project.delivery_context_for(execution.work_item.key)
+        target_guard = {"delivery_context": context} if context is not None and context.mode is DeliveryMode.HOTFIX else {}
         if execution.next_action is NextAction.SYNC_BRANCH:
             if pull_request.base_sha is None:
                 result = None
@@ -605,6 +665,7 @@ def _execute_deterministic_finalization_actions(
                     pr_number=pull_request.number,
                     expected_head_sha=pull_request.head_sha,
                     expected_base_sha=pull_request.base_sha,
+                    **target_guard,
                 )
         else:
             result = finalizer.merge_pull_request(
@@ -612,6 +673,7 @@ def _execute_deterministic_finalization_actions(
                 pr_number=pull_request.number,
                 expected_head_sha=pull_request.head_sha,
                 expected_base_sha=pull_request.base_sha,
+                **target_guard,
             )
 
         if result is None:
@@ -965,6 +1027,11 @@ def _selected_dev_dispatch(project: Project, execution: ExecutionProjection, *, 
     elif execution.state is ExecutionState.ROADMAP_UPDATE_REQUIRED:
         try:
             candidate_keys.append(_roadmap_reconcile_idempotency_key(project, execution))
+        except ValueError:
+            pass
+    elif execution.state is ExecutionState.MERGED:
+        try:
+            candidate_keys.append(hotfix_publication_follow_up_key(project, execution))
         except ValueError:
             pass
     elif execution.state is ExecutionState.DEVELOPING:

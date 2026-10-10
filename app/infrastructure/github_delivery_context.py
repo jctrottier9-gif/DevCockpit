@@ -10,7 +10,7 @@ import hashlib
 import httpx
 
 from app.domain.delivery_context import (
-    DeliveryContext, DeliveryObservation, ReferenceKind, validate_observation,
+    DeliveryContext, DeliveryMode, DeliveryObservation, ReferenceKind, validate_observation,
 )
 
 
@@ -26,8 +26,8 @@ class GitHubDeliveryReferenceReader:
         self._transport = transport
         self._timeout = timeout_seconds
 
-    def read_verified(self, context: DeliveryContext, *, pr_number: int | None = None
-                      ) -> DeliveryObservation:
+    def read_verified(self, context: DeliveryContext, *, pr_number: int | None = None,
+                      allow_merged_advance: bool = False) -> DeliveryObservation:
         owner, repo = context.repository_full_name.split("/", 1)
         base = "https://api.github.com/repos/" + quote(owner, safe="") + "/" + quote(repo, safe="")
         headers = {"Accept": "application/vnd.github+json",
@@ -102,9 +102,13 @@ class GitHubDeliveryReferenceReader:
                 working_sha = None
                 # A new WorkItem may not yet have its working branch. A 404 is
                 # permitted only before PR creation; all other read errors fail.
-                if pr_number is not None:
+                if pr_number is not None and not allow_merged_advance:
                     working_sha = branch(client, context.expected_work_branch)
+                elif pr_number is not None:
+                    # A merged PR may have had its source branch deleted by GitHub.
+                    working_sha = None
                 pr_base = None
+                merged_advance_proven = False
                 if pr_number is not None:
                     pr = get(client, "/pulls/" + str(pr_number))
                     base_ref = pr.get("base")
@@ -117,17 +121,44 @@ class GitHubDeliveryReferenceReader:
                     head_repo = head_ref.get("repo")
                     if not isinstance(head_repo, dict) or head_repo.get("id") != context.repository_id:
                         raise DeliveryReferenceError("PR_REPOSITORY_MISMATCH")
+                    if (allow_merged_advance and context.mode is DeliveryMode.HOTFIX
+                            and pr.get("merged_at") is not None
+                            and pr_base == context.expected_pr_base):
+                        # A maintained release moves only after a verified merge.
+                        # Do not mistake an arbitrary moved base for permission.
+                        merged_sha = pr.get("merge_commit_sha")
+                        if (not isinstance(merged_sha, str) or len(merged_sha) != 40):
+                            raise DeliveryReferenceError("MERGED_COMMIT_MISSING")
+                        for start in (context.observed_pr_base_sha, merged_sha):
+                            if start == base_sha:
+                                continue
+                            compare = get(
+                                client, "/compare/" + start + "..." + base_sha
+                            )
+                            if (compare.get("status") != "ahead"
+                                    or not isinstance(compare.get("merge_base_commit"), dict)
+                                    or compare["merge_base_commit"].get("sha") != start):
+                                raise DeliveryReferenceError("RELEASE_ADVANCE_NOT_PROVEN")
+                        historical = get(client, "/commits/" + context.source_sha)
+                        if historical.get("sha") != context.source_sha:
+                            raise DeliveryReferenceError("HISTORICAL_COMMIT_MISSING")
+                        merged_advance_proven = True
                 obs = DeliveryObservation(
                     repository_id=info["id"],
                     repository_full_name=info["full_name"],
                     resolved_ref=context.resolved_ref,
                     source_commit_sha=source_sha,
                     current_base_sha=base_sha,
-                    working_branch=context.expected_work_branch if pr_number is not None else None,
+                    working_branch=context.expected_work_branch if working_sha is not None else None,
                     working_head_sha=working_sha,
                     pr_base_name=pr_base,
                 )
                 diagnostics = validate_observation(context, obs)
+                if merged_advance_proven:
+                    diagnostics = tuple(
+                        code for code in diagnostics
+                        if code not in {"SOURCE_MOVED_OR_MISSING", "BASE_TIP_STALE"}
+                    )
                 if diagnostics:
                     raise DeliveryReferenceError(",".join(diagnostics))
                 return obs

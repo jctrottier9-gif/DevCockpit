@@ -493,6 +493,32 @@ Do not jump directly to multi-agent parallel execution before the single-executi
 - Before any work on a versioned WorkItem, reread the delivery issue, roadmap and applicable ADR; verify repository ID, qualified ref, dereferenced tag commit, selected release/main base **name**, latest tip SHA, working branch/provenance and current PR head/base in GitHub. Repeat on initial dispatch, CI-red, stalled/orphan recovery, branch sync/conflict and roadmap reconciliation. Fail closed if a ref was moved/deleted, SHA shortened/ambiguous, GitHub evidence is incomplete, the issue contract changed, or the PR was retargeted (even if base SHAs are identical).
 - A published tag/version is frozen; the maintained `release/x.y` branch advances only through isolated, validated hotfixes. Never merge all of `main` into a release. Do not infer release ancestry from a matching name.
 - A hotfix and its eventual forward-port are **two predeclared, linked WorkItems**, separate branch/PR/CI/AgentSession lifecycles. Forward-port only the *integrated* release fix to current `main` by proven commit/delta; do not merge the whole release into `main`. Reuse an existing branch/PR on restart; no duplicated dispatch on ambiguous transport or GitHub outcomes.
-- A hotfix must target the accepted release base and use release-specific CI/review/protection checks. The ordinary branch sync and merge finalizers must not act on a non-NORMAL target until branch-specific safety and evidence are delivered in DC-075B. **DC-075A defines and persists contracts only: release/hotfix/forward-port automation remains disabled.**
+- A hotfix must target the accepted release base and use release-specific CI/review/protection checks. DC-075B permits the explicitly accepted HOTFIX execution path only after GitHub target, PR identity, expected head/base and release protections are verified. RELEASE branch creation/reuse is an explicit action; FORWARD_PORT remains disabled until its own approved delivery. A missing or inaccessible release protection policy blocks hotfix operations and automatic finalization.
 - `DONE` for a hotfix requiring a testable image needs independently verified merge, immutable version/tag/source SHA, image digest, and validation evidence; a merge is not publication or deployment. An explicit deployment is a separate proof. Never deploy, roll back a SQL schema or assume backward-compatible migrations automatically.
 - When a consuming repository such as RessourcePlanner first uses a maintained release, update *its own* `AGENTS.md` by a separately authorized delivery. Changes to that repository are not in scope for DevCockpit DC-075A.
+
+---
+
+## 20. Maintained-release hotfix workflow (DC-075B)
+
+- Before preparing a release or hotfix, read the accepted DeliveryContext V1,
+  its GitHub issue-body fingerprint, the current canonical roadmap and
+  ADR-0017. Verify immutable origin, repository identity, target ref name,
+  release ancestry and actual GitHub SHA; a hotfix never uses main as fallback.
+- Maintained release branches may advance by validated, isolated hotfixes
+  while published tags and historical origin SHAs remain frozen. Opening a
+  hotfix PR requires an exact head, accepted work branch, accepted release
+  base, WorkItem and delivery fingerprint. Ambiguous or retargeted PRs block.
+- Only perform a GitHub release-targeted merge/sync after rereading the
+  exact PR base name and head, release-specific strict required status checks,
+  protected approvals and unchanged accepted target. Missing check results,
+  disabled protection or current-head drift cannot authorize a merge.
+- Separate merge, publication, validation and deployment evidence.
+  An image-requiring HOTFIX remains pending until immutable source/tag/digest
+  and required validation evidence is verified. The consuming publisher owns
+  registry attestation; GitHub release prose alone is not independent proof
+  that a Docker registry actually contains the digest.
+- The same per-release conflict surface serializes hotfix operations; reuse
+  WorkItem sessions, branch/PR identity and watchdog replay fences.
+  Do not automatically migrate or roll back SQL schemas, deploy images,
+  or forward-port code. Forward-port remains a separate authorized WorkItem.
