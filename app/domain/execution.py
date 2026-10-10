@@ -162,10 +162,19 @@ def pull_request_matches_work_item(
     pull_request: PullRequestEvidence,
     work_item_key: str,
 ) -> bool:
+    # A strong, explicit Work-Item footer takes precedence over prefix-matching
+    # branch/title names. FIX-42 must not swallow FIX-42-FWD's PR after both
+    # versioned deliveries coexist. Conflicting duplicate footers fail closed.
+    declared = re.findall(
+        r"^\\s*Work-Item:\\s*(\\S.*?)\\s*$",
+        pull_request.body,
+        re.IGNORECASE | re.MULTILINE,
+    )
+    if declared:
+        return len(declared) == 1 and declared[0].casefold() == work_item_key.casefold()
     return (
         title_matches_work_item(pull_request.title, work_item_key)
         or branch_matches_work_item(pull_request.branch, work_item_key)
-        or structured_reference_matches_work_item(pull_request.body, work_item_key)
     )
 
 
