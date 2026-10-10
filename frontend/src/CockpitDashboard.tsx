@@ -5,6 +5,7 @@ import DevPool from './DevPool'
 import { interactionStateLabel } from './InteractionStatus'
 import RoadmapExplorer from './RoadmapExplorer'
 import ReviewPanel from './ReviewPanel'
+import ReleasePanel from './ReleasePanel'
 import type {
   CockpitHorizonItem,
   CockpitOverview,
@@ -207,6 +208,11 @@ export default function CockpitDashboard({
         <HorizonCard label="Ensuite · perspective" item={overview.horizons.next} onOpen={openWorkItem} />
       </div>
     </section>
+
+    <ReleasePanel
+      projectId={projectId}
+      onOpenWorkItem={onOpenWorkItem}
+    />
 
     {drawer?.kind === 'role' && drawer.id === 'DEV_POOL' && <ContextDrawer
       projectId={projectId}
