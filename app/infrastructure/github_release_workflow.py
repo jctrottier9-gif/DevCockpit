@@ -303,6 +303,73 @@ class GitHubReleaseWorkflow:
             return HotfixPullRequest(result["number"], head_sha, context.release_branch,
                                      str(result.get("html_url") or ""), True)
 
+
+    def require_release_protection(self, client: httpx.Client, root: str,
+                                   branch: str) -> tuple[str, ...]:
+        """Target-specific protection gate, never inherited from main."""
+        protection = self._get(
+            client, root + "/branches/" + quote(branch, safe="/") + "/protection"
+        )
+        if not isinstance(protection, dict):
+            raise ReleaseWorkflowError("RELEASE_PROTECTION_MISSING")
+        required = protection.get("required_status_checks")
+        reviews = protection.get("required_pull_request_reviews")
+        if not isinstance(required, dict) or not isinstance(reviews, dict):
+            raise ReleaseWorkflowError("RELEASE_PROTECTION_INCOMPLETE")
+        contexts = required.get("contexts") or []
+        checks = required.get("checks") or []
+        if not isinstance(contexts, list) or not isinstance(checks, list):
+            raise ReleaseWorkflowError("INVALID_REQUIRED_CHECKS")
+        names = set()
+        for value in contexts:
+            if not isinstance(value, str) or not value:
+                raise ReleaseWorkflowError("INVALID_REQUIRED_CHECKS")
+            names.add(value)
+        for value in checks:
+            if not isinstance(value, dict) or not isinstance(value.get("context"), str):
+                raise ReleaseWorkflowError("INVALID_REQUIRED_CHECKS")
+            names.add(value["context"])
+        if not names or required.get("strict") is not True:
+            raise ReleaseWorkflowError("RELEASE_STRICT_CI_REQUIRED")
+        if reviews.get("required_approving_review_count", 0) < 1:
+            raise ReleaseWorkflowError("RELEASE_REVIEW_REQUIRED")
+        return tuple(sorted(names))
+
+    def verify_release_checks(self, client: httpx.Client, root: str,
+                              head_sha: str, required: tuple[str, ...]) -> None:
+        """Verify all protected contexts on the current head; no skipped checks."""
+        payload = self._get(client, root + "/commits/" + head_sha + "/check-runs",
+                            params={"per_page": 100})
+        if not isinstance(payload, dict) or not isinstance(payload.get("check_runs"), list):
+            raise ReleaseWorkflowError("CHECK_RUN_EVIDENCE_INVALID")
+        if payload.get("total_count", len(payload["check_runs"])) > len(payload["check_runs"]):
+            raise ReleaseWorkflowError("CHECK_RUN_PAGINATION_INCOMPLETE")
+        checks = {}
+        for item in payload["check_runs"]:
+            if not isinstance(item, dict):
+                raise ReleaseWorkflowError("INVALID_CHECK_RUN")
+            if item.get("head_sha") not in (None, head_sha):
+                continue
+            name = item.get("name")
+            if isinstance(name, str):
+                checks.setdefault(name, []).append(item)
+        status = self._get(client, root + "/commits/" + head_sha + "/status")
+        if not isinstance(status, dict) or not isinstance(status.get("statuses"), list):
+            raise ReleaseWorkflowError("COMMIT_STATUS_INVALID")
+        if status.get("total_count", len(status["statuses"])) > len(status["statuses"]):
+            raise ReleaseWorkflowError("COMMIT_STATUS_INCOMPLETE")
+        statuses = {}
+        for item in status["statuses"]:
+            if isinstance(item, dict) and isinstance(item.get("context"), str):
+                statuses.setdefault(item["context"], item.get("state"))
+        for name in required:
+            runs = checks.get(name, [])
+            if runs:
+                if len(runs) != 1 or runs[0].get("status") != "completed" or runs[0].get("conclusion") != "success":
+                    raise ReleaseWorkflowError("REQUIRED_CHECK_NOT_GREEN:" + name)
+            elif statuses.get(name) != "success":
+                raise ReleaseWorkflowError("REQUIRED_CHECK_NOT_GREEN:" + name)
+
     def inspect_artifact(self, project: Project, context: DeliveryContext, *,
                          tag: str, integrated_sha: str,
                          validation_check: str) -> ReleaseArtifact:
