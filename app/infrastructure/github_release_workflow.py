@@ -260,7 +260,8 @@ class GitHubReleaseWorkflow:
         return selected
 
     def ensure_hotfix_pr(self, project: Project, context: DeliveryContext,
-                         *, title: str, description: str = "") -> HotfixPullRequest:
+                         *, title: str, description: str = "",
+                         expected_head_sha: str | None = None) -> HotfixPullRequest:
         if context.mode is not DeliveryMode.HOTFIX:
             raise ReleaseWorkflowError("HOTFIX_CONTEXT_REQUIRED")
         if not title.startswith(context.work_item_id + " "):
@@ -271,6 +272,8 @@ class GitHubReleaseWorkflow:
             if base != context.observed_pr_base_sha:
                 raise ReleaseWorkflowError("RELEASE_BASE_MOVED")
             head_sha = self._branch(client, root, context.expected_work_branch)
+            if expected_head_sha is not None and head_sha != expected_head_sha:
+                raise ReleaseWorkflowError("HOTFIX_HEAD_MOVED")
             if not self._descendant(client, root, context.starting_sha, head_sha):
                 raise ReleaseWorkflowError("HOTFIX_LINEAGE_MISMATCH")
             prs = self._matching_prs(client, root, context)
