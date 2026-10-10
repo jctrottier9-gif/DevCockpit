@@ -18,6 +18,8 @@ from app.application.executions import (
     build_initial_dev_prompt,
     build_roadmap_reconciliation_follow_up,
     build_stale_dev_follow_up,
+    build_hotfix_publication_follow_up,
+    hotfix_publication_follow_up_key,
 )
 from app.application.github_wait_watchdogs import (
     GitHubWaitWatchdog,
@@ -405,6 +407,32 @@ def evaluate_project_parallel_dev_executions(
                             uow=uow,
                         )
                     )
+                elif (
+                    context is not None
+                    and context.mode is DeliveryMode.HOTFIX
+                    and item.execution.state is ExecutionState.MERGED
+                    and any(d.code == "HOTFIX_ARTIFACT_VALIDATION_PENDING"
+                            for d in item.execution.diagnostics)
+                ):
+                    publication_key = hotfix_publication_follow_up_key(
+                        project, item.execution,
+                    )
+                    if (uow.prompt_dispatches.get_by_idempotency_key(publication_key)
+                            is None):
+                        dispatches.append(
+                            create_prompt_dispatch_in_uow(
+                                CreatePromptDispatchCommand(
+                                    project_id=project.project_id,
+                                    work_item_id=work_item.key,
+                                    role=PromptDispatchRole.DEV,
+                                    prompt_text=build_hotfix_publication_follow_up(
+                                        project, item.execution,
+                                    ),
+                                    idempotency_key=publication_key,
+                                ),
+                                uow=uow,
+                            )
+                        )
                 elif (
                     item.github_watchdog is not None
                     and item.github_watchdog.due
@@ -999,6 +1027,11 @@ def _selected_dev_dispatch(project: Project, execution: ExecutionProjection, *, 
     elif execution.state is ExecutionState.ROADMAP_UPDATE_REQUIRED:
         try:
             candidate_keys.append(_roadmap_reconcile_idempotency_key(project, execution))
+        except ValueError:
+            pass
+    elif execution.state is ExecutionState.MERGED:
+        try:
+            candidate_keys.append(hotfix_publication_follow_up_key(project, execution))
         except ValueError:
             pass
     elif execution.state is ExecutionState.DEVELOPING:
