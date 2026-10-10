@@ -47,7 +47,7 @@ class GitHubExecutionReader:
 
     def read(self, project: Project, work_item: WorkItem) -> ExecutionEvidence:
         context = project.delivery_context_for(work_item.key)
-        if context is not None:
+        if context is not None and context.mode is not DeliveryMode.HOTFIX:
             try:
                 GitHubDeliveryReferenceReader(
                     token=self._token,
@@ -177,12 +177,47 @@ class GitHubExecutionReader:
                             token=self._token,
                             timeout_seconds=self._timeout_seconds,
                             transport=self._transport,
-                        ).read_verified(context, pr_number=selected.number)
+                        ).read_verified(
+                            context, pr_number=selected.number,
+                            allow_merged_advance=(
+                                context.mode is DeliveryMode.HOTFIX and selected.merged
+                            ),
+                        )
                     except DeliveryReferenceError as exc:
                         raise ExecutionPayloadError(
                             "Accepted PR source/target is stale: " + str(exc)
                         ) from exc
 
+                if context is not None and context.mode is DeliveryMode.HOTFIX and selected is None:
+                    try:
+                        GitHubDeliveryReferenceReader(
+                            token=self._token,
+                            timeout_seconds=self._timeout_seconds,
+                            transport=self._transport,
+                        ).read_verified(context)
+                    except DeliveryReferenceError as exc:
+                        raise ExecutionPayloadError(
+                            "Accepted hotfix target is stale: " + str(exc)
+                        ) from exc
+
+                artifact_verified = False
+                if (context is not None and context.mode is DeliveryMode.HOTFIX
+                        and selected is not None and selected.merged):
+                    merge_sha = selected.merge_commit_sha
+                    if merge_sha is not None:
+                        try:
+                            artifact_verified = (
+                                GitHubReleaseWorkflow(
+                                    token=self._token, transport=self._transport,
+                                    timeout_seconds=self._timeout_seconds,
+                                ).find_published_artifact(
+                                    project, context, integrated_sha=merge_sha,
+                                ) is not None
+                            )
+                        except ReleaseWorkflowError as exc:
+                            raise ExecutionPayloadError(
+                                "Hotfix publication evidence invalid: " + str(exc)
+                            ) from exc
                 workflow_runs: tuple[WorkflowRunEvidence, ...] = ()
                 branches: tuple[BranchEvidence, ...] = ()
 
@@ -208,6 +243,10 @@ class GitHubExecutionReader:
                     branches=branches,
                     pull_requests=pull_requests,
                     workflow_runs=workflow_runs,
+                    requires_verified_artifact=(
+                        context is not None and context.mode is DeliveryMode.HOTFIX
+                    ),
+                    artifact_verified=artifact_verified,
                 )
         except httpx.RequestError as exc:
             raise ExecutionSourceError("GitHub execution request failed") from exc
@@ -553,6 +592,8 @@ class GitHubExecutionReader:
             base_sha=base_sha,
             mergeable_state=mergeable_state,
             auto_merge_enabled=auto_merge is not None,
+            merge_commit_sha=payload.get("merge_commit_sha")
+            if isinstance(payload.get("merge_commit_sha"), str) else None,
             url=url,
             updated_at=updated_at,
             merged_at=merged_at,
