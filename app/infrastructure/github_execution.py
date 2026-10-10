@@ -247,6 +247,10 @@ class GitHubExecutionReader:
                         context is not None and context.mode is DeliveryMode.HOTFIX
                     ),
                     artifact_verified=artifact_verified,
+                    accepted_work_branch=(
+                        context.expected_work_branch if context is not None
+                        and context.mode is DeliveryMode.HOTFIX else None
+                    ),
                 )
         except httpx.RequestError as exc:
             raise ExecutionSourceError("GitHub execution request failed") from exc
