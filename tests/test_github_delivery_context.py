@@ -92,8 +92,8 @@ def test_moved_annotated_tag_is_rejected():
 
 
 def test_absent_commit_sha_is_never_treated_as_short_ref():
-    ctx = replace(normal(), ref_kind=ReferenceKind.SHA, requested_ref="a" * 40,
-                  resolved_ref="a" * 40)
+    ctx = replace(hotfix(), mode=DeliveryMode.RELEASE, ref_kind=ReferenceKind.SHA,
+                  requested_ref="a" * 40, resolved_ref="a" * 40)
     with pytest.raises(DeliveryReferenceError, match="unavailable"):
         GitHubDeliveryReferenceReader(transport=github_transport()).read_verified(ctx)
 
