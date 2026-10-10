@@ -107,6 +107,8 @@ class ExecutionEvidence:
     branches: tuple[BranchEvidence, ...] = ()
     pull_requests: tuple[PullRequestEvidence, ...] = ()
     workflow_runs: tuple[WorkflowRunEvidence, ...] = ()
+    requires_verified_artifact: bool = False
+    artifact_verified: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -322,6 +324,18 @@ def derive_execution_projection(
             key=lambda pr: (pr.merged_at or "", pr.updated_at or "", pr.number),
         )
         ci = summarize_ci(evidence.workflow_runs, head_sha=pull_request.head_sha)
+        if ci.state is CiState.GREEN and evidence.requires_verified_artifact and not evidence.artifact_verified:
+            return ExecutionProjection(
+                work_item=work_item,
+                state=ExecutionState.MERGED,
+                next_action=NextAction.WAIT,
+                pull_request=pull_request,
+                ci=ci,
+                diagnostics=(ExecutionDiagnostic(
+                    code="HOTFIX_ARTIFACT_VALIDATION_PENDING",
+                    message="Merged hotfix awaits verified version tag, immutable image digest and release validation.",
+                ),),
+            )
         if ci.state is CiState.GREEN:
             return ExecutionProjection(
                 work_item=work_item,
