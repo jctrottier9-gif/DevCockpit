@@ -138,7 +138,7 @@ class GitHubReleaseWorkflow:
         raise ReleaseWorkflowError("TAG_DEPTH_EXCEEDED")
 
     def _anchor(self, client: httpx.Client, context: DeliveryContext,
-                project: Project) -> str:
+                project: Project, *, after_merge: bool = False) -> str:
         if (project.repository_full_name != context.repository_full_name
                 or project.delivery_context_for(context.work_item_id) != context):
             raise ReleaseWorkflowError("UNACCEPTED_DELIVERY_CONTEXT")
@@ -151,7 +151,16 @@ class GitHubReleaseWorkflow:
         body = issue.get("body") if isinstance(issue, dict) else None
         if not isinstance(body, str) or sha256(body.encode()).hexdigest() != context.accepted_issue_body_sha256:
             raise ReleaseWorkflowError("ACCEPTED_ISSUE_CHANGED")
-        if self._source(client, root, context) != context.source_sha:
+        if after_merge and context.mode is DeliveryMode.HOTFIX:
+            # The source release ref may legitimately advance after THIS PR
+            # merged; historical source and target lineage must still exist.
+            original = self._get(client, root + "/commits/" + context.source_sha)
+            tip = self._branch(client, root, context.release_branch)
+            if (not isinstance(original, dict)
+                    or original.get("sha") != context.source_sha
+                    or not self._descendant(client, root, context.source_sha, tip)):
+                raise ReleaseWorkflowError("HISTORICAL_SOURCE_LINEAGE_INVALID")
+        elif self._source(client, root, context) != context.source_sha:
             raise ReleaseWorkflowError("SOURCE_REF_MOVED")
         return root
 
@@ -379,7 +388,7 @@ class GitHubReleaseWorkflow:
         if not tag.startswith("v" + context.release_id + ".") or not validation_check:
             raise ReleaseWorkflowError("VERSION_OR_VALIDATION_CHECK_REQUIRED")
         with self._client() as client:
-            root = self._anchor(client, context, project)
+            root = self._anchor(client, context, project, after_merge=True)
             ref = self._get(client, root + "/git/ref/tags/" + quote(tag, safe="/"))
             if not isinstance(ref, dict) or ref.get("ref") != "refs/tags/" + tag:
                 raise ReleaseWorkflowError("PUBLISHED_TAG_MISSING")
@@ -409,4 +418,52 @@ class GitHubReleaseWorkflow:
                     or entries.get("Validation-Check") != validation_check
                     or "@" not in image or not DIGEST.fullmatch(digest)):
                 raise ReleaseWorkflowError("PUBLISHED_ARTIFACT_PROVENANCE_INVALID")
+            required = self.require_release_protection(client, root, context.release_branch)
+            if validation_check not in required:
+                raise ReleaseWorkflowError("VALIDATION_NOT_REQUIRED_BY_RELEASE_PROTECTION")
+            self.verify_release_checks(client, root, integrated_sha, required)
             return ReleaseArtifact(tag, integrated_sha, image, digest, validation_check)
+
+    def find_published_artifact(self, project: Project, context: DeliveryContext, *,
+                                integrated_sha: str) -> ReleaseArtifact | None:
+        """Discover a versioned GitHub release, then verify tag, digest and protected CI."""
+        if context.mode is not DeliveryMode.HOTFIX or not FULL_SHA.fullmatch(integrated_sha):
+            raise ReleaseWorkflowError("HOTFIX_PUBLICATION_CONTEXT_REQUIRED")
+        with self._client() as client:
+            root = self._anchor(client, context, project, after_merge=True)
+            matches: list[tuple[str, str]] = []
+            page = 1
+            while True:
+                releases = self._get(client, root + "/releases",
+                                     params={"per_page": 100, "page": page})
+                if not isinstance(releases, list):
+                    raise ReleaseWorkflowError("RELEASE_LIST_INVALID")
+                for release in releases:
+                    if not isinstance(release, dict):
+                        raise ReleaseWorkflowError("RELEASE_LIST_INVALID")
+                    body = release.get("body") or ""
+                    tag = release.get("tag_name")
+                    if (not release.get("draft") and isinstance(body, str)
+                            and isinstance(tag, str)
+                            and tag.startswith("v" + context.release_id + ".")
+                            and "Source-SHA: " + integrated_sha in body.splitlines()):
+                        validations = [line.removeprefix("Validation-Check: ")
+                                       for line in body.splitlines()
+                                       if line.startswith("Validation-Check: ")]
+                        if len(validations) != 1:
+                            raise ReleaseWorkflowError("AMBIGUOUS_RELEASE_VALIDATION")
+                        matches.append((tag, validations[0]))
+                if len(releases) < 100:
+                    break
+                page += 1
+                if page > 100:
+                    raise ReleaseWorkflowError("RELEASE_PAGINATION_INCOMPLETE")
+            if not matches:
+                return None
+            if len(matches) != 1:
+                raise ReleaseWorkflowError("DUPLICATE_PUBLICATIONS")
+            tag, check = matches[0]
+        # A second fresh read revalidates accepted refs and the exact tag.
+        return self.inspect_artifact(project, context, tag=tag,
+                                     integrated_sha=integrated_sha,
+                                     validation_check=check)
