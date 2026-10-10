@@ -114,7 +114,7 @@ def _execution_from_roadmap(
         return blocked_projection(
             work_item=work_item,
             code="RELEASE_AUTOMATION_DISABLED",
-            message="DC-075A defines the accepted release context but cannot execute it before DC-075B.",
+            message="This accepted delivery mode requires an explicit operation.",
         )
 
     try:
@@ -222,7 +222,7 @@ def evaluate_project_execution(
 
     context = project.delivery_context_for(work_item.key)
     with uow_factory() as uow:
-        if context is not None and context.mode is DeliveryMode.HOTFIX:
+        if context is not None and context.mode in {DeliveryMode.HOTFIX, DeliveryMode.FORWARD_PORT}:
             try:
                 accepted = uow.delivery_contexts.get(context.repository_id, work_item.key)
             except Exception:
@@ -230,7 +230,7 @@ def evaluate_project_execution(
             if accepted != context:
                 return ExecutionEvaluation(
                     projection=blocked_projection(
-                        work_item=work_item, code="HOTFIX_NOT_ACCEPTED",
+                        work_item=work_item, code="DELIVERY_NOT_ACCEPTED",
                         message="A matching persisted human-accepted delivery contract is required.",
                     ),
                     dispatch=None,
