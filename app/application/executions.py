@@ -5,6 +5,7 @@ from hashlib import sha256
 from typing import Protocol
 
 from app.application.delivery_contexts import dev_target_instructions, release_automation_allowed
+from app.domain.delivery_context import DeliveryMode
 from app.application.prompt_dispatches import (
     CreatePromptDispatchCommand,
     UnitOfWorkFactory,
@@ -219,7 +220,21 @@ def evaluate_project_execution(
     if initial_fence.active_application_id is not None:
         return ExecutionEvaluation(projection=projection, dispatch=None)
 
+    context = project.delivery_context_for(work_item.key)
     with uow_factory() as uow:
+        if context is not None and context.mode is DeliveryMode.HOTFIX:
+            try:
+                accepted = uow.delivery_contexts.get(context.repository_id, work_item.key)
+            except Exception:
+                accepted = None
+            if accepted != context:
+                return ExecutionEvaluation(
+                    projection=blocked_projection(
+                        work_item=work_item, code="HOTFIX_NOT_ACCEPTED",
+                        message="A matching persisted human-accepted delivery contract is required.",
+                    ),
+                    dispatch=None,
+                )
         current_fence = uow.roadmap_target_fences.snapshot(
             project.repository_full_name,
             project.roadmap_issue_number,
