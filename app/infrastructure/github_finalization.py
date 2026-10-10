@@ -7,6 +7,9 @@ import httpx
 from app.application.pr_finalization import FinalizationMutationResult
 from app.domain.pr_finalization import FinalizationAttemptStatus
 from app.domain.project import Project
+from app.domain.delivery_context import DeliveryContext, DeliveryMode
+from app.infrastructure.github_delivery_context import GitHubDeliveryReferenceReader, DeliveryReferenceError
+from app.infrastructure.github_release_workflow import GitHubReleaseWorkflow, ReleaseWorkflowError
 
 
 _GREEN_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
@@ -34,6 +37,7 @@ class GitHubPullRequestFinalizer:
         pr_number: int,
         expected_head_sha: str,
         expected_base_sha: str,
+        delivery_context: DeliveryContext | None = None,
     ) -> FinalizationMutationResult:
         base_url, headers = self._connection(project)
         try:
@@ -53,6 +57,12 @@ class GitHubPullRequestFinalizer:
                 )
                 if base_stale is not None:
                     return base_stale
+                safety = self._guard_release(
+                    client, project, base_url, detail, pr_number,
+                    expected_head_sha, delivery_context, for_merge=False,
+                )
+                if safety is not None:
+                    return safety
 
                 response = client.put(
                     f"{base_url}/pulls/{pr_number}/update-branch",
@@ -84,6 +94,7 @@ class GitHubPullRequestFinalizer:
         pr_number: int,
         expected_head_sha: str,
         expected_base_sha: str | None,
+        delivery_context: DeliveryContext | None = None,
     ) -> FinalizationMutationResult:
         base_url, headers = self._connection(project)
         try:
@@ -104,6 +115,12 @@ class GitHubPullRequestFinalizer:
                 )
                 if base_stale is not None:
                     return base_stale
+                safety = self._guard_release(
+                    client, project, base_url, detail, pr_number,
+                    expected_head_sha, delivery_context, for_merge=True,
+                )
+                if safety is not None:
+                    return safety
 
                 mergeable = detail.get("mergeable") if isinstance(detail, dict) else None
                 mergeable_state = detail.get("mergeable_state") if isinstance(detail, dict) else None
@@ -166,6 +183,66 @@ class GitHubPullRequestFinalizer:
                 error_code="GITHUB_UNAVAILABLE",
                 message=str(exc),
             )
+
+
+    def _guard_release(
+        self,
+        client: httpx.Client,
+        project: Project,
+        base_url: str,
+        detail: object,
+        pr_number: int,
+        expected_head_sha: str,
+        context: DeliveryContext | None,
+        *,
+        for_merge: bool,
+    ) -> FinalizationMutationResult | None:
+        """Recheck an accepted hotfix target and its protected CI before GitHub write."""
+        if context is None:
+            return None
+        if (context.mode is not DeliveryMode.HOTFIX
+                or project.delivery_context_for(context.work_item_id) != context):
+            return FinalizationMutationResult(
+                FinalizationAttemptStatus.BLOCKED,
+                error_code="UNSUPPORTED_RELEASE_FINALIZATION",
+                message="Only an accepted HOTFIX delivery is finalizable in DC-075B.",
+            )
+        head = detail.get("head") if isinstance(detail, dict) else None
+        base = detail.get("base") if isinstance(detail, dict) else None
+        head_repo = head.get("repo") if isinstance(head, dict) else None
+        if (not isinstance(head, dict) or not isinstance(base, dict)
+                or head.get("ref") != context.expected_work_branch
+                or not isinstance(head_repo, dict)
+                or head_repo.get("id") != context.repository_id
+                or base.get("ref") != context.expected_pr_base):
+            return FinalizationMutationResult(
+                FinalizationAttemptStatus.STALE,
+                error_code="RELEASE_PR_TARGET_MISMATCH",
+                message="GitHub PR head/repository/base differs from accepted hotfix delivery.",
+            )
+        try:
+            GitHubDeliveryReferenceReader(
+                token=self._token, transport=self._transport,
+                timeout_seconds=self._timeout_seconds,
+            ).read_verified(context, pr_number=pr_number)
+            workflow = GitHubReleaseWorkflow(
+                token=self._token, transport=self._transport,
+                timeout_seconds=self._timeout_seconds,
+            )
+            required = workflow.require_release_protection(
+                client, base_url, context.release_branch,
+            )
+            if for_merge:
+                workflow.verify_release_checks(
+                    client, base_url, expected_head_sha, required,
+                )
+        except (DeliveryReferenceError, ReleaseWorkflowError) as exc:
+            return FinalizationMutationResult(
+                FinalizationAttemptStatus.BLOCKED,
+                error_code="RELEASE_SAFETY_BLOCKED",
+                message=str(exc),
+            )
+        return None
 
     def _connection(self, project: Project) -> tuple[str, dict[str, str]]:
         owner, repository = project.repository_full_name.split("/", maxsplit=1)
