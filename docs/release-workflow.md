@@ -12,7 +12,7 @@ an *accepted and persisted* immutable DeliveryContext, anchored to the exact
 GitHub issue body. The delivery WorkItem must be executable in the valid,
 current canonical roadmap. `RELEASE` is a manual preparation operation;
 `HOTFIX` can enter the existing deterministic DEV loop after target verification.
-`FORWARD_PORT` remains disabled pending DC-075C.
+`FORWARD_PORT` is independently enabled by DC-075C and follows its own accepted WorkItem, main-targeted PR and CI.
 
 The consuming repository must have its own `AGENTS.md` aligned, independently
 authorized, before its first orchestrated hotfix. Required release-branch
@@ -92,5 +92,6 @@ release blocker. No automatic migration, schema rollback or image deployment.
 - No empty CI result, skipped required check or stale head is green.
 - Branch creation is idempotent; after an ambiguous PR-creation error,
   rediscover before trying again.
-- **Forward-port is out of scope** until DC-075C, including cherry-picks,
-  commit remapping and its separate PR lifecycle.
+- Forward-port is independently implemented by DC-075C; this release workflow
+  never merges the entire release into main. See [forward-port](forward-port.md)
+  and [acceptance](maintained-release-acceptance.md).
