@@ -218,6 +218,7 @@ class GitHubReleaseWorkflow:
         with self._client() as client:
             root = self._anchor(client, context, project)
             release_sha = self._branch(client, root, context.release_branch)
+            self.require_release_protection(client, root, context.release_branch)
             if release_sha != context.observed_pr_base_sha:
                 raise ReleaseWorkflowError("RELEASE_BASE_MOVED")
             if not self._descendant(client, root, context.release_origin_sha, release_sha):
@@ -269,6 +270,7 @@ class GitHubReleaseWorkflow:
         with self._client() as client:
             root = self._anchor(client, context, project)
             base = self._branch(client, root, context.release_branch)
+            self.require_release_protection(client, root, context.release_branch)
             if base != context.observed_pr_base_sha:
                 raise ReleaseWorkflowError("RELEASE_BASE_MOVED")
             head_sha = self._branch(client, root, context.expected_work_branch)
@@ -343,7 +345,8 @@ class GitHubReleaseWorkflow:
             names.add(value["context"])
         if not names or required.get("strict") is not True:
             raise ReleaseWorkflowError("RELEASE_STRICT_CI_REQUIRED")
-        if reviews.get("required_approving_review_count", 0) < 1:
+        approvals = reviews.get("required_approving_review_count")
+        if type(approvals) is not int or approvals < 1:
             raise ReleaseWorkflowError("RELEASE_REVIEW_REQUIRED")
         return tuple(sorted(names))
 
