@@ -39,5 +39,9 @@ Aucun déploiement ni rollback SQL implicite.
 
 
 def release_automation_allowed(context: DeliveryContext | None) -> bool:
-    """Explicit DC-075A safety switch; DC-075B must replace it under guarded authorization."""
-    return context is None or context.mode is DeliveryMode.NORMAL
+    """Only accepted HOTFIX and legacy NORMAL may enter automated execution.
+
+    RELEASE preparation is an explicit mutation; FORWARD_PORT remains DC-075C.
+    The GitHub reader and finalizer enforce target-specific protection/CI.
+    """
+    return context is None or context.mode in {DeliveryMode.NORMAL, DeliveryMode.HOTFIX}
