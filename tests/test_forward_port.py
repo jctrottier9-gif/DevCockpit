@@ -230,3 +230,63 @@ def test_moved_main_fails_closed_and_never_writes():
     with pytest.raises(ReleaseWorkflowError, match="SOURCE_REF_MOVED"):
         service.prepare_forward_port(project, fwd, hot)
     assert not any(verb == "POST" for verb, _ in seen)
+
+
+def test_retargeted_forward_pr_never_reused():
+    project, fwd, hot, branches, prs, _, service = simulator(retargeted=True)
+    service.prepare_forward_port(project, fwd, hot)
+    branches["forward/FWD-1"] = B
+    service.ensure_forward_port_pr(
+        project, fwd, hot, title="FWD-1 — fix", expected_head_sha=B,
+    )
+    assert prs[0]["base"]["ref"] == "release/1.4"
+    with pytest.raises(ForwardPortError, match="FORWARD_PR_IDENTITY_MISMATCH"):
+        service.ensure_forward_port_pr(
+            project, fwd, hot, title="FWD-1 — fix", expected_head_sha=B,
+        )
+
+
+def test_forward_port_never_accepts_stale_branch_sha():
+    project, fwd, hot, branches, _, _, service = simulator()
+    service.prepare_forward_port(project, fwd, hot)
+    branches["forward/FWD-1"] = B
+    with pytest.raises(ForwardPortError, match="FORWARD_HEAD_STALE"):
+        service.ensure_forward_port_pr(
+            project, fwd, hot, title="FWD-1 — fix", expected_head_sha=A,
+        )
+
+
+def test_forward_port_requires_integrated_commit_not_pre_squash_head():
+    project, fwd, hot, _, _, _, service = simulator()
+    bad = replace(fwd, integrated_commits=(D,))
+    project = replace(project, delivery_contexts=(hot, bad))
+    with pytest.raises(ForwardPortError, match="INTEGRATED_COMMIT_MISMATCH"):
+        service.prepare_forward_port(project, bad, hot)
+
+
+def test_forward_port_ci_red_is_independent_of_source_hotfix():
+    from app.domain.execution import (
+        CiState, ExecutionEvidence, ExecutionState, NextAction,
+        PullRequestEvidence, WorkflowRunEvidence, derive_execution_projection,
+    )
+    from app.domain.roadmap import WorkItem, WorkItemStatus, WorkItemType
+    item = WorkItem(key="FWD-1", type=WorkItemType.WORK,
+                    status=WorkItemStatus.READY, parent="#1", lane="MAIN",
+                    title="Independent forward-port")
+    pr = PullRequestEvidence(
+        number=150, title="FWD-1 — fix", body="Work-Item: FWD-1",
+        branch="forward/FWD-1", head_sha=B, state="open",
+        merged=False, mergeable=False, base_branch="main",
+    )
+    ci = WorkflowRunEvidence(
+        run_id=9, name="CI", status="completed", conclusion="failure",
+        attempt=1, head_sha=B, failed_jobs=("backend",),
+    )
+    state = derive_execution_projection(
+        item, ExecutionEvidence(default_branch="main", pull_requests=(pr,),
+                                workflow_runs=(ci,)),
+    )
+    assert state.state is ExecutionState.CI_RED
+    assert state.next_action is NextAction.FIX_CI
+    assert state.ci is not None and state.ci.state is CiState.RED
+    assert state.pull_request is not None and state.pull_request.number == 150
