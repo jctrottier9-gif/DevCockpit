@@ -7,7 +7,6 @@ the prepared main-based branch. GitHub is re-read before every mutation.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import re
 
 from app.domain.delivery_context import (
     DeliveryContext, DeliveryMode, DeliveryContractError, validate_pair,
@@ -65,10 +64,10 @@ class GitHubForwardPortWorkflow(GitHubReleaseWorkflow):
         }:
             raise ForwardPortError("UNSUPPORTED_FORWARD_PORT_METHOD")
 
-    def _integrated_source(self, client, root: str, context: DeliveryContext,
-                           source: DeliveryContext) -> None:
+    def _integrated_source(self, client, root: str, project: Project,
+                           context: DeliveryContext, source: DeliveryContext) -> None:
         # Revalidate the hotfix's immutable issue and historical release lineage.
-        self._anchor(client, source, self._project, after_merge=True)
+        self._anchor(client, source, project, after_merge=True)
         pr = self._get(client, root + "/pulls/" + str(context.source_hotfix_pr))
         if not isinstance(pr, dict) or not pr.get("merged_at"):
             raise ForwardPortError("SOURCE_HOTFIX_NOT_MERGED")
@@ -131,11 +130,7 @@ class GitHubForwardPortWorkflow(GitHubReleaseWorkflow):
         self._contracts(project, context, source)
         # _anchor checks repository, accepted issue hash, exact source and main SHA.
         root = self._anchor(client, context, project)
-        self._project = project
-        try:
-            self._integrated_source(client, root, context, source)
-        finally:
-            del self._project
+        self._integrated_source(client, root, project, context, source)
         main_sha = self._branch(client, root, "main")
         if main_sha != context.observed_pr_base_sha:
             raise ForwardPortError("MAIN_BASE_STALE_REACCEPT_REQUIRED")
