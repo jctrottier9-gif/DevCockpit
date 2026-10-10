@@ -5,6 +5,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 
+from app.application.delivery_contexts import release_automation_allowed
 from app.application.executions import (
     ExecutionEvidenceReader,
     ExecutionSourceError,
@@ -670,6 +671,16 @@ def _read_candidate_snapshots(
         ):
             continue
         work_item = scheduler_item.work_item
+        if not release_automation_allowed(project.delivery_context_for(work_item.key)):
+            snapshots.append(_CandidateSnapshot(
+                scheduler_item,
+                blocked_projection(
+                    work_item=work_item,
+                    code="RELEASE_AUTOMATION_DISABLED",
+                    message="Non-NORMAL delivery requires DC-075B authorization and GitHub revalidation.",
+                ),
+            ))
+            continue
         try:
             evidence = evidence_reader.read(project, work_item)
         except ExecutionSourceError as exc:

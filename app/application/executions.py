@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import Protocol
 
+from app.application.delivery_contexts import dev_target_instructions, release_automation_allowed
 from app.application.prompt_dispatches import (
     CreatePromptDispatchCommand,
     UnitOfWorkFactory,
@@ -105,6 +106,14 @@ def _execution_from_roadmap(
             message=(
                 f"{work_item.key} is not an executable DEV WorkItem for this projection."
             ),
+        )
+
+    context = project.delivery_context_for(work_item.key)
+    if not release_automation_allowed(context):
+        return blocked_projection(
+            work_item=work_item,
+            code="RELEASE_AUTOMATION_DISABLED",
+            message="DC-075A defines the accepted release context but cannot execute it before DC-075B.",
         )
 
     try:
@@ -276,12 +285,12 @@ Contexte canonique :
 - Roadmap maître : #{project.roadmap_issue_number}
 - Statut canonique : READY
 
-Travaille sur le main actuel et synchronise-toi avec le vrai main avant de commencer. Lis d'abord AGENTS.md, consulte le roadmap maître #{project.roadmap_issue_number} et son bloc canonique COCKPIT_PIPELINE_V1, COCKPIT_PIPELINE_V2 ou COCKPIT_PIPELINE_V3 explicitement présent, puis consulte le WorkItem {work_item.key} et les ADR applicables. Inspecte le code et les tests existants avant de modifier quoi que ce soit.
+Vérifie et synchronise-toi avec la base Git explicitement autorisée avant de commencer. Lis d'abord AGENTS.md, consulte le roadmap maître #{project.roadmap_issue_number} et son bloc canonique COCKPIT_PIPELINE_V1, COCKPIT_PIPELINE_V2 ou COCKPIT_PIPELINE_V3 explicitement présent, puis consulte le WorkItem {work_item.key} et les ADR applicables. Inspecte le code et les tests existants avant de modifier quoi que ce soit.
 
 Implémente uniquement la tranche autorisée et respecte strictement son scope.
 
 Quand la PR est complète, active l'auto-merge si les règles du dépôt le permettent, rapporte le numéro de PR et le head SHA courant, puis ARRÊTE ton tour DEV. Ne reste pas à poller ou attendre la CI : DevCockpit observe GitHub et te renverra un prompt dans cette même session uniquement si une intervention DEV est nécessaire. Ne commence pas la tranche suivante.
-"""
+""" + dev_target_instructions(project.delivery_context_for(work_item.key))
 
 
 def build_ci_red_follow_up(
@@ -322,7 +331,7 @@ Jobs/checks rouges connus :
 Analyse les échecs actuels sur GitHub, corrige uniquement ce qui relève de {work_item.key}, exécute les validations pertinentes, pousse les corrections et poursuis jusqu'au cycle prévu dans AGENTS.md.
 
 Reste strictement dans le scope du WorkItem {work_item.key}. Après avoir poussé la correction, vérifie que l'auto-merge demeure armé lorsque permis, rapporte le nouveau head SHA, puis ARRÊTE ton tour DEV. Ne reste pas à poller la CI : DevCockpit reprend l'observation GitHub. Ne commence pas la tranche suivante.
-"""
+""" + dev_target_instructions(project.delivery_context_for(work_item.key))
 
 
 def build_stale_dev_follow_up(
@@ -356,7 +365,7 @@ Roadmap maître : #{project.roadmap_issue_number}
 
 Reprends le travail existant dans la même session DEV à partir de l'état GitHub actuel.
 
-- synchronise-toi avec le vrai main;
+- vérifie la base Git attendue pour ce WorkItem;
 - relis AGENTS.md, le roadmap canonique et le WorkItem {work_item.key};
 - inspecte la branche existante {branch.name} et ses commits avant toute modification;
 - ne recommence pas la tranche depuis zéro et ne duplique pas le travail déjà poussé;
@@ -367,7 +376,7 @@ Reprends le travail existant dans la même session DEV à partir de l'état GitH
 - ne reste pas à poller la CI et ne commence pas la tranche suivante.
 
 Cette relance est un watchdog d'inactivité : GitHub demeure la source de vérité.
-"""
+""" + dev_target_instructions(project.delivery_context_for(work_item.key))
 
 
 def _stale_dev_idempotency_key(
@@ -425,7 +434,7 @@ Roadmap maître : #{project.roadmap_issue_number}
 
 Reprends la même session DEV pour effectuer uniquement la réconciliation post-merge du roadmap.
 
-1. Synchronise-toi avec le vrai main actuel.
+1. Vérifie la base Git exacte acceptée pour cette livraison.
 2. Relis AGENTS.md et le roadmap maître #{project.roadmap_issue_number}, y compris son bloc canonique présent.
 3. Vérifie sur GitHub que la PR #{pull_request.number} est réellement fusionnée et que les validations requises du head livré sont vertes.
 4. Relis immédiatement la version courante du roadmap avant de l'éditer afin de ne pas écraser une modification concurrente.
@@ -441,7 +450,7 @@ Reprends la même session DEV pour effectuer uniquement la réconciliation post-
 Cette réconciliation post-merge remplace le comportement historique où le DEV mettait lui-même le roadmap à jour après le merge. Elle est autorisée sans preview/confirmation humaine supplémentaire parce qu'elle ne fait que réconcilier une livraison déjà prouvée par GitHub.
 
 Ne commence pas le WorkItem suivant. Rapporte l'état final du roadmap puis ARRÊTE ton tour DEV.
-"""
+""" + dev_target_instructions(project.delivery_context_for(work_item.key))
 
 
 def _roadmap_reconcile_idempotency_key(

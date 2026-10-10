@@ -11,6 +11,7 @@ from app.application.executions import (
     ExecutionRepositoryNotFoundError,
     ExecutionSourceError,
 )
+from app.infrastructure.github_delivery_context import GitHubDeliveryReferenceReader, DeliveryReferenceError
 from app.domain.execution import (
     BranchEvidence,
     ExecutionEvidence,
@@ -43,6 +44,18 @@ class GitHubExecutionReader:
         self._transport = transport
 
     def read(self, project: Project, work_item: WorkItem) -> ExecutionEvidence:
+        context = project.delivery_context_for(work_item.key)
+        if context is not None:
+            try:
+                GitHubDeliveryReferenceReader(
+                    token=self._token,
+                    timeout_seconds=self._timeout_seconds,
+                    transport=self._transport,
+                ).read_verified(context)
+            except DeliveryReferenceError as exc:
+                raise ExecutionPayloadError(
+                    "Accepted delivery context is stale or unavailable: " + str(exc)
+                ) from exc
         owner, repository = project.repository_full_name.split("/", maxsplit=1)
         base_url = (
             "https://api.github.com/repos/"
@@ -113,6 +126,18 @@ class GitHubExecutionReader:
                             item.number,
                         ),
                     )
+
+                if context is not None and selected is not None:
+                    try:
+                        GitHubDeliveryReferenceReader(
+                            token=self._token,
+                            timeout_seconds=self._timeout_seconds,
+                            transport=self._transport,
+                        ).read_verified(context, pr_number=selected.number)
+                    except DeliveryReferenceError as exc:
+                        raise ExecutionPayloadError(
+                            "Accepted PR source/target is stale: " + str(exc)
+                        ) from exc
 
                 workflow_runs: tuple[WorkflowRunEvidence, ...] = ()
                 branches: tuple[BranchEvidence, ...] = ()

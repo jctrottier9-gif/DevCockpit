@@ -20,7 +20,7 @@ Do not treat previous ChatGPT conversations as more authoritative than the repos
 
 Do not redo an analysis already documented unless code or requirements materially changed.
 
-Always synchronize with the current `main` before starting implementation.
+For ordinary NORMAL implementation, synchronize with the current verified `main`. For an explicitly accepted versioned WorkItem, verify the exact source/target delivery contract instead; never substitute `main` for a missing hotfix/release ref.
 
 ---
 
@@ -421,7 +421,7 @@ After a merged issue/sub-tranche:
 
 ### Canonical pipeline contract
 
-The current roadmap remains `COCKPIT_PIPELINE_V1`, and when it contains that block it is the machine-readable work-order contract. ASTRA-041 accepts a future `COCKPIT_PIPELINE_V2` with `SUPERSEDED` and `REPLACES`, but V2 must not become canonical until DC-041A has delivered explicit V1/V2 parsing and validation. Unknown versions, multiple canonical blocks, or simultaneous V1+V2 fail closed.
+Read exactly the single canonical `COCKPIT_PIPELINE_V1`, `COCKPIT_PIPELINE_V2` or `COCKPIT_PIPELINE_V3` block actually present in the current roadmap. The current roadmap uses V3 with explicit dependencies. Unknown versions, invalid or multiple canonical blocks fail closed.
 
 Any change to work order or completion state must:
 
@@ -483,3 +483,16 @@ foundation
 ```
 
 Do not jump directly to multi-agent parallel execution before the single-execution vertical slice is stable.
+
+---
+
+## 19. Versioned source/target delivery contract (ADR-0017 / DC-075A)
+
+- The legacy **NORMAL** path uses the true, currently verified GitHub `main` and a PR targeting `main`. That default is never a fallback for `RELEASE`, `HOTFIX` or `FORWARD_PORT`.
+- For versioned work, an *accepted*, immutable `DeliveryContext` V1 belongs to a stable WorkItem and a specific GitHub delivery issue. It records GitHub repository ID plus owner/name, issue-body fingerprint, source kind/ref and fully resolved commit SHA, exact expected working branch, start SHA, PR base **name** and observed tip SHA, and version/provenance evidence. A missing or contradictory value blocks execution; never infer target branch from a PR title or ChatGPT narrative.
+- Before any work on a versioned WorkItem, reread the delivery issue, roadmap and applicable ADR; verify repository ID, qualified ref, dereferenced tag commit, selected release/main base **name**, latest tip SHA, working branch/provenance and current PR head/base in GitHub. Repeat on initial dispatch, CI-red, stalled/orphan recovery, branch sync/conflict and roadmap reconciliation. Fail closed if a ref was moved/deleted, SHA shortened/ambiguous, GitHub evidence is incomplete, the issue contract changed, or the PR was retargeted (even if base SHAs are identical).
+- A published tag/version is frozen; the maintained `release/x.y` branch advances only through isolated, validated hotfixes. Never merge all of `main` into a release. Do not infer release ancestry from a matching name.
+- A hotfix and its eventual forward-port are **two predeclared, linked WorkItems**, separate branch/PR/CI/AgentSession lifecycles. Forward-port only the *integrated* release fix to current `main` by proven commit/delta; do not merge the whole release into `main`. Reuse an existing branch/PR on restart; no duplicated dispatch on ambiguous transport or GitHub outcomes.
+- A hotfix must target the accepted release base and use release-specific CI/review/protection checks. The ordinary branch sync and merge finalizers must not act on a non-NORMAL target until branch-specific safety and evidence are delivered in DC-075B. **DC-075A defines and persists contracts only: release/hotfix/forward-port automation remains disabled.**
+- `DONE` for a hotfix requiring a testable image needs independently verified merge, immutable version/tag/source SHA, image digest, and validation evidence; a merge is not publication or deployment. An explicit deployment is a separate proof. Never deploy, roll back a SQL schema or assume backward-compatible migrations automatically.
+- When a consuming repository such as RessourcePlanner first uses a maintained release, update *its own* `AGENTS.md` by a separately authorized delivery. Changes to that repository are not in scope for DevCockpit DC-075A.

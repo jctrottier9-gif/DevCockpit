@@ -15,6 +15,7 @@ from app.domain.pr_finalization import (
     FinalizationOperation,
     PullRequestFinalizationAttempt,
 )
+from app.application.delivery_contexts import dev_target_instructions
 from app.domain.project import Project
 
 
@@ -207,7 +208,7 @@ Blocage GitHub : {attempt.message or attempt.error_code or 'BRANCH_SYNC_BLOCKED'
 
 Reprends la même session DEV uniquement pour résoudre le conflit de synchronisation de branche.
 
-- resynchronise-toi avec le vrai main et relis AGENTS.md;
+- vérifie la base PR cible acceptée et relis AGENTS.md;
 - inspecte la PR et les changements concurrents avant toute modification;
 - résous uniquement les conflits nécessaires pour remettre la branche à jour;
 - ne change pas le scope fonctionnel de {work_item.key};
@@ -217,4 +218,4 @@ Reprends la même session DEV uniquement pour résoudre le conflit de synchronis
 - ne fusionne pas manuellement la PR et ne commence pas la tranche suivante.
 
 DevCockpit reprendra ensuite le cycle normal CI / finalisation GitHub.
-"""
+""" + dev_target_instructions(project.delivery_context_for(work_item.key))

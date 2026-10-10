@@ -65,7 +65,7 @@ def test_upgrade_from_0006_preserves_existing_data_and_persists_resource_locks(t
         ).scalar_one() == "historical"
         assert connection.execute(
             text("SELECT version_num FROM alembic_version")
-        ).scalar_one() == "0010_pr_finalization_attempts"
+        ).scalar_one() == "0011_delivery_contexts"
         assert connection.execute(text("PRAGMA foreign_key_check")).all() == []
 
     session_factory = build_session_factory(engine)

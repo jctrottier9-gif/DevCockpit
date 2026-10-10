@@ -6,6 +6,7 @@ from enum import StrEnum
 from hashlib import sha256
 
 from app.domain.execution import CiState, ExecutionProjection, ExecutionState
+from app.application.delivery_contexts import dev_target_instructions
 from app.domain.project import Project
 
 
@@ -218,7 +219,7 @@ Reprends la même session DEV uniquement pour diagnostiquer pourquoi la CI n'a p
 - si une nouvelle preuve GitHub existe déjà, suis cette preuve plutôt que ce watchdog devenu stale;
 - après toute correction poussée, rapporte le nouveau head SHA puis ARRÊTE ton tour DEV;
 - ne reste pas à poller la CI et ne commence pas la tranche suivante.
-"""
+""" + dev_target_instructions(project.delivery_context_for(work_item.key))
 
 
 def build_ci_stall_follow_up(
@@ -253,4 +254,4 @@ Reprends la même session DEV uniquement pour diagnostiquer cette attente CI.
 - reste strictement dans le scope de {work_item.key};
 - si tu pousses une correction, rapporte le nouveau head SHA puis ARRÊTE ton tour DEV;
 - ne reste pas à poller GitHub et ne commence pas la tranche suivante.
-"""
+""" + dev_target_instructions(project.delivery_context_for(work_item.key))
