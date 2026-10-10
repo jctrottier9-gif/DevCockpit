@@ -7,7 +7,7 @@ from app.domain.delivery_context import DeliveryMode, ReferenceKind
 from app.infrastructure.github_delivery_context import (
     DeliveryReferenceError, GitHubDeliveryReferenceReader,
 )
-from tests.test_delivery_context import hotfix, normal
+from test_delivery_context import hotfix, normal
 
 
 def github_transport(*, base_sha="a" * 40, source_sha="a" * 40,
