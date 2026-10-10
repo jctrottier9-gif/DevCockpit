@@ -102,8 +102,11 @@ class GitHubDeliveryReferenceReader:
                 working_sha = None
                 # A new WorkItem may not yet have its working branch. A 404 is
                 # permitted only before PR creation; all other read errors fail.
-                if pr_number is not None:
+                if pr_number is not None and not allow_merged_advance:
                     working_sha = branch(client, context.expected_work_branch)
+                elif pr_number is not None:
+                    # A merged PR may have had its source branch deleted by GitHub.
+                    working_sha = None
                 pr_base = None
                 merged_advance_proven = False
                 if pr_number is not None:
@@ -146,7 +149,7 @@ class GitHubDeliveryReferenceReader:
                     resolved_ref=context.resolved_ref,
                     source_commit_sha=source_sha,
                     current_base_sha=base_sha,
-                    working_branch=context.expected_work_branch if pr_number is not None else None,
+                    working_branch=context.expected_work_branch if working_sha is not None else None,
                     working_head_sha=working_sha,
                     pr_base_name=pr_base,
                 )
