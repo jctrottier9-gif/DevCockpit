@@ -129,14 +129,12 @@ def test_retargeted_pr_is_rejected_even_when_sha_might_match():
     ctx, project = fixtures()
     transport, _, prs, _ = git_simulator(existing_branch=True, pr_base="main")
     service = GitHubReleaseWorkflow(transport=transport)
+    service.ensure_hotfix_pr(project, ctx, title="FIX-1 — fix",
+                             expected_head_sha="b" * 40)
+    assert prs[0]["base"]["ref"] == "main"
     with pytest.raises(ReleaseWorkflowError, match="HOTFIX_PR_IDENTITY_MISMATCH"):
         service.ensure_hotfix_pr(project, ctx, title="FIX-1 — fix",
-                                expected_head_sha="b" * 40) if prs else (
-            service.ensure_hotfix_pr(project, ctx, title="FIX-1 — fix",
-                                    expected_head_sha="b" * 40),
-            service.ensure_hotfix_pr(project, ctx, title="FIX-1 — fix",
-                                    expected_head_sha="b" * 40),
-        )
+                                expected_head_sha="b" * 40)
 
 
 def test_required_release_check_missing_is_not_green():
@@ -155,3 +153,41 @@ def test_required_release_check_missing_is_not_green():
                 client, "https://api.github.com/repos/owner/repo", "b" * 40,
                 ("CI", "release-validation"),
             )
+
+def test_merge_is_not_hotfix_completion_without_published_evidence():
+    from app.domain.execution import (
+        ExecutionEvidence, ExecutionState, NextAction,
+        PullRequestEvidence, WorkflowRunEvidence, derive_execution_projection,
+    )
+    from app.domain.roadmap import WorkItem, WorkItemStatus, WorkItemType
+    item = WorkItem(key="FIX-1", type=WorkItemType.WORK,
+                    status=WorkItemStatus.READY, parent="#1", lane="MAIN",
+                    title="Maintained hotfix")
+    pr = PullRequestEvidence(
+        number=88, title="FIX-1 — fix", body="Work-Item: FIX-1",
+        branch="dev/FIX-1", head_sha="b" * 40, state="closed",
+        merged=True, mergeable=None, base_branch="release/1.4",
+        merged_at="2026-10-10T16:00:00Z",
+    )
+    ci = (WorkflowRunEvidence(run_id=1, name="CI", status="completed",
+                              conclusion="success", attempt=1, head_sha="b" * 40),)
+    unvalidated = derive_execution_projection(
+        item, ExecutionEvidence(default_branch="main", pull_requests=(pr,),
+                                workflow_runs=ci, requires_verified_artifact=True)
+    )
+    assert unvalidated.state is ExecutionState.MERGED
+    assert unvalidated.next_action is NextAction.WAIT
+    validated = derive_execution_projection(
+        item, ExecutionEvidence(default_branch="main", pull_requests=(pr,),
+                                workflow_runs=ci, requires_verified_artifact=True,
+                                artifact_verified=True)
+    )
+    assert validated.state is ExecutionState.ROADMAP_UPDATE_REQUIRED
+    assert validated.next_action is NextAction.RECONCILE_ROADMAP
+
+
+def test_hotfix_lock_serializes_publication_per_release():
+    ctx, project = fixtures()
+    first = project.resource_lock_requirements_for(ctx.work_item_id)
+    assert [entry.surface.key for entry in first] == ["release:5:release/1.4"]
+    assert first[0].mode.value == "EXCLUSIVE"
