@@ -11,6 +11,7 @@ from app.domain.delivery_context import (
 from app.domain.roadmap import WorkItemStatus
 from app.domain.scheduler import derive_scheduler_projection
 from app.infrastructure.github_forward_port import ForwardPortError
+from app.infrastructure.github_release_workflow import ReleaseWorkflowError
 
 
 class ForwardPortPrRequest(BaseModel):
@@ -80,7 +81,7 @@ def build_forward_port_router(*, project_catalog, roadmap_reader,
                     "Do not merge the release branch into main."
                 ),
             }
-        except ForwardPortError as exc:
+        except (ForwardPortError, ReleaseWorkflowError) as exc:
             raise HTTPException(409, str(exc)) from exc
 
     @router.post("/api/projects/{project_id}/deliveries/{work_item_id}/forward-port/pr")
@@ -93,7 +94,7 @@ def build_forward_port_router(*, project_catalog, roadmap_reader,
             )
             return {"number": pr.number, "base": "main", "head_sha": pr.head_sha,
                     "url": pr.url, "created": pr.created}
-        except ForwardPortError as exc:
+        except (ForwardPortError, ReleaseWorkflowError) as exc:
             raise HTTPException(409, str(exc)) from exc
 
     return router
