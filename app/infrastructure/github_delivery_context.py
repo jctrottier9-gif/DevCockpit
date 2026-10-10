@@ -121,11 +121,11 @@ class GitHubDeliveryReferenceReader:
                     head_repo = head_ref.get("repo")
                     if not isinstance(head_repo, dict) or head_repo.get("id") != context.repository_id:
                         raise DeliveryReferenceError("PR_REPOSITORY_MISMATCH")
-                    if (allow_merged_advance and context.mode is DeliveryMode.HOTFIX
+                    if (allow_merged_advance and context.mode in {DeliveryMode.HOTFIX, DeliveryMode.FORWARD_PORT}
                             and pr.get("merged_at") is not None
                             and pr_base == context.expected_pr_base):
-                        # A maintained release moves only after a verified merge.
-                        # Do not mistake an arbitrary moved base for permission.
+                        # A merged delivery can advance its exact target, but the
+                        # historical accepted SHA and merge must remain ancestors.
                         merged_sha = pr.get("merge_commit_sha")
                         if (not isinstance(merged_sha, str) or len(merged_sha) != 40):
                             raise DeliveryReferenceError("MERGED_COMMIT_MISSING")
